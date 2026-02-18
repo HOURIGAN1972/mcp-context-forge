@@ -26,7 +26,6 @@ from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
-
 # Third-Party
 import httpx
 import jq
@@ -2764,6 +2763,88 @@ class ToolService:
                             ),
                         )
 
+
+                    async def connect_to_proxy_server(server_url: str, headers: dict = headers):
+                        logger.info(f"connect_to_proxy_server  server_url {server_url} headers {headers} arguments {arguments} ")
+
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+
+                        # Create the JSON-RPC request
+                        json_rpc_request = {
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            'params': {
+                                "name" : tool.original_name,
+                                "arguments" : arguments
+                             },
+                            'id': str(uuid.uuid4())
+                        }
+
+                        logger.info(f"json_rpc_request {json_rpc_request} ")
+
+                        try:
+                            # Lazy import to avoid circular dependency
+                            from mcpgateway.routers.reverse_proxy import extract_session_id_from_url, forward_request_to_session  # pylint: disable=import-outside-toplevel
+
+                            session_id = extract_session_id_from_url(server_url)
+                            logger.info(f"session_id {session_id}")
+
+                            # Log MCP call start (using local variables)
+                            mcp_start_time = time.time()
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call started: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                metadata={"event": "mcp_call_started", "tool_name": tool_name_original,
+                                          "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
+                            )
+
+                            result = await forward_request_to_session( session_id=session_id, mcp_request=json_rpc_request)
+                            logger.info(f"result {result}")
+
+                            # Extract the payload from the reverse proxy envelope
+                            payload = result.get("payload", result)
+                            logger.info(f"payload {payload}")
+
+                            # Return the raw payload as ToolResult - filtering will be done by the common code path
+                            tool_call_result = ToolResult(
+                                content=payload.get("result", {}).get("content", []),
+                                is_error=payload.get("result", {}).get("isError", False)
+                            )
+
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse", "success": True},
+                            )
+
+                        except Exception as ex:
+                            error_message = str(ex)
+                            tool_call_result = ToolResult(
+                                content=[TextContent(type="text", text=str( f"Tool error encountered : {error_message}"))],
+                                is_error=True,
+                            )
+                            # Log failed MCP call (using local variables)
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
+                            )
+
+                        return tool_call_result
+
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
@@ -2777,6 +2858,9 @@ class ToolService:
                         Raises:
                             BaseException: On connection or communication errors
                         """
+
+                        logger.info(f"connect_to_sse_server server_url {server_url}  headers {headers}  arguments {arguments}")
+
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
@@ -2873,6 +2957,10 @@ class ToolService:
                         Raises:
                             BaseException: On connection or communication errors
                         """
+
+                        logger.info(f"connect_to_streamablehttp_server server_url {server_url}  headers {headers}  arguments {arguments}")
+
+
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
 
@@ -2980,10 +3068,15 @@ class ToolService:
                                 headers = payload.headers.model_dump()
 
                     tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
+                    logger.info(f"transport {transport}")
+
                     if transport == "sse":
                         tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
+                    elif transport == "proxied":
+                        tool_call_result = await connect_to_proxy_server(gateway_url, headers=headers)
+
                     dump = tool_call_result.model_dump(by_alias=True)
                     logger.debug(f"Tool call result dump: {dump}")
                     content = dump.get("content", [])

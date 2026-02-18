@@ -2455,12 +2455,14 @@ class TransportType(str, Enum):
         HTTP (str): Standard HTTP-based transport.
         STDIO (str): Standard input/output transport.
         STREAMABLEHTTP (str): HTTP transport with streaming.
+        PROXIED (str): Proxied standard input/output transport via HTTP.
     """
 
     SSE = "SSE"
     HTTP = "HTTP"
     STDIO = "STDIO"
     STREAMABLEHTTP = "STREAMABLEHTTP"
+    PROXIED = "PROXIED"
 
 
 class GatewayCreate(BaseModel):

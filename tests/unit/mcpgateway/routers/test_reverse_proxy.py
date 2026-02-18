@@ -184,26 +184,30 @@ class TestReverseProxyManager:
 
         assert len(reverse_proxy_manager.sessions) == 0
 
-    def test_get_session(self, reverse_proxy_manager, sample_session):
+    @pytest.mark.asyncio
+    async def test_get_session(self, reverse_proxy_manager, sample_session):
         """Test getting a session."""
         reverse_proxy_manager.sessions[sample_session.session_id] = sample_session
 
-        result = reverse_proxy_manager.get_session(sample_session.session_id)
+        result = await reverse_proxy_manager.get_session(sample_session.session_id)
         assert result is sample_session
 
-    def test_get_nonexistent_session(self, reverse_proxy_manager):
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_session(self, reverse_proxy_manager):
         """Test getting a session that doesn't exist."""
-        result = reverse_proxy_manager.get_session("nonexistent")
+        result = await reverse_proxy_manager.get_session("nonexistent")
         assert result is None
 
-    def test_list_sessions_empty(self, reverse_proxy_manager):
+    @pytest.mark.asyncio
+    async def test_list_sessions_empty(self, reverse_proxy_manager):
         """Test listing sessions when empty."""
-        result = reverse_proxy_manager.list_sessions()
+        result = await reverse_proxy_manager.list_sessions()
 
         assert result == []
         assert isinstance(result, list)
 
-    def test_list_sessions_with_string_user(self, reverse_proxy_manager, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_string_user(self, reverse_proxy_manager, mock_websocket):
         """Test listing sessions with string user."""
         session = ReverseProxySession("test-id", mock_websocket, "test-user")
         session.server_info = {"name": "test-server"}
@@ -211,7 +215,7 @@ class TestReverseProxyManager:
         session.bytes_transferred = 1024
         reverse_proxy_manager.sessions["test-id"] = session
 
-        result = reverse_proxy_manager.list_sessions()
+        result = await reverse_proxy_manager.list_sessions()
 
         assert len(result) == 1
         session_info = result[0]
@@ -223,34 +227,37 @@ class TestReverseProxyManager:
         assert "connected_at" in session_info
         assert "last_activity" in session_info
 
-    def test_list_sessions_with_dict_user(self, reverse_proxy_manager, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_dict_user(self, reverse_proxy_manager, mock_websocket):
         """Test listing sessions with dict user."""
         user_dict = {"sub": "user123", "name": "Test User"}
         session = ReverseProxySession("test-id", mock_websocket, user_dict)
         reverse_proxy_manager.sessions["test-id"] = session
 
-        result = reverse_proxy_manager.list_sessions()
+        result = await reverse_proxy_manager.list_sessions()
 
         assert len(result) == 1
         assert result[0]["user"] == "user123"
 
-    def test_list_sessions_with_none_user(self, reverse_proxy_manager, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_none_user(self, reverse_proxy_manager, mock_websocket):
         """Test listing sessions with None user."""
         session = ReverseProxySession("test-id", mock_websocket, None)
         reverse_proxy_manager.sessions["test-id"] = session
 
-        result = reverse_proxy_manager.list_sessions()
+        result = await reverse_proxy_manager.list_sessions()
 
         assert len(result) == 1
         assert result[0]["user"] is None
 
-    def test_list_sessions_with_invalid_dict_user(self, reverse_proxy_manager, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_invalid_dict_user(self, reverse_proxy_manager, mock_websocket):
         """Test listing sessions with dict user without 'sub' key."""
         user_dict = {"name": "Test User"}  # No 'sub' key
         session = ReverseProxySession("test-id", mock_websocket, user_dict)
         reverse_proxy_manager.sessions["test-id"] = session
 
-        result = reverse_proxy_manager.list_sessions()
+        result = await reverse_proxy_manager.list_sessions()
 
         assert len(result) == 1
         assert result[0]["user"] is None
@@ -313,19 +320,40 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
+        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, \
+             patch("mcpgateway.services.GatewayService") as mock_gateway_service, \
+             patch("mcpgateway.routers.reverse_proxy.ServerService") as mock_server_service:
+            
             mock_get_db.return_value = Mock()
+            
+            # Mock the gateway service to return a mock gateway object
+            mock_gateway = Mock()
+            mock_gateway.id = "550e8400-e29b-41d4-a716-446655440000"
+            mock_gateway.name = "test-server"
+            mock_gateway.description = None
+            mock_gateway.team_id = None
+            mock_gateway.tags = []
+            mock_gateway.visibility = "public"
+            mock_gateway.created_from_ip = None
+            mock_gateway.created_via = None
+            mock_gateway.created_user_agent = None
+            
+            mock_gateway_service.return_value.register_proxy_gateway = AsyncMock(
+                return_value=(mock_gateway, [], [], [])
+            )
+            mock_server_service.return_value.register_server = AsyncMock()
 
             try:
                 await websocket_endpoint(mock_websocket, Mock())
             except asyncio.CancelledError:
                 pass
 
-        # Should send register acknowledgment
+        # Should send register acknowledgment with "processing" status
+        # (registration happens in background, so immediate ack is "processing")
         mock_websocket.send_text.assert_called()
         sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
         assert sent_data["type"] == "register_ack"
-        assert sent_data["status"] == "success"
+        assert sent_data["status"] == "processing"
 
     @pytest.mark.asyncio
     async def test_websocket_unregister_message(self, mock_websocket):
@@ -494,7 +522,8 @@ class TestHTTPEndpoints:
         """Mock authentication dependency (for reference)."""
         return "test-user"
 
-    def test_list_sessions_empty(self, client, mock_auth):
+    @pytest.mark.asyncio
+    async def test_list_sessions_empty(self, client, mock_auth):
         """Test listing sessions when empty."""
         # Clear any existing sessions
         manager.sessions.clear()
@@ -506,7 +535,8 @@ class TestHTTPEndpoints:
         assert data["sessions"] == []
         assert data["total"] == 0
 
-    def test_list_sessions_with_data(self, client, mock_auth, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_list_sessions_with_data(self, client, mock_auth, mock_websocket):
         """Test listing sessions with data."""
         # Add a test session
         session = ReverseProxySession("test-session", mock_websocket, "test-user")
@@ -553,7 +583,8 @@ class TestHTTPEndpoints:
         data = response.json()
         assert "not found" in data["detail"]
 
-    def test_send_request_to_session_success(self, client, mock_auth, mock_websocket):
+    @pytest.mark.asyncio
+    async def test_send_request_to_session_success(self, client, mock_auth, mock_websocket):
         """Test sending request to existing session."""
         # Add a test session
         session = ReverseProxySession("test-session", mock_websocket, "test-user")
@@ -561,15 +592,21 @@ class TestHTTPEndpoints:
 
         try:
             mcp_request = {"method": "tools/list", "id": 1}
-            response = client.post("/reverse-proxy/sessions/test-session/request", json=mcp_request)
+            
+            # Mock the forward_request_to_session to return immediately
+            with patch("mcpgateway.routers.reverse_proxy.forward_request_to_session") as mock_forward:
+                mock_response = {"type": "response", "payload": {"id": 1, "result": {"tools": []}}}
+                mock_forward.return_value = mock_response
+                
+                response = client.post("/reverse-proxy/sessions/test-session/request", json=mcp_request)
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "sent"
-            assert data["session_id"] == "test-session"
-
-            # Verify message was sent to WebSocket
-            mock_websocket.send_text.assert_called_once()
+                assert response.status_code == 200
+                data = response.json()
+                assert data["type"] == "response"
+                assert "payload" in data
+                
+                # Verify forward_request_to_session was called
+                mock_forward.assert_called_once_with("test-session", mcp_request)
         finally:
             # Clean up
             manager.sessions.clear()
@@ -615,7 +652,8 @@ class TestHTTPEndpoints:
             # Clean up
             manager.sessions.clear()
 
-    def test_sse_endpoint_not_found(self, client):
+    @pytest.mark.asyncio
+    async def test_sse_endpoint_not_found(self, client):
         """Test SSE endpoint with non-existent session."""
         # Don't mock the endpoint for this test since we want the real 404 behavior
         response = client.get("/reverse-proxy/sse/nonexistent")
@@ -641,7 +679,7 @@ class TestIntegration:
 
         # Add to manager
         await reverse_proxy_manager.add_session(session)
-        assert reverse_proxy_manager.get_session("lifecycle-test") is session
+        assert await reverse_proxy_manager.get_session("lifecycle-test") is session
 
         # Update session info
         session.server_info = {"name": "test-server", "version": "1.0"}
@@ -656,13 +694,13 @@ class TestIntegration:
         assert session.bytes_transferred > 0
 
         # List sessions
-        sessions = reverse_proxy_manager.list_sessions()
+        sessions = await reverse_proxy_manager.list_sessions()
         assert len(sessions) == 1
         assert sessions[0]["session_id"] == "lifecycle-test"
 
         # Remove session
         await reverse_proxy_manager.remove_session("lifecycle-test")
-        assert reverse_proxy_manager.get_session("lifecycle-test") is None
+        assert await reverse_proxy_manager.get_session("lifecycle-test") is None
 
     @pytest.mark.asyncio
     async def test_concurrent_sessions(self, reverse_proxy_manager):
@@ -681,7 +719,7 @@ class TestIntegration:
         assert len(reverse_proxy_manager.sessions) == 5
 
         # List sessions
-        session_list = reverse_proxy_manager.list_sessions()
+        session_list = await reverse_proxy_manager.list_sessions()
         assert len(session_list) == 5
 
         # Remove all sessions

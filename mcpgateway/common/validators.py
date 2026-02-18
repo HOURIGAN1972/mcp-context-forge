@@ -566,8 +566,8 @@ class SecurityValidator:
         try:
             # Validate UUID format by attempting to parse it
             uuid_obj = uuid.UUID(value)
-            # Return the normalized string representation
-            return str(uuid_obj).replace("-", "")
+            # Return the normalized string representation WITHOUT dashes (hex format) to match database storage
+            return uuid_obj.hex
         except ValueError:
             logger.error(f"Invalid UUID format for {field_name}: {value}")
             raise ValueError(f"{field_name} must be a valid UUID format")

@@ -79,7 +79,8 @@ class ServerNotFoundError(ServerError):
 class ServerNameConflictError(ServerError):
     """Raised when a server name conflicts with an existing one."""
 
-    def __init__(self, name: str, enabled: bool = True, server_id: Optional[str] = None, visibility: str = "public") -> None:
+    def __init__(self, name: str, enabled: bool = True, server_id: Optional[str] = None,
+                 visibility: str = "public") -> None:
         """
         Initialize a ServerNameConflictError exception.
 
@@ -177,7 +178,8 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_servers(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
+    async def get_top_servers(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[
+        TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
@@ -201,7 +203,8 @@ class ServerService:
         """
         # Check cache first (if enabled)
         # First-Party
-        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, \
+            metrics_cache  # pylint: disable=import-outside-toplevel
 
         effective_limit = limit or 5
         cache_key = f"top_servers:{effective_limit}:include_deleted={include_deleted}"
@@ -213,7 +216,8 @@ class ServerService:
 
         # Use combined query that includes both raw metrics and rollup data
         # First-Party
-        from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.metrics_query_service import \
+            get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
             db=db,
@@ -467,6 +471,19 @@ class ServerService:
         """
         try:
             logger.info(f"Registering server: {server_in.name}")
+
+            # Log all input parameters to understand where team_id comes from
+            logger.info(f"register_server called with:")
+            logger.info(f"  server_in.name: {server_in.name}")
+            logger.info(f"  server_in.id: {getattr(server_in, 'id', None)}")
+            logger.info(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
+            logger.info(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
+            logger.info(f"  server_in.visibility: {getattr(server_in, 'visibility', None)}")
+            logger.info(f"  Parameter team_id: {team_id}")
+            logger.info(f"  Parameter owner_email: {owner_email}")
+            logger.info(f"  Parameter visibility: {visibility}")
+            logger.info(f"  Parameter created_by: {created_by}")
+
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -485,27 +502,34 @@ class ServerService:
                 created_user_agent=created_user_agent,
                 version=1,
             )
-            # Check for existing server with the same name (with row locking to prevent race conditions)
-            # The unique constraint is on (team_id, owner_email, name), so we check based on that
+            # Check for existing server (with row locking to prevent race conditions)
             owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
             team_id_to_check = getattr(server_in, "team_id", None) or team_id
 
-            # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
+            # First check by ID if provided (for idempotent operations)
+            if server_in.id:
+                existing_by_id = db.get(DbServer, server_in.id)
+                if existing_by_id:
+                    logger.info(f"Server with id {server_in.id} already exists, returning existing server (idempotent)")
+                    server_read = self.convert_server_to_read(existing_by_id, include_metrics=False)
+                    return ServerRead.model_validate(server_read)
+
+            # Then check by unique constraint (team_id, owner_email, name) for name conflicts
             conditions = [
                 DbServer.name == server_in.name,
                 DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
                 DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
             ]
-            if server_in.id:
-                conditions.append(DbServer.id != server_in.id)
 
             existing_server = get_for_update(db, DbServer, where=and_(*conditions))
             if existing_server:
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
                 db_server.id = server_in.id
+
             logger.info(f"Adding server to DB session: {db_server.name}")
             db.add(db_server)
 
@@ -587,9 +611,10 @@ class ServerService:
                     db_server.a2a_agents.append(agent_obj)
                     logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
 
-            # Commit the new record and refresh.
+            db.flush()
             db.commit()
             db.refresh(db_server)
+            logger.info(f"Refresh successful for server {db_server.name}")
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
 
@@ -778,9 +803,9 @@ class ServerService:
                 if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
-                    # removing the "public" option for the line belong along with adding the 
+                    # removing the "public" option for the line belong along with adding the
                     # 'or_(DbServer.visibility == "public")' allows you to show
-                    # servers from THAT team with visibility.in_(["team"]) + ALL public servers 
+                    # servers from THAT team with visibility.in_(["team"]) + ALL public servers
                     # from ANY team
 
                     # and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
@@ -796,7 +821,8 @@ class ServerService:
                     DbServer.visibility == "public",
                 ]
                 if team_ids:
-                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+                    access_conditions.append(
+                        and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
 
             if visibility:
@@ -857,7 +883,8 @@ class ServerService:
         return (result, next_cursor)
 
     async def list_servers_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None,
+        include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ServerRead]:
         """
         DEPRECATED: Use list_servers() with user_email parameter instead.
@@ -918,7 +945,8 @@ class ServerService:
 
             # 2. Team resources where user is member
             if team_ids:
-                access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+                access_conditions.append(
+                    and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
 
             # 3. Public resources (if visibility allows)
             access_conditions.append(DbServer.visibility == "public")
@@ -1114,7 +1142,8 @@ class ServerService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
@@ -1126,16 +1155,23 @@ class ServerService:
                 team_id = server_update.team_id or server.team_id
                 if visibility.lower() == "public":
                     # Check for existing public server with the same name
-                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "public", DbServer.id != server.id))
+                    existing_server = get_for_update(db, DbServer, where=and_(DbServer.name == server_update.name,
+                                                                              DbServer.visibility == "public",
+                                                                              DbServer.id != server.id))
                     if existing_server:
-                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled,
+                                                      server_id=existing_server.id,
+                                                      visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
                     existing_server = get_for_update(
-                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id, DbServer.id != server.id)
+                        db, DbServer, where=and_(DbServer.name == server_update.name, DbServer.visibility == "team",
+                                                 DbServer.team_id == team_id, DbServer.id != server.id)
                     )
                     if existing_server:
-                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled,
+                                                      server_id=existing_server.id,
+                                                      visibility=existing_server.visibility)
 
             # Update simple fields
             if server_update.id is not None and server_update.id != server.id:
@@ -1172,7 +1208,8 @@ class ServerService:
                     # Verify user is a member of the team
                     membership = (
                         db.query(DbEmailTeamMember)
-                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email,
+                                DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
                         .first()
                     )
                     if not membership:
@@ -1206,7 +1243,8 @@ class ServerService:
                 if server_update.associated_resources:
                     resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
-                        resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
+                        resources = db.execute(
+                            select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
                         server.resources = list(resources)
 
             # Update associated prompts if provided using bulk query
@@ -1358,7 +1396,8 @@ class ServerService:
             )
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+    async def toggle_server_status(self, db: Session, server_id: str, activate: bool,
+                                   user_email: Optional[str] = None) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -1413,11 +1452,13 @@ class ServerService:
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError("Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
+                    raise PermissionError(
+                        "Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
 
             if server.enabled != activate:
                 server.enabled = activate
@@ -1503,7 +1544,8 @@ class ServerService:
             )
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None,
+                            purge_metrics: bool = False) -> None:
         """Permanently delete a server.
 
         Args:
@@ -1540,7 +1582,8 @@ class ServerService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
@@ -1774,7 +1817,8 @@ class ServerService:
         """
         # Check cache first (if enabled)
         # First-Party
-        from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.metrics_cache import is_cache_enabled, \
+            metrics_cache  # pylint: disable=import-outside-toplevel
 
         if is_cache_enabled():
             cached = metrics_cache.get("servers")
@@ -1783,7 +1827,8 @@ class ServerService:
 
         # Use combined raw + rollup query for full historical coverage
         # First-Party
-        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.metrics_query_service import \
+            aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
 
         result = aggregate_metrics_combined(db, "server")
 
