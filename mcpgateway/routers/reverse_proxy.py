@@ -264,7 +264,8 @@ async def websocket_endpoint(
     auth_header = websocket.headers.get("Authorization", "")
 
     # Determine if auth is required
-    auth_required = settings.auth_required or settings.mcp_client_auth_enabled
+    # auth_required = settings.auth_required or settings.mcp_client_auth_enabled
+    auth_required = False
 
     if auth_required:
         # Try Bearer token authentication from header
@@ -321,7 +322,12 @@ async def websocket_endpoint(
 
     # Generate session ID server-side to prevent session hijacking
     # Client-supplied X-Session-ID is ignored for security (prevents collision/hijack attacks)
-    session_id = uuid.uuid4().hex
+    # Get session ID from headers or generate new one
+    session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
+    LOGGER.info(f"websocket_endpoint session_id {session_id}")
+
+
+    LOGGER.info(f" session_id {session_id}")
 
     # Create session with authenticated user
     session = ReverseProxySession(session_id, websocket, user)

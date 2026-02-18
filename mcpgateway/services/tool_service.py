@@ -3101,7 +3101,7 @@ class ToolService:
                             "jsonrpc": "2.0",
                             "method": "tools/call",
                             'params': {
-                                "name" : tool.original_name,
+                                "name" : tool_name_original,
                                 "arguments" : arguments
                              },
                             'id': str(uuid.uuid4())

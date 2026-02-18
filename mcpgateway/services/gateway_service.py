@@ -1642,9 +1642,56 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            # Add team name for response
-            db_gateway.team = self._get_team_name(db, db_gateway.team_id)
+            logger.info(f"Registered gateway: {gateway.name}")
+
+            # Structured logging: Audit trail for gateway creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_gateway",
+                resource_type="gateway",
+                resource_id=str(db_gateway.id),
+                resource_name=db_gateway.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "name": db_gateway.name,
+                    "url": db_gateway.url,
+                    "visibility": visibility,
+                    "transport": db_gateway.transport,
+                    "tools_count": len(tools),
+                    "resources_count": len(db_resources),
+                    "prompts_count": len(db_prompts),
+                },
+                context={
+                    "created_via": created_via,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful gateway creation
+            structured_logger.log(
+                level="INFO",
+                message="Gateway created successfully",
+                event_type="gateway_created",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="gateway",
+                resource_id=str(db_gateway.id),
+                custom_fields={
+                    "gateway_name": db_gateway.name,
+                    "gateway_url": normalized_url,
+                    "visibility": visibility,
+                    "transport": db_gateway.transport,
+                },
+                db=db,
+            )
+
             return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked(), tool_ids, resource_ids, prompt_ids
+
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
