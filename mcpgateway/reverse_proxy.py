@@ -32,6 +32,7 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
+import ssl
 from contextlib import suppress
 from enum import Enum
 import logging
@@ -257,6 +258,7 @@ class ReverseProxyClient:
         self,
         gateway_url: str,
         local_command: str,
+        server_id: str,
         token: Optional[str] = None,
         reconnect_delay: float = DEFAULT_RECONNECT_DELAY,
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -267,6 +269,7 @@ class ReverseProxyClient:
         Args:
             gateway_url: Remote gateway URL.
             local_command: Local MCP server command.
+            server_id: identifier for the server.
             token: Optional bearer token for authentication.
             reconnect_delay: Initial reconnection delay in seconds.
             max_retries: Maximum reconnection attempts (0 = infinite).
@@ -286,7 +289,7 @@ class ReverseProxyClient:
         # Connection state
         self.state = ConnectionState.DISCONNECTED
         self.connection: Optional[WSClientProtocol] = None
-        self.session_id = uuid.uuid4().hex
+        self.session_id = server_id
         self.retry_count = 0
 
         # Components
@@ -363,12 +366,17 @@ class ReverseProxyClient:
 
         LOGGER.info(f"Connecting to WebSocket: {ws_url}")
 
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
         # Connect
         self.connection = await websockets.connect(
             ws_url,
-            extra_headers=headers,
+            additional_headers=headers,
             ping_interval=20,
             ping_timeout=10,
+            ssl=ssl_context,
         )
 
         # Start receiving messages
@@ -390,21 +398,98 @@ class ReverseProxyClient:
 
     async def _register(self) -> None:
         """Register local server with gateway."""
-        # Get server info by sending initialize request
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": "init-" + uuid.uuid4().hex,
-            "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "reverse-proxy", "version": "1.0.0"}},
-        }
 
-        # Send to local server
-        await self.stdio_process.send(orjson.dumps(init_request).decode())
+        # tool_response = None
+        # resource_response = None
+        # prompt_response = None
+        #
+        # loop = asyncio.get_event_loop()
+        # init_future = loop.create_future()
+        #
+        # init_uuid = uuid.uuid4().hex
+        # init_request_id = "init-" + init_uuid
+        # self._pending_requests[init_request_id] = init_future
 
-        # Wait for response (simplified - should correlate properly)
-        await asyncio.sleep(1)
 
-        # Send registration to gateway
+        # # Get server info by sending initialize request
+        # init_request = {
+        #     "jsonrpc": "2.0",
+        #     "id": init_request_id,
+        #     "method": "initialize",
+        #     "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "reverse-proxy", "version": "1.0.0"}},
+        # }
+        #
+        # # Send to local server
+        # await self.stdio_process.send(orjson.dumps(init_request).decode())
+        #
+        # # Wait for the response with a timeout
+        # init_response = await asyncio.wait_for(init_future, timeout=10)
+        # LOGGER.info(f"init_response {init_response} type {type(init_response)}")
+
+        # if "capabilities" in init_response:
+        #     initialized_request = {
+        #         "jsonrpc": "2.0",
+        #         "method": "notifications/initialized"
+        #     }
+        #
+        #     await self.stdio_process.send(orjson.dumps(initialized_request).decode())
+        #     LOGGER.info("initialized notification sent")
+        #
+        #     capabilities = init_response["capabilities"]
+        #     if "tools" in capabilities:
+        #         tool_future = loop.create_future()
+        #         init_tool_request_id = "init-tools-" + init_uuid
+        #         self._pending_requests[init_tool_request_id] = tool_future
+        #         tools_request = {
+        #             "jsonrpc": "2.0",
+        #             "id": init_tool_request_id,
+        #             "method": "tools/list",
+        #             "params": {}
+        #         }
+        #
+        #         # Send to local server
+        #         await self.stdio_process.send(orjson.dumps(tools_request).decode())
+        #         LOGGER.info("sent tool request")
+        #         tool_response = await asyncio.wait_for(tool_future, timeout=10)
+        #         LOGGER.info(f"tool_response {tool_response}")
+        #
+        #     if "prompts" in capabilities:
+        #         prompt_future = loop.create_future()
+        #         init_prompt_request_id = "init-prompts-" + init_uuid
+        #         self._pending_requests[init_prompt_request_id] = prompt_future
+        #
+        #         prompts_request = {
+        #             "jsonrpc": "2.0",
+        #             "id": init_prompt_request_id,
+        #             "method": "prompts/list",
+        #             "params": {}
+        #         }
+        #
+        #         # Send to local server
+        #         await self.stdio_process.send(orjson.dumps(prompts_request).decode())
+        #         LOGGER.info("sent prompt request")
+        #         prompt_response = await asyncio.wait_for(prompt_future, timeout=10)
+        #         LOGGER.info(f"resources_response {prompt_response}")
+        #
+        #     if "resources" in capabilities:
+        #         resource_future = loop.create_future()
+        #         init_resources_request_id = "init-resources-" + init_uuid
+        #         self._pending_requests[init_resources_request_id] = resource_future
+        #
+        #         resources_request = {
+        #             "jsonrpc": "2.0",
+        #             "id": init_resources_request_id,
+        #             "method": "resources/list",
+        #             "params": {}
+        #         }
+        #
+        #         # Send to local server
+        #         await self.stdio_process.send(orjson.dumps(resources_request).decode())
+        #         LOGGER.info("sent resources request")
+        #         resource_response = await asyncio.wait_for(resource_future, timeout=10)
+        #         LOGGER.info(f"resources_response {resource_response}")
+
+            # Send registration to gateway
         register_msg = {
             "type": MessageType.REGISTER.value,
             "sessionId": self.session_id,
@@ -413,15 +498,29 @@ class ReverseProxyClient:
                 "description": f"Reverse proxied: {self.local_command}",
                 "protocol": "stdio",
             },
+                # "capabilities": capabilities,
         }
+
+            # if tool_response:
+            #     register_msg['tools'] = tool_response["tools"]
+            #
+            # if prompt_response:
+            #     register_msg['prompts'] = prompt_response["prompts"]
+            #
+            # if resource_response:
+            #     register_msg['resources'] = resource_response["resources"]
 
         await self._send_to_gateway(orjson.dumps(register_msg).decode())
 
-    async def _send_to_gateway(self, message: str) -> None:
+        # else:
+        #     raise RuntimeError("Error registering Proxy")
+
+
+    async def _send_to_gateway(self, message: str | bytes) -> None:
         """Send message to remote gateway.
 
         Args:
-            message: Message to send.
+            message: Message to send (str or bytes).
 
         Raises:
             RuntimeError: If not connected to gateway.
@@ -432,6 +531,9 @@ class ReverseProxyClient:
             raise RuntimeError("Not connected to gateway")
 
         if self.use_websocket:
+            # Ensure message is string for WebSocket text frames
+            if isinstance(message, bytes):
+                message = message.decode('utf-8')
             await cast(Any, conn).send(message)
         else:
             # SSE would POST to message endpoint
@@ -444,14 +546,28 @@ class ReverseProxyClient:
             message: JSON-RPC message from stdio.
         """
         try:
+            LOGGER.info(f"**** _handle_stdio_message message {message}")
+
             # Parse to check if it's a response or notification
             data = orjson.loads(message)
 
-            # Wrap in reverse proxy envelope
-            envelope = {"type": MessageType.RESPONSE.value if "id" in data else MessageType.NOTIFICATION.value, "sessionId": self.session_id, "payload": data}
+            result = data.get("result")
+            LOGGER.info(f"response result {result}  type result {type(result)}")
+            request_id = data["id"]
 
-            # Forward to gateway
-            await self._send_to_gateway(orjson.dumps(envelope).decode())
+            if request_id and request_id in self._pending_requests:
+                LOGGER.info(f"request_id found in _pending_responses")
+                future = self._pending_requests.pop(request_id)
+                LOGGER.info(f"future found {future}")
+                if not future.done():
+                    LOGGER.info(f"set result on future ")
+                    future.set_result(result)
+            else:
+                # Wrap in reverse proxy envelope
+                envelope = {"type": MessageType.RESPONSE.value if "id" in data else MessageType.NOTIFICATION.value, "sessionId": self.session_id, "payload": data}
+
+                # Forward to gateway
+                await self._send_to_gateway(orjson.dumps(envelope).decode())
 
         except Exception as e:
             LOGGER.error(f"Error forwarding stdio message: {e}")
@@ -464,6 +580,9 @@ class ReverseProxyClient:
         try:
             conn = cast(Any, self.connection)
             async for message in conn:
+                # Ensure message is string
+                if isinstance(message, bytes):
+                    message = message.decode('utf-8')
                 await self._handle_gateway_message(message)
         except Exception as e:  # Catch broad exceptions to avoid dependency-specific attribute errors
             closed_exc = None
@@ -478,19 +597,25 @@ class ReverseProxyClient:
         finally:
             self.state = ConnectionState.DISCONNECTED
 
-    async def _handle_gateway_message(self, message: str) -> None:
+    async def _handle_gateway_message(self, message: str | bytes) -> None:
         """Handle message from remote gateway.
 
         Args:
-            message: Message from gateway.
+            message: Message from gateway (str or bytes).
         """
         try:
+            # orjson.loads can handle both str and bytes
             data = orjson.loads(message)
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
+                LOGGER.info(f"*** _handle_gateway_message called {message}")
+
                 # Forward request to local server
                 payload = data.get("payload", {})
+
+                LOGGER.info(f"_handle_gateway_message payload {payload}")
+
                 await self.stdio_process.send(orjson.dumps(payload).decode())
 
             elif msg_type == MessageType.HEARTBEAT.value:
@@ -648,6 +773,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Bearer token for authentication (can also use REVERSE_PROXY_TOKEN env var)",
     )
 
+    parser.add_argument(
+        "--server-id",
+        help="Identifier to be assigned to the session when registering",
+    )
+
     # Connection options
     parser.add_argument(
         "--reconnect-delay",
@@ -749,6 +879,7 @@ async def main(argv: Optional[List[str]] = None) -> None:
     client = ReverseProxyClient(
         gateway_url=args.gateway,
         local_command=args.local_stdio,
+        server_id=args.server_id,
         token=args.token,
         reconnect_delay=args.reconnect_delay,
         max_retries=args.max_retries,
