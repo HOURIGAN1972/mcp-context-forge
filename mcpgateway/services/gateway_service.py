@@ -660,8 +660,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
-    ) -> GatewayRead:
-        """Register a new gateway.
+        # Proxy-specific parameters
+        is_proxy: bool = False,
+        session_id: Optional[str] = None,
+        forward_request_func: Optional[Any] = None,
+    ) -> Union[GatewayRead, tuple[GatewayRead, List[str], List[str], List[str]]]:
+        """Register a new gateway (standard or proxied).
 
         Args:
             db: Database session
@@ -674,9 +678,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
+            is_proxy (bool): Whether this is a reverse proxy gateway (default: False)
+            session_id (Optional[str]): Session ID for reverse proxy connections (required if is_proxy=True)
+            forward_request_func (Optional[Any]): Function to forward MCP requests to the session (required if is_proxy=True)
 
         Returns:
-            Created gateway information
+            For standard gateways: GatewayRead
+            For proxy gateways: tuple[GatewayRead, List[str], List[str], List[str]] (gateway, tool_ids, resource_ids, prompt_ids)
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
@@ -703,6 +711,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ... except Exception:
             ...     pass
         """
+        # Validate proxy-specific parameters
+        if is_proxy and not session_id:
+            raise ValueError("session_id is required when is_proxy=True")
+        
+        if is_proxy:
+            logger.info(f"Registering proxy gateway {gateway.name} for session {session_id}")
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
             # # Check for name conflicts (both active and inactive)
@@ -715,25 +729,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             #         gateway_id=existing_gateway.id,
             #     )
             # Check for existing gateway with the same slug and visibility
+            # Skip this check for proxy mode since we support updating existing gateways
             slug_name = slugify(gateway.name)
-            if visibility.lower() == "public":
-                # Check for existing public gateway with the same slug (row-locked)
-                existing_gateway = get_for_update(
-                    db,
-                    DbGateway,
-                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
-                )
-                if existing_gateway:
-                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
-            elif visibility.lower() == "team" and team_id:
-                # Check for existing team gateway with the same slug (row-locked)
-                existing_gateway = get_for_update(
-                    db,
-                    DbGateway,
-                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
-                )
-                if existing_gateway:
-                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            if not is_proxy:
+                if visibility.lower() == "public":
+                    # Check for existing public gateway with the same slug (row-locked)
+                    existing_gateway = get_for_update(
+                        db,
+                        DbGateway,
+                        where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
+                    )
+                    if existing_gateway:
+                        raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team gateway with the same slug (row-locked)
+                    existing_gateway = get_for_update(
+                        db,
+                        DbGateway,
+                        where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
+                    )
+                    if existing_gateway:
+                        raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
             # Normalize the gateway URL
             normalized_url = self.normalize_url(str(gateway.url))
@@ -750,7 +766,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     decoded_auth_value = gateway.auth_value
 
             # Check for duplicate gateway
-            if not gateway.one_time_auth:
+            # Skip this check for proxy mode since we support updating existing gateways
+            if not gateway.one_time_auth and not is_proxy:
                 duplicate_gateway = self._check_gateway_uniqueness(
                     db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
                 )
@@ -811,23 +828,28 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             oauth_config = getattr(gateway, "oauth_config", None)
             ca_certificate = getattr(gateway, "ca_certificate", None)
+            
+            # Initialize gateway capabilities, tools, resources, and prompts
             if initialize_timeout is not None:
-                try:
-                    capabilities, tools, resources, prompts = await asyncio.wait_for(
-                        self._initialize_gateway(
-                            init_url,  # URL with query params if applicable
-                            authentication_headers,
-                            gateway.transport,
-                            auth_type,
-                            oauth_config,
-                            ca_certificate,
-                            auth_query_params=auth_query_params_decrypted,
-                        ),
-                        timeout=initialize_timeout,
-                    )
-                except asyncio.TimeoutError as exc:
-                    sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
-                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
+                    try:
+                        capabilities, tools, resources, prompts = await asyncio.wait_for(
+                            self._initialize_gateway(
+                                init_url,  # URL with query params if applicable
+                                authentication_headers,
+                                gateway.transport,
+                                auth_type,
+                                oauth_config,
+                                ca_certificate,
+                                auth_query_params=auth_query_params_decrypted,
+                                is_proxy=is_proxy,
+                                session_id=session_id,
+                                forward_request_func=forward_request_func,
+                            ),
+                            timeout=initialize_timeout,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
+                        raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
             else:
                 capabilities, tools, resources, prompts = await self._initialize_gateway(
                     init_url,  # URL with query params if applicable
@@ -837,6 +859,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     oauth_config,
                     ca_certificate,
                     auth_query_params=auth_query_params_decrypted,
+                    is_proxy=is_proxy,
+                    session_id=session_id,
+                    forward_request_func=forward_request_func,
                 )
 
             if gateway.one_time_auth:
@@ -854,14 +879,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     url=normalized_url,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
-                    request_type=tool.request_type,
+                    request_type="PROXIED" if is_proxy else tool.request_type,
                     headers=tool.headers,
                     input_schema=tool.input_schema,
-                    output_schema=tool.output_schema,
-                    annotations=tool.annotations,
-                    jsonpath_filter=tool.jsonpath_filter,
+                    output_schema=tool.output_schema if hasattr(tool, "output_schema") else None,
+                    annotations=tool.annotations if hasattr(tool, "annotations") else None,
+                    jsonpath_filter=tool.jsonpath_filter if hasattr(tool, "jsonpath_filter") else None,
                     auth_type=auth_type,
                     auth_value=auth_value,
+                    enabled=True,  # Explicitly set enabled to avoid NULL constraint violation
                     # Federation metadata
                     created_by=created_by or "system",
                     created_from_ip=created_from_ip,
@@ -1043,42 +1069,131 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         )
                     )
 
-            # Create DB model
-            db_gateway = DbGateway(
-                name=gateway.name,
-                slug=slug_name,
-                url=normalized_url,
-                description=gateway.description,
-                tags=gateway.tags or [],
-                transport=gateway.transport,
-                capabilities=capabilities,
-                last_seen=datetime.now(timezone.utc),
-                auth_type=auth_type,
-                auth_value=auth_value,
-                auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
-                oauth_config=oauth_config,
-                passthrough_headers=gateway.passthrough_headers,
-                tools=tools,
-                resources=db_resources,
-                prompts=db_prompts,
-                # Gateway metadata
-                created_by=created_by,
-                created_from_ip=created_from_ip,
-                created_via=created_via or "api",
-                created_user_agent=created_user_agent,
-                version=1,
-                # Team scoping fields
-                team_id=team_id,
-                owner_email=owner_email,
-                visibility=visibility,
-                ca_certificate=gateway.ca_certificate,
-                ca_certificate_sig=gateway.ca_certificate_sig,
-                signing_algorithm=gateway.signing_algorithm,
-            )
-
-            # Add to DB
-            db.add(db_gateway)
-            db.flush()  # Flush to get the ID without committing
+            # Check for existing gateway (proxy mode supports upsert)
+            existing_gateway = None
+            if is_proxy and session_id:
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == session_id)).scalar_one_or_none()
+            
+            if existing_gateway:
+                # Update existing proxy gateway
+                logger.info(f"Updating existing proxy gateway for session {session_id}")
+                
+                # Get existing tools/resources/prompts by original_name for updating
+                existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
+                existing_resources_map = {r.uri: r for r in existing_gateway.resources}
+                existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
+                
+                # Update or create tools
+                updated_tools = []
+                for new_tool in tools:
+                    if new_tool.original_name in existing_tools_map:
+                        # Update existing tool
+                        existing_tool = existing_tools_map[new_tool.original_name]
+                        existing_tool.url = new_tool.url
+                        existing_tool.description = new_tool.description
+                        existing_tool.input_schema = new_tool.input_schema
+                        existing_tool.annotations = new_tool.annotations
+                        existing_tool.enabled = new_tool.enabled
+                        existing_tool.updated_at = datetime.now(timezone.utc)
+                        updated_tools.append(existing_tool)
+                    else:
+                        # Add new tool
+                        updated_tools.append(new_tool)
+                
+                # Update or create resources
+                updated_resources = []
+                for new_resource in db_resources:
+                    if new_resource.uri in existing_resources_map:
+                        # Update existing resource
+                        existing_resource = existing_resources_map[new_resource.uri]
+                        existing_resource.name = new_resource.name
+                        existing_resource.description = new_resource.description
+                        existing_resource.mime_type = new_resource.mime_type
+                        existing_resource.annotations = new_resource.annotations if hasattr(new_resource, 'annotations') else None
+                        existing_resource.updated_at = datetime.now(timezone.utc)
+                        updated_resources.append(existing_resource)
+                    else:
+                        # Add new resource
+                        updated_resources.append(new_resource)
+                
+                # Update or create prompts
+                updated_prompts = []
+                for new_prompt in db_prompts:
+                    if new_prompt.original_name in existing_prompts_map:
+                        # Update existing prompt
+                        existing_prompt = existing_prompts_map[new_prompt.original_name]
+                        existing_prompt.description = new_prompt.description
+                        existing_prompt.argument_schema = new_prompt.argument_schema
+                        existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, 'annotations') else None
+                        existing_prompt.updated_at = datetime.now(timezone.utc)
+                        updated_prompts.append(existing_prompt)
+                    else:
+                        # Add new prompt
+                        updated_prompts.append(new_prompt)
+                
+                # Update fields directly on the existing object
+                existing_gateway.name = gateway.name
+                existing_gateway.slug = slug_name
+                existing_gateway.url = normalized_url
+                existing_gateway.description = gateway.description
+                existing_gateway.tags = gateway.tags
+                existing_gateway.transport = gateway.transport
+                existing_gateway.capabilities = capabilities
+                existing_gateway.reachable = True  # Mark as reachable/active
+                existing_gateway.last_seen = datetime.now(timezone.utc)
+                existing_gateway.auth_type = auth_type
+                existing_gateway.auth_value = auth_value
+                existing_gateway.oauth_config = oauth_config
+                existing_gateway.passthrough_headers = gateway.passthrough_headers
+                existing_gateway.tools = updated_tools
+                existing_gateway.resources = updated_resources
+                existing_gateway.prompts = updated_prompts
+                existing_gateway.visibility = visibility
+                db_gateway = existing_gateway
+            else:
+                # Create new DB model
+                db_gateway = DbGateway(
+                    id=session_id if is_proxy else None,  # Use session_id as gateway ID for proxy
+                    name=gateway.name,
+                    slug=slug_name,
+                    url=normalized_url,
+                    description=gateway.description,
+                    tags=gateway.tags or [],
+                    transport=gateway.transport,
+                    capabilities=capabilities,
+                    reachable=True if is_proxy else None,  # Mark proxy gateways as reachable
+                    last_seen=datetime.now(timezone.utc),
+                    auth_type=auth_type,
+                    auth_value=auth_value,
+                    auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
+                    oauth_config=oauth_config,
+                    passthrough_headers=gateway.passthrough_headers,
+                    tools=tools,
+                    resources=db_resources,
+                    prompts=db_prompts,
+                    # Gateway metadata
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_via=created_via or "api",
+                    created_user_agent=created_user_agent,
+                    version=1,
+                    # Team scoping fields
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility=visibility,
+                    ca_certificate=gateway.ca_certificate if hasattr(gateway, 'ca_certificate') else None,
+                    ca_certificate_sig=gateway.ca_certificate_sig if hasattr(gateway, 'ca_certificate_sig') else None,
+                    signing_algorithm=gateway.signing_algorithm if hasattr(gateway, 'signing_algorithm') else None,
+                )
+                
+                # Add to DB
+                db.add(db_gateway)
+            
+            # Flush/commit changes
+            if is_proxy:
+                db.commit()  # Proxy mode commits immediately
+            else:
+                db.flush()  # Standard mode flushes to get ID
             db.refresh(db_gateway)
 
             # Update tracking
@@ -1135,7 +1250,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db=db,
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            # Return appropriate response based on mode
+            gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            
+            if is_proxy:
+                # For proxy mode, return gateway with tool/resource/prompt IDs
+                tool_ids = [str(t.id) for t in db_gateway.tools]
+                resource_ids = [str(r.id) for r in db_gateway.resources]
+                prompt_ids = [str(p.id) for p in db_gateway.prompts]
+                return gateway_read, tool_ids, resource_ids, prompt_ids
+            else:
+                # For standard mode, return just the gateway
+                return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -1247,7 +1373,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self,
         db: Session,
         gateway: GatewayCreate,
-        session_id : str,
+        session_id: str,
         forward_request_func: Optional[Any] = None,
         created_by: Optional[str] = None,
         created_from_ip: Optional[str] = None,
@@ -1256,11 +1382,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
-    ) -> GatewayRead:
+    ) -> tuple[GatewayRead, List[str], List[str], List[str]]:
         """Register a new proxy gateway.
+        
+        This is a convenience wrapper around register_gateway() with is_proxy=True.
 
         Args:
-            db : Database Session
+            db: Database Session
             gateway: Gateway creation schema
             session_id: Session ID for the reverse proxy connection
             forward_request_func: Function to forward MCP requests to the session
@@ -1273,455 +1401,30 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             visibility (Optional[str]): Gateway visibility level (private, team, public).
 
         Returns:
-            Created gateway information
+            tuple[GatewayRead, List[str], List[str], List[str]]: Gateway info and IDs of tools, resources, and prompts
 
         Raises:
             GatewayNameConflictError: If gateway name already exists
             GatewayConnectionError: If there was an error connecting to the gateway
             ValueError: If required values are missing
-            RuntimeError: If there is an error during processing that is not covered by other exceptions
+            RuntimeError: If there is an error during processing
             IntegrityError: If there is a database integrity error
-            BaseException: If an unexpected error occurs
-
-        Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
-            >>> service = GatewayService()
-            >>> db = MagicMock()
-            >>> gateway = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> db.add = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_gateway_added = MagicMock()
-            >>> import asyncio
-            >>> try:
-            ...     asyncio.run(service.register_gateway(db, gateway))
-            ... except Exception:
-            ...     pass
         """
-
-        logger.info(f"Registering proxy gateway {gateway.name} for session {session_id}")
-        visibility = "public" if visibility not in ("private", "team", "public") else visibility
-        try:
-            slug_name = slugify(gateway.name)
-
-            # Normalize the gateway URL
-            normalized_url = self.normalize_url(str(gateway.url))
-            logger.info(f"Normalized URL: {normalized_url}")
-
-            auth_type = getattr(gateway, "auth_type", None)
-            auth_value = getattr(gateway, "auth_value", {})
-            oauth_config = getattr(gateway, "oauth_config", None)
-
-            # Fetch capabilities, tools, resources, and prompts via WebSocket session
-            logger.info(f"Fetching capabilities from session {session_id}")
-            capabilities = {}
-            tools = []
-            resources = []
-            prompts = []
-
-            if forward_request_func:
-                try:
-                    # Send initialize request
-                    init_response = await forward_request_func(session_id, {
-                        "jsonrpc": "2.0",
-                        "id": f"init-{session_id}",
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}
-                        }
-                    })
-                    # Extract capabilities from the response payload
-                    payload = init_response.get("payload", {})
-                    capabilities = payload.get("result", {}).get("capabilities", {})
-                    logger.info(f"Received capabilities: {capabilities}")
-
-                    # Send initialized notification (required by MCP protocol before listing tools)
-                    # Note: This is a notification (no id field), not a request
-                    try:
-                        # Send the initialized notification (no response expected)
-                        await forward_request_func(session_id, {
-                            "jsonrpc": "2.0",
-                            "method": "notifications/initialized"
-                        })
-
-                        # Small delay to ensure notification is processed by the MCP server
-                        await asyncio.sleep(0.2)
-
-                        # Now send tools/list request
-                        tools_response = await forward_request_func(session_id, {
-                            "jsonrpc": "2.0",
-                            "id": f"tools-{session_id}",
-                            "method": "tools/list",
-                            "params": {}
-                        })
-                        # Extract tools from the response payload
-                        payload = tools_response.get("payload", {})
-                        tools = payload.get("result", {}).get("tools", [])
-                        logger.info(f"Received {len(tools)} tools from response")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch tools: {e}")
-                        tools = []
-
-                    # Send resources/list request (try if capabilities indicate support)
-                    if capabilities.get("resources"):
-                        try:
-                            resources_response = await forward_request_func(session_id, {
-                                "jsonrpc": "2.0",
-                                "id": f"resources-{session_id}",
-                                "method": "resources/list",
-                                "params": {}
-                            })
-                            payload = resources_response.get("payload", {})
-                            resources = payload.get("result", {}).get("resources", [])
-                            logger.info(f"Received {len(resources)} resources")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
-                            resources = []
-
-                    # Send prompts/list request (try if capabilities indicate support)
-                    if capabilities.get("prompts"):
-                        try:
-                            prompts_response = await forward_request_func(session_id, {
-                                "jsonrpc": "2.0",
-                                "id": f"prompts-{session_id}",
-                                "method": "prompts/list",
-                                "params": {}
-                            })
-                            payload = prompts_response.get("payload", {})
-                            prompts = payload.get("result", {}).get("prompts", [])
-                            logger.info(f"Received {len(prompts)} prompts")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
-                            prompts = []
-
-                except Exception as e:
-                    logger.error(f"Failed to fetch capabilities from session: {e}", exc_info=True)
-                    raise GatewayConnectionError(f"Failed to fetch capabilities from reverse proxy session: {str(e)}")
-            else:
-                logger.warning("No forward_request_func provided, gateway will have no capabilities")
-
-            logger.info("_initialize_gateway returned. adding tools")
-            tools = [ToolCreate.model_validate(tool) for tool in tools]
-
-            tools = [
-                    DbTool(
-                        original_name=tool.name,
-                        custom_name=tool.name,
-                        custom_name_slug=slugify(tool.name),
-                        display_name=generate_display_name(tool.name),
-                        url=normalized_url,
-                        description=tool.description,
-                        integration_type="MCP",  # Gateway-discovered tools are MCP type
-                        request_type="PROXIED",
-                        headers=tool.headers,
-                        input_schema=tool.input_schema,
-                        annotations=tool.annotations,
-                        jsonpath_filter=tool.jsonpath_filter,
-                        auth_type=auth_type,
-                        auth_value=auth_value,
-                        enabled=True,  # Explicitly set enabled to avoid NULL constraint violation
-                        # Federation metadata
-                        created_by=created_by or "system",
-                        created_from_ip=created_from_ip,
-                        created_via="federation",  # These are federated tools
-                        created_user_agent=created_user_agent,
-                        federation_source=gateway.name,
-                        version=1,
-                        # Inherit team assignment from gateway
-                        team_id=team_id,
-                        owner_email=owner_email,
-                        visibility=visibility,
-                    )
-                    for tool in tools
-                ]
-
-            # Fetch resources if supported
-            try:
-                for resource in resources:
-                    # Convert AnyUrl to string if present
-                    if "uri" in resource and hasattr(resource["uri"], "unicode_string"):
-                        resource["uri"] = str(resource["uri"])
-                    # Add default content if not present (will be fetched on demand)
-                    if "content" not in resource:
-                        resource["content"] = ""
-                    try:
-                        resources.append(ResourceCreate.model_validate(resource))
-                    except Exception:
-                        # If validation fails, create minimal resource
-                        resources.append(
-                               ResourceCreate(
-                                   uri=str(resource["uri"]),
-                                   name=resource["name"],
-                                   description=resource["description"],
-                                   mime_type=resource["mime_type"],
-                                   template=resource["template"],
-                                   content="",
-                              )
-                        )
-                        logger.info(f"Fetched {len(resources)} resources from gateway")
-            except Exception as e:
-                logger.warning(f"Failed to fetch resources: {e}")
-
-                # Create resource DB models
-
-            db_resources = [
-                    DbResource(
-                        uri=resource.uri,
-                        name=resource.name,
-                        description=resource.description,
-                        mime_type=resource.mime_type,
-                        template=resource.template,
-                        # Federation metadata
-                        created_by=created_by or "system",
-                        created_from_ip=created_from_ip,
-                        created_via="federation",  # These are federated resources
-                        created_user_agent=created_user_agent,
-                        federation_source=gateway.name,
-                        version=1,
-                        # Inherit team assignment from gateway
-                        team_id=team_id,
-                        owner_email=owner_email,
-                        visibility=visibility,
-                    )
-                    for resource in resources
-                ]
-
-            # Create prompt DB models
-            db_prompts = [
-                DbPrompt(
-                    name=prompt.name,
-                    description=prompt.description,
-                    template=prompt.template if hasattr(prompt, "template") else "",
-                    argument_schema={},  # Use argument_schema instead of arguments
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated prompts
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for prompt in prompts
-            ]
-
-            # Check for existing gateway with this session_id (after async operations complete)
-            existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == session_id)).scalar_one_or_none()
-
-            # Update existing gateway or create new one
-            if existing_gateway:
-                logger.info(f"Updating existing proxy gateway for session {session_id}")
-
-                # Get existing tools/resources/prompts by original_name for updating
-                existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
-                existing_resources_map = {r.uri: r for r in existing_gateway.resources}
-                existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
-
-                # Update or create tools
-                updated_tools = []
-                for new_tool in tools:
-                    if new_tool.original_name in existing_tools_map:
-                        # Update existing tool
-                        existing_tool = existing_tools_map[new_tool.original_name]
-                        existing_tool.url = new_tool.url
-                        existing_tool.description = new_tool.description
-                        existing_tool.input_schema = new_tool.input_schema
-                        existing_tool.annotations = new_tool.annotations
-                        existing_tool.enabled = new_tool.enabled
-                        existing_tool.updated_at = datetime.now(timezone.utc)
-                        updated_tools.append(existing_tool)
-                    else:
-                        # Add new tool
-                        updated_tools.append(new_tool)
-
-                # Update or create resources
-                updated_resources = []
-                for new_resource in db_resources:
-                    if new_resource.uri in existing_resources_map:
-                        # Update existing resource
-                        existing_resource = existing_resources_map[new_resource.uri]
-                        existing_resource.name = new_resource.name
-                        existing_resource.description = new_resource.description
-                        existing_resource.mime_type = new_resource.mime_type
-                        existing_resource.annotations = new_resource.annotations
-                        existing_resource.updated_at = datetime.now(timezone.utc)
-                        updated_resources.append(existing_resource)
-                    else:
-                        # Add new resource
-                        updated_resources.append(new_resource)
-
-                # Update or create prompts
-                updated_prompts = []
-                for new_prompt in db_prompts:
-                    if new_prompt.original_name in existing_prompts_map:
-                        # Update existing prompt
-                        existing_prompt = existing_prompts_map[new_prompt.original_name]
-                        existing_prompt.description = new_prompt.description
-                        existing_prompt.arguments = new_prompt.arguments
-                        existing_prompt.annotations = new_prompt.annotations
-                        existing_prompt.updated_at = datetime.now(timezone.utc)
-                        updated_prompts.append(existing_prompt)
-                    else:
-                        # Add new prompt
-                        updated_prompts.append(new_prompt)
-
-                # Update fields directly on the existing object
-                existing_gateway.name = gateway.name
-                existing_gateway.slug = slug_name
-                existing_gateway.url = normalized_url
-                existing_gateway.description = gateway.description
-                existing_gateway.tags = gateway.tags
-                existing_gateway.transport = gateway.transport
-                existing_gateway.capabilities = capabilities
-                existing_gateway.reachable = True  # Mark as reachable/active
-                existing_gateway.last_seen = datetime.now(timezone.utc)
-                existing_gateway.auth_type = auth_type
-                existing_gateway.auth_value = auth_value
-                existing_gateway.oauth_config = oauth_config
-                existing_gateway.passthrough_headers = gateway.passthrough_headers
-                existing_gateway.tools = updated_tools
-                existing_gateway.resources = updated_resources
-                existing_gateway.prompts = updated_prompts
-                existing_gateway.visibility = visibility
-                db_gateway = existing_gateway
-            else:
-                logger.info(f"Creating new proxy gateway for session {session_id}")
-                # Create new DB model
-                db_gateway = DbGateway(
-                    id=session_id,
-                    name=gateway.name,
-                    slug=slug_name,
-                    url=normalized_url,
-                    description=gateway.description,
-                    tags=gateway.tags,
-                    transport=gateway.transport,
-                    capabilities=capabilities,
-                    reachable=True,  # Mark as reachable/active
-                    last_seen=datetime.now(timezone.utc),
-                    auth_type=auth_type,
-                    auth_value=auth_value,
-                    oauth_config=oauth_config,
-                    passthrough_headers=gateway.passthrough_headers,
-                    tools=tools,
-                    resources=db_resources,
-                    prompts=db_prompts,
-                    # Gateway metadata
-                    created_by=created_by,
-                    created_from_ip=created_from_ip,
-                    created_via=created_via or "api",
-                    created_user_agent=created_user_agent,
-                    version=1,
-                    # Team scoping fields
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                # Add to DB
-                db.add(db_gateway)
-
-            # Flush changes to database but don't commit yet (caller will commit)
-            db.commit()
-            db.refresh(db_gateway)
-            logger.info(f"gateway is persisted")
-
-            # Get associated tool, prompt and resource ids
-            tool_ids = db.execute(select(DbTool.id).where(DbTool.gateway_id == session_id)).scalars().all()
-            resource_ids = db.execute(select(DbResource.id).where(DbResource.gateway_id == session_id)).scalars().all()
-            prompt_ids = db.execute(select(DbPrompt.id).where(DbPrompt.gateway_id == session_id)).scalars().all()
-
-            # Update tracking
-            self._active_gateways.add(db_gateway.url)
-
-            # Notify subscribers
-            await self._notify_gateway_added(db_gateway)
-
-            logger.info(f"Registered gateway: {gateway.name}")
-
-            # Structured logging: Audit trail for gateway creation
-            audit_trail.log_action(
-                user_id=created_by or "system",
-                action="create_gateway",
-                resource_type="gateway",
-                resource_id=str(db_gateway.id),
-                resource_name=db_gateway.name,
-                user_email=owner_email,
-                team_id=team_id,
-                client_ip=created_from_ip,
-                user_agent=created_user_agent,
-                new_values={
-                    "name": db_gateway.name,
-                    "url": db_gateway.url,
-                    "visibility": visibility,
-                    "transport": db_gateway.transport,
-                    "tools_count": len(tools),
-                    "resources_count": len(db_resources),
-                    "prompts_count": len(db_prompts),
-                },
-                context={
-                    "created_via": created_via,
-                },
-                db=db,
-            )
-
-            # Structured logging: Log successful gateway creation
-            structured_logger.log(
-                level="INFO",
-                message="Gateway created successfully",
-                event_type="gateway_created",
-                component="gateway_service",
-                user_id=created_by,
-                user_email=owner_email,
-                team_id=team_id,
-                resource_type="gateway",
-                resource_id=str(db_gateway.id),
-                custom_fields={
-                    "gateway_name": db_gateway.name,
-                    "gateway_url": normalized_url,
-                    "visibility": visibility,
-                    "transport": db_gateway.transport,
-                },
-                db=db,
-            )
-
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked(), tool_ids, resource_ids, prompt_ids
-
-        except* GatewayConnectionError as ge:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ge: ExceptionGroup[GatewayConnectionError]
-            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
-            raise ge.exceptions[0]
-        except* GatewayNameConflictError as gnce:  # pragma: no mutate
-            if TYPE_CHECKING:
-                gnce: ExceptionGroup[GatewayNameConflictError]
-            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
-            raise gnce.exceptions[0]
-        except* ValueError as ve:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ve: ExceptionGroup[ValueError]
-            logger.error(f"ValueErrors in group: {ve.exceptions}")
-            raise ve.exceptions[0]
-        except* RuntimeError as re:  # pragma: no mutate
-            if TYPE_CHECKING:
-                re: ExceptionGroup[RuntimeError]
-            logger.error(f"RuntimeErrors in group: {re.exceptions}")
-            raise re.exceptions[0]
-        except* IntegrityError as ie:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ie: ExceptionGroup[IntegrityError]
-            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
-            raise ie.exceptions[0]
-        except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
-            if TYPE_CHECKING:
-                other: ExceptionGroup[Exception]
-            logger.error(f"Other grouped errors: {other.exceptions}")
-            raise other.exceptions[0]
+        return await self.register_gateway(
+            db=db,
+            gateway=gateway,
+            created_by=created_by,
+            created_from_ip=created_from_ip,
+            created_via=created_via,
+            created_user_agent=created_user_agent,
+            team_id=team_id,
+            owner_email=owner_email,
+            visibility=visibility,
+            initialize_timeout=None,
+            is_proxy=True,
+            session_id=session_id,
+            forward_request_func=forward_request_func,
+        )
 
 
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
@@ -4354,17 +4057,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         include_prompts: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
+        # Proxy-specific parameters
+        is_proxy: bool = False,
+        session_id: Optional[str] = None,
+        forward_request_func: Optional[Any] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
-        Connects to an MCP gateway using the specified transport protocol,
-        performs the MCP handshake, and retrieves capabilities, tools,
-        resources, and prompts from the gateway.
+        Connects to an MCP gateway using the specified transport protocol (SSE/StreamableHTTP)
+        or via reverse proxy WebSocket, performs the MCP handshake, and retrieves capabilities,
+        tools, resources, and prompts from the gateway.
 
         Args:
             url: Gateway URL to connect to
             authentication: Optional authentication headers for the connection
-            transport: Transport protocol - "SSE" or "StreamableHTTP"
+            transport: Transport protocol - "SSE", "StreamableHTTP", or "PROXY"
             auth_type: Authentication type - "basic", "bearer", "headers", "oauth", "query_param" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
@@ -4375,6 +4082,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             oauth_auto_fetch_tool_flag: Whether to skip the early return for OAuth Authorization Code flow.
                 When False (default), auth_code gateways return empty lists immediately (for health checks).
                 When True, attempts to connect even for auth_code gateways (for activation after user authorization).
+            is_proxy: Whether this is a reverse proxy connection (default: False)
+            session_id: Session ID for reverse proxy connections (required if is_proxy=True)
+            forward_request_func: Function to forward MCP requests via WebSocket (required if is_proxy=True)
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -4382,6 +4092,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Raises:
             GatewayConnectionError: If connection or initialization fails
+            ValueError: If is_proxy=True but session_id or forward_request_func is missing
 
         Examples:
             >>> service = GatewayService()
@@ -4450,13 +4161,31 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             resources = []
             prompts = []
 
-            logger.info("calling connect_to_streamablehttp_server")
+            # Decode authentication if needed (applies to all modes)
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
-            if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
-            elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
+
+            # Route to appropriate connection method based on mode
+            if is_proxy:
+                # Proxy mode: use WebSocket-based MCP protocol
+                logger.info("calling connect_to_proxy_server")
+                if not session_id or not forward_request_func:
+                    raise ValueError("session_id and forward_request_func required for proxy mode")
+                capabilities, tools, resources, prompts = await self.connect_to_proxy_server(
+                    session_id=session_id,
+                    forward_request_func=forward_request_func,
+                    authentication=authentication,
+                    auth_type=auth_type,
+                    include_prompts=include_prompts,
+                    include_resources=include_resources,
+                )
+            else:
+                # Standard mode: use SSE or StreamableHTTP
+                logger.info("calling connect_to_streamablehttp_server")
+                if transport.lower() == "sse":
+                    capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
+                elif transport.lower() == "streamablehttp":
+                    capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
 
             logger.info(f"capabilities {capabilities} tools {tools} resources {resources} prompts {prompts}")
 
@@ -5768,6 +5497,147 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             sanitized_error = sanitize_exception_message(str(e))
             logger.error(f"SSE connection error details: {type(e).__name__}: {sanitized_error}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
+
+    async def connect_to_proxy_server(
+        self,
+        session_id: str,
+        forward_request_func: Any,
+        authentication: Optional[Dict[str, str]] = None,
+        auth_type: Optional[str] = None,
+        include_prompts: bool = True,
+        include_resources: bool = True,
+    ):
+        """Connect to an MCP server via reverse proxy WebSocket.
+
+        Args:
+            session_id: Session ID for the reverse proxy connection
+            forward_request_func: Function to forward MCP requests to the session
+            authentication: Optional dictionary containing authentication headers
+            auth_type: Type of authentication being used (for logging/debugging)
+            include_prompts: Whether to fetch prompts from the server
+            include_resources: Whether to fetch resources from the server
+
+        Returns:
+            Tuple containing (capabilities, tools, resources, prompts) from the MCP server
+
+        Raises:
+            GatewayConnectionError: If connection or MCP protocol communication fails
+        """
+        logger.info(f"Connecting to proxy server via session {session_id}")
+        
+        capabilities = {}
+        tools = []
+        resources = []
+        prompts = []
+        
+        try:
+            # Send initialize request
+            init_response = await forward_request_func(session_id, {
+                "jsonrpc": "2.0",
+                "id": f"init-{session_id}",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}
+                }
+            })
+            
+            # Extract capabilities from the response payload
+            payload = init_response.get("payload", {})
+            capabilities = payload.get("result", {}).get("capabilities", {})
+            logger.info(f"Received capabilities: {capabilities}")
+
+            # Send initialized notification (required by MCP protocol before listing tools)
+            try:
+                await forward_request_func(session_id, {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/initialized"
+                })
+                await asyncio.sleep(0.2)  # Small delay to ensure notification is processed
+
+                # Now send tools/list request
+                tools_response = await forward_request_func(session_id, {
+                    "jsonrpc": "2.0",
+                    "id": f"tools-{session_id}",
+                    "method": "tools/list",
+                    "params": {}
+                })
+                payload = tools_response.get("payload", {})
+                tools = payload.get("result", {}).get("tools", [])
+                logger.info(f"Received {len(tools)} tools from proxy")
+            except Exception as e:
+                logger.warning(f"Failed to fetch tools from proxy: {e}")
+                tools = []
+
+            # Send resources/list request (try if capabilities indicate support)
+            if include_resources and capabilities.get("resources"):
+                try:
+                    resources_response = await forward_request_func(session_id, {
+                        "jsonrpc": "2.0",
+                        "id": f"resources-{session_id}",
+                        "method": "resources/list",
+                        "params": {}
+                    })
+                    payload = resources_response.get("payload", {})
+                    resources = payload.get("result", {}).get("resources", [])
+                    logger.info(f"Received {len(resources)} resources from proxy")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch resources from proxy: {e}")
+                    resources = []
+
+            # Send prompts/list request (try if capabilities indicate support)
+            if include_prompts and capabilities.get("prompts"):
+                try:
+                    prompts_response = await forward_request_func(session_id, {
+                        "jsonrpc": "2.0",
+                        "id": f"prompts-{session_id}",
+                        "method": "prompts/list",
+                        "params": {}
+                    })
+                    payload = prompts_response.get("payload", {})
+                    prompts = payload.get("result", {}).get("prompts", [])
+                    logger.info(f"Received {len(prompts)} prompts from proxy")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch prompts from proxy: {e}")
+                    prompts = []
+
+        except Exception as e:
+            logger.error(f"Failed to connect to proxy server: {e}", exc_info=True)
+            raise GatewayConnectionError(f"Failed to fetch capabilities from reverse proxy session: {str(e)}")
+        
+        # Convert raw dicts to Pydantic models
+        tools = [ToolCreate.model_validate(tool) for tool in tools]
+        
+        # Convert raw resource dicts to ResourceCreate objects
+        resource_objects = []
+        for resource in resources:
+            # Convert AnyUrl to string if present
+            if "uri" in resource and hasattr(resource["uri"], "unicode_string"):
+                resource["uri"] = str(resource["uri"])
+            # Add default content if not present (will be fetched on demand)
+            if "content" not in resource:
+                resource["content"] = ""
+            try:
+                resource_objects.append(ResourceCreate.model_validate(resource))
+            except Exception:
+                # If validation fails, create minimal resource
+                resource_objects.append(
+                    ResourceCreate(
+                        uri=str(resource["uri"]),
+                        name=resource["name"],
+                        description=resource.get("description", ""),
+                        mime_type=resource.get("mime_type", "text/plain"),
+                        uri_template=resource.get("uri_template"),
+                        content="",
+                    )
+                )
+        resources = resource_objects
+        
+        # Convert raw prompt dicts to PromptCreate objects
+        prompts = [PromptCreate.model_validate(prompt) for prompt in prompts]
+        
+        return capabilities, tools, resources, prompts
 
     async def connect_to_sse_server(
         self,

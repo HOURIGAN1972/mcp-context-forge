@@ -191,27 +191,30 @@ def server_proc2():
 
 
 @pytest.fixture
-def server_proc_uds(tmp_path):
-    uds_path = str(tmp_path / "mcp-plugin.sock")
-    current_env = os.environ.copy()
-    current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
-    current_env["PYTHONPATH"] = "."
-    current_env["PLUGINS_TRANSPORT"] = "http"
-    current_env["PLUGINS_SERVER_UDS"] = uds_path
-    try:
-        with subprocess.Popen(
-            [sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=current_env,
-        ) as server_proc:
-            _wait_for_socket(uds_path, proc=server_proc)
-            yield server_proc, uds_path
-            server_proc.terminate()
+def server_proc_uds():
+    # Use /tmp instead of tmp_path to avoid macOS AF_UNIX path length limit (~104 chars)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="mcp_", dir="/tmp") as tmpdir:
+        uds_path = os.path.join(tmpdir, "mcp.sock")
+        current_env = os.environ.copy()
+        current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
+        current_env["PYTHONPATH"] = "."
+        current_env["PLUGINS_TRANSPORT"] = "http"
+        current_env["PLUGINS_SERVER_UDS"] = uds_path
+        try:
+            with subprocess.Popen(
+                [sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=current_env,
+            ) as server_proc:
+                _wait_for_socket(uds_path, proc=server_proc)
+                yield server_proc, uds_path
+                server_proc.terminate()
+                server_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            server_proc.kill()
             server_proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        server_proc.kill()
-        server_proc.wait(timeout=3)
 
 
 @pytest.mark.asyncio
