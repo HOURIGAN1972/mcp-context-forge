@@ -382,9 +382,17 @@ class ReverseProxyClient:
 
         LOGGER.info(f"Connecting to WebSocket: {ws_url}")
 
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        # Configure SSL context based on whether a cert was provided
+        if self.cert is not None:
+            # Use provided certificate for verification
+            ssl_context = ssl.create_default_context(cadata=self.cert)
+            ssl_context.check_hostname = True
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+        else:
+            # No certificate provided - disable verification (insecure)
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
         # Connect
         self.connection = await websockets.connect(
