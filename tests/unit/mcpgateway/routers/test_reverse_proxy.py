@@ -336,9 +336,9 @@ class TestWebSocketEndpoint:
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, \
              patch("mcpgateway.services.GatewayService") as mock_gateway_service, \
              patch("mcpgateway.routers.reverse_proxy.ServerService") as mock_server_service:
-            
+
             mock_get_db.return_value = Mock()
-            
+
             # Mock the gateway service to return a mock gateway object
             mock_gateway = Mock()
             mock_gateway.id = "550e8400-e29b-41d4-a716-446655440000"
@@ -350,7 +350,7 @@ class TestWebSocketEndpoint:
             mock_gateway.created_from_ip = None
             mock_gateway.created_via = None
             mock_gateway.created_user_agent = None
-            
+
             mock_gateway_service.return_value.register_proxy_gateway = AsyncMock(
                 return_value=(mock_gateway, [], [], [])
             )
@@ -688,19 +688,19 @@ class TestHTTPEndpoints:
 
         try:
             mcp_request = {"method": "tools/list", "id": 1}
-            
+
             # Mock the forward_request_to_session to return immediately
             with patch("mcpgateway.routers.reverse_proxy.forward_request_to_session") as mock_forward:
                 mock_response = {"type": "response", "payload": {"id": 1, "result": {"tools": []}}}
                 mock_forward.return_value = mock_response
-                
+
                 response = client.post("/reverse-proxy/sessions/test-session/request", json=mcp_request)
 
                 assert response.status_code == 200
                 data = response.json()
                 assert data["type"] == "response"
                 assert "payload" in data
-                
+
                 # Verify forward_request_to_session was called
                 mock_forward.assert_called_once_with("test-session", mcp_request)
         finally:

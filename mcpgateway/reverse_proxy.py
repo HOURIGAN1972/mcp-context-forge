@@ -32,17 +32,16 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
-import ssl
 from contextlib import suppress
 from enum import Enum
 import logging
 import os
 import shlex
 import signal
+import ssl
 import sys
 from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
-import uuid
 
 # Third-Party
 import orjson
@@ -277,7 +276,7 @@ class ReverseProxyClient:
             reconnect_delay: Initial reconnection delay in seconds.
             max_retries: Maximum reconnection attempts (0 = infinite).
             keepalive_interval: Heartbeat interval in seconds.
-            servern_name: Optional server name.
+            server_name: Optional server name.
             server_description: Optional server description.
             cert: Optional CA SSL certificate for gateway.
         """
@@ -435,7 +434,6 @@ class ReverseProxyClient:
 
         await self._send_to_gateway(orjson.dumps(register_msg).decode())
 
-
     async def _send_to_gateway(self, message: str | bytes) -> None:
         """Send message to remote gateway.
 
@@ -476,11 +474,11 @@ class ReverseProxyClient:
             request_id = data["id"]
 
             if request_id and request_id in self._pending_requests:
-                LOGGER.info(f"request_id found in _pending_responses")
+                LOGGER.info("request_id found in _pending_responses")
                 future = self._pending_requests.pop(request_id)
-                LOGGER.info(f"future found {future}")
+                LOGGER.info("future found %s", future)
                 if not future.done():
-                    LOGGER.info(f"set result on future ")
+                    LOGGER.info("set result on future")
                     future.set_result(result)
             else:
                 # Wrap in reverse proxy envelope

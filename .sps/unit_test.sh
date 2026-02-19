@@ -24,9 +24,9 @@ echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Tests and Coverage ##################"
 source $HOME/.venv/mcpgateway/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
+        export DATABASE_URL='sqlite:///:memory:' && \
+        export TEST_DATABASE_URL='sqlite:///:memory:' && \
+        uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
 coverage xml
 coverage report
 

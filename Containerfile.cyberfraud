@@ -1,8 +1,8 @@
 FROM BASE_IMAGE_REPO
 
-USER root 
+USER root
 # Install missing psycopg2 dependency for postgres support
-RUN microdnf install -y python3-devel gcc postgresql-devel 
+RUN microdnf install -y python3-devel gcc postgresql-devel
 RUN /app/.venv/bin/python3 -m ensurepip && \
     /app/.venv/bin/python3 -m pip install 'psycopg2'
 RUN microdnf remove -y python3-devel gcc postgresql-devel

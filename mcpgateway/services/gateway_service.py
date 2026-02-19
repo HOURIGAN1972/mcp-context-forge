@@ -714,7 +714,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Validate proxy-specific parameters
         if is_proxy and not session_id:
             raise ValueError("session_id is required when is_proxy=True")
-        
+
         if is_proxy:
             logger.info(f"Registering proxy gateway {gateway.name} for session {session_id}")
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
@@ -828,11 +828,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             oauth_config = getattr(gateway, "oauth_config", None)
             ca_certificate = getattr(gateway, "ca_certificate", None)
-            
+
             # Initialize gateway capabilities, tools, resources, and prompts
             if initialize_timeout is not None:
-                    try:
-                        capabilities, tools, resources, prompts = await asyncio.wait_for(
+                try:
+                    capabilities, tools, resources, prompts = await asyncio.wait_for(
                             self._initialize_gateway(
                                 init_url,  # URL with query params if applicable
                                 authentication_headers,
@@ -847,9 +847,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             ),
                             timeout=initialize_timeout,
                         )
-                    except asyncio.TimeoutError as exc:
-                        sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
-                        raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
+                except asyncio.TimeoutError as exc:
+                    sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
+                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
             else:
                 capabilities, tools, resources, prompts = await self._initialize_gateway(
                     init_url,  # URL with query params if applicable
@@ -1073,16 +1073,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             existing_gateway = None
             if is_proxy and session_id:
                 existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == session_id)).scalar_one_or_none()
-            
+
             if existing_gateway:
                 # Update existing proxy gateway
                 logger.info(f"Updating existing proxy gateway for session {session_id}")
-                
+
                 # Get existing tools/resources/prompts by original_name for updating
                 existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
                 existing_resources_map = {r.uri: r for r in existing_gateway.resources}
                 existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
-                
+
                 # Update or create tools
                 updated_tools = []
                 for new_tool in tools:
@@ -1099,7 +1099,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         # Add new tool
                         updated_tools.append(new_tool)
-                
+
                 # Update or create resources
                 updated_resources = []
                 for new_resource in db_resources:
@@ -1115,7 +1115,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         # Add new resource
                         updated_resources.append(new_resource)
-                
+
                 # Update or create prompts
                 updated_prompts = []
                 for new_prompt in db_prompts:
@@ -1130,7 +1130,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     else:
                         # Add new prompt
                         updated_prompts.append(new_prompt)
-                
+
                 # Update fields directly on the existing object
                 existing_gateway.name = gateway.name
                 existing_gateway.slug = slug_name
@@ -1185,10 +1185,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     ca_certificate_sig=gateway.ca_certificate_sig if hasattr(gateway, 'ca_certificate_sig') else None,
                     signing_algorithm=gateway.signing_algorithm if hasattr(gateway, 'signing_algorithm') else None,
                 )
-                
+
                 # Add to DB
                 db.add(db_gateway)
-            
+
             # Flush/commit changes
             if is_proxy:
                 db.commit()  # Proxy mode commits immediately
@@ -1252,16 +1252,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Return appropriate response based on mode
             gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
-            
+
             if is_proxy:
                 # For proxy mode, return gateway with tool/resource/prompt IDs
                 tool_ids = [str(t.id) for t in db_gateway.tools]
                 resource_ids = [str(r.id) for r in db_gateway.resources]
                 prompt_ids = [str(p.id) for p in db_gateway.prompts]
                 return gateway_read, tool_ids, resource_ids, prompt_ids
-            else:
-                # For standard mode, return just the gateway
-                return gateway_read
+            # For standard mode, return just the gateway
+            return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -1368,7 +1367,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
-
     async def register_proxy_gateway(
         self,
         db: Session,
@@ -1384,7 +1382,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         visibility: Optional[str] = None,
     ) -> tuple[GatewayRead, List[str], List[str], List[str]]:
         """Register a new proxy gateway.
-        
+
         This is a convenience wrapper around register_gateway() with is_proxy=True.
 
         Args:
@@ -1425,7 +1423,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             session_id=session_id,
             forward_request_func=forward_request_func,
         )
-
 
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
@@ -5524,12 +5521,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             GatewayConnectionError: If connection or MCP protocol communication fails
         """
         logger.info(f"Connecting to proxy server via session {session_id}")
-        
+
         capabilities = {}
         tools = []
         resources = []
         prompts = []
-        
+
         try:
             # Send initialize request
             init_response = await forward_request_func(
@@ -5547,7 +5544,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 authentication=authentication,
                 auth_type=auth_type,
             )
-            
+
             # Extract capabilities from the response payload
             payload = init_response.get("payload", {})
             capabilities = payload.get("result", {}).get("capabilities", {})
@@ -5630,10 +5627,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             logger.error(f"Failed to connect to proxy server: {e}", exc_info=True)
             raise GatewayConnectionError(f"Failed to fetch capabilities from reverse proxy session: {str(e)}")
-        
+
         # Convert raw dicts to Pydantic models
         tools = [ToolCreate.model_validate(tool) for tool in tools]
-        
+
         # Convert raw resource dicts to ResourceCreate objects
         resource_objects = []
         for resource in resources:
@@ -5658,10 +5655,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     )
                 )
         resources = resource_objects
-        
+
         # Convert raw prompt dicts to PromptCreate objects
         prompts = [PromptCreate.model_validate(prompt) for prompt in prompts]
-        
+
         return capabilities, tools, resources, prompts
 
     async def connect_to_sse_server(

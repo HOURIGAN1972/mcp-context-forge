@@ -1482,11 +1482,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         # Check if path is exempt (login, logout, static)
         is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
-        
+
         # Also exempt team add-member endpoints (pattern: /admin/teams/{uuid}/add-member)
         if not is_exempt and "/teams/" in scope_path and scope_path.endswith("/add-member"):
             is_exempt = True
-            
+
         if is_exempt:
             return await call_next(request)
 

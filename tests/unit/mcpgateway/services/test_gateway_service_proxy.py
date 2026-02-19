@@ -90,7 +90,7 @@ def mock_forward_request():
     async def forward_func(session_id, request):
         """Mock function that simulates forwarding MCP requests."""
         method = request.get("method")
-        
+
         if method == "initialize":
             return {
                 "payload": {
@@ -150,7 +150,7 @@ def mock_forward_request():
                 }
             }
         return {"payload": {}}
-    
+
     return AsyncMock(side_effect=forward_func)
 
 
@@ -174,28 +174,28 @@ class TestGatewayServiceProxy:
                 _make_execute_result(scalars_list=[]),  # Candidate prompts query (line 1009)
             ]
         )
-        
+
         gateway_service._notify_gateway_added = AsyncMock()
-        
+
         # Mock GatewayRead.model_validate to return a mock with .masked()
         mock_model = Mock()
         mock_model.masked.return_value = mock_model
         mock_model.name = "proxy_gateway"
         mock_model.url = "ws://proxy"
         mock_model.id = "test-session-123"
-        
+
         monkeypatch.setattr(
             "mcpgateway.services.gateway_service.GatewayRead.model_validate",
             lambda x: mock_model,
         )
-        
+
         gateway_create = GatewayCreate(
             name="proxy_gateway",
             url="ws://proxy",
             description="A proxy gateway",
             transport="PROXIED",  # PROXIED transport for reverse proxy gateways
         )
-        
+
         result = await gateway_service.register_gateway(
             mock_db,
             gateway_create,
@@ -203,17 +203,17 @@ class TestGatewayServiceProxy:
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
-        
+
         # Verify result structure for proxy mode
         assert isinstance(result, tuple)
         assert len(result) == 4
         gateway_read, tool_ids, resource_ids, prompt_ids = result
-        
+
         # Verify gateway was added
         mock_db.add.assert_called_once()
         mock_db.commit.assert_called_once()  # Proxy mode commits immediately
         mock_db.refresh.assert_called_once()
-        
+
         # Verify forward_request was called for MCP protocol
         assert mock_forward_request.call_count >= 2  # At least initialize + initialized
 
@@ -226,7 +226,7 @@ class TestGatewayServiceProxy:
             description="A proxy gateway",
             transport="PROXIED",
         )
-        
+
         with pytest.raises(ValueError, match="session_id is required when is_proxy=True"):
             await gateway_service.register_gateway(
                 mock_db,
@@ -245,7 +245,7 @@ class TestGatewayServiceProxy:
         existing_gateway.tools = []
         existing_gateway.resources = []
         existing_gateway.prompts = []
-        
+
         mock_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=existing_gateway),  # Existing gateway found (line 1075)
@@ -255,26 +255,26 @@ class TestGatewayServiceProxy:
                 _make_execute_result(scalars_list=[]),  # Candidate prompts query (line 1009)
             ]
         )
-        
+
         gateway_service._notify_gateway_added = AsyncMock()
-        
+
         # Mock GatewayRead.model_validate
         mock_model = Mock()
         mock_model.masked.return_value = mock_model
         mock_model.name = "updated_proxy"
-        
+
         monkeypatch.setattr(
             "mcpgateway.services.gateway_service.GatewayRead.model_validate",
             lambda x: mock_model,
         )
-        
+
         gateway_create = GatewayCreate(
             name="updated_proxy",
             url="ws://proxy",
             description="Updated proxy gateway",
             transport="PROXIED",
         )
-        
+
         result = await gateway_service.register_gateway(
             mock_db,
             gateway_create,
@@ -282,11 +282,11 @@ class TestGatewayServiceProxy:
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
-        
+
         # Verify update path was taken (commit called for proxy mode)
         # Note: db.add may be called for new tools/resources/prompts even in update mode
         mock_db.commit.assert_called_once()
-        
+
         # Verify the gateway update was processed (name attribute should be set)
         # The actual update happens on the existing_gateway object
         assert hasattr(existing_gateway, 'name')
@@ -306,21 +306,21 @@ class TestGatewayServiceProxy:
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
-        
+
         # Verify capabilities were retrieved
         assert "tools" in capabilities
         assert capabilities["tools"]["listChanged"] is True
-        
+
         # Verify tools were retrieved and converted to ToolCreate
         assert len(tools) == 1
         assert isinstance(tools[0], ToolCreate)
         assert tools[0].name == "test_tool"
-        
+
         # Verify resources were retrieved
         assert len(resources) == 1
         assert isinstance(resources[0], ResourceCreate)
         assert resources[0].uri == "test://resource"
-        
+
         # Verify prompts were retrieved
         assert len(prompts) == 1
         assert isinstance(prompts[0], PromptCreate)
@@ -346,14 +346,14 @@ class TestGatewayServiceProxy:
         gateway_service.connect_to_sse_server = AsyncMock(
             return_value=({"tools": {}}, [], [], [])
         )
-        
+
         capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="SSE",
             is_proxy=False,
         )
-        
+
         # Verify SSE connection was used
         gateway_service.connect_to_sse_server.assert_called_once()
 
@@ -371,27 +371,27 @@ class TestGatewayServiceProxy:
             include_prompts=True,
             include_resources=True,
         )
-        
+
         # Verify MCP protocol sequence
         calls = mock_forward_request.call_args_list
         assert len(calls) >= 4  # initialize, initialized, tools/list, resources/list, prompts/list
-        
+
         # Verify initialize was called first
         init_call = calls[0][0][1]
         assert init_call["method"] == "initialize"
         assert init_call["params"]["protocolVersion"] == "2024-11-05"
-        
+
         # Verify capabilities
         assert "tools" in capabilities
-        
+
         # Verify tools
         assert len(tools) == 1
         assert tools[0].name == "test_tool"
-        
+
         # Verify resources
         assert len(resources) == 1
         assert resources[0].uri == "test://resource"
-        
+
         # Verify prompts
         assert len(prompts) == 1
         assert prompts[0].name == "test_prompt"
@@ -406,10 +406,10 @@ class TestGatewayServiceProxy:
             include_prompts=True,
             include_resources=False,  # Skip resources
         )
-        
+
         # Verify resources were not fetched
         assert len(resources) == 0
-        
+
         # But tools and prompts should still be fetched
         assert len(tools) == 1
         assert len(prompts) == 1
@@ -424,10 +424,10 @@ class TestGatewayServiceProxy:
             include_prompts=False,  # Skip prompts
             include_resources=True,
         )
-        
+
         # Verify prompts were not fetched
         assert len(prompts) == 0
-        
+
         # But tools and resources should still be fetched
         assert len(tools) == 1
         assert len(resources) == 1
@@ -437,7 +437,7 @@ class TestGatewayServiceProxy:
         """Test proxy connection handles errors gracefully."""
         async def failing_forward(session_id, request):
             raise Exception("Connection failed")
-        
+
         with pytest.raises(GatewayConnectionError, match="Failed to fetch capabilities from reverse proxy session"):
             await gateway_service.connect_to_proxy_server(
                 session_id="test-session-123",
@@ -464,7 +464,7 @@ class TestGatewayServiceProxy:
             elif method == "tools/list":
                 raise Exception("Tools fetch failed")
             return {"payload": {}}
-        
+
         # Should not raise, just log warning and return empty tools
         capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
@@ -473,10 +473,10 @@ class TestGatewayServiceProxy:
             include_resources=False,
             include_prompts=False,
         )
-        
+
         # Verify capabilities were still retrieved
         assert "tools" in capabilities
-        
+
         # But tools list is empty due to error
         assert len(tools) == 0
 
@@ -513,7 +513,7 @@ class TestGatewayServiceProxy:
                     }
                 }
             return {"payload": {}}
-        
+
         capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=AsyncMock(side_effect=forward_with_invalid_resource),
@@ -521,7 +521,7 @@ class TestGatewayServiceProxy:
             include_resources=True,
             include_prompts=False,
         )
-        
+
         # Verify fallback resource was created
         assert len(resources) == 1
         assert resources[0].uri == "test://resource"

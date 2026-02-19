@@ -475,10 +475,10 @@ class ServerService:
             'server_read'
         """
         try:
-            logger.info(f"Registering server: {server_in.name}")
+            logger.info("Registering server: %s", server_in.name)
 
             # Log all input parameters to understand where team_id comes from
-            logger.info(f"register_server called with:")
+            logger.info("register_server called with:")
             logger.info(f"  server_in.name: {server_in.name}")
             logger.info(f"  server_in.id: {getattr(server_in, 'id', None)}")
             logger.info(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")

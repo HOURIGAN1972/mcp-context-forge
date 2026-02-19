@@ -7,7 +7,7 @@ Create your own fork of the public repo
 
 Find commit related to PR
 
-	git log --grep="CYFR-XXX"
+    git log --grep="CYFR-XXX"
 
 Get get commit sha from the commit.
 
@@ -22,6 +22,3 @@ On public forked repo, create a branch and apply the changes
     git apply CYFR-XXX_changes.diff
 
 Create a PR from that branch into the public repo
-
-
-

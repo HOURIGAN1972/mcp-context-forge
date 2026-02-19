@@ -3111,6 +3111,7 @@ class ToolService:
 
                         try:
                             # Lazy import to avoid circular dependency
+                            # First-Party
                             from mcpgateway.routers.reverse_proxy import extract_session_id_from_url, forward_request_to_session  # pylint: disable=import-outside-toplevel
 
                             session_id = extract_session_id_from_url(server_url)

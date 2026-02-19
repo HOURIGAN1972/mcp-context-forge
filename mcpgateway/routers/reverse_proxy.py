@@ -12,11 +12,10 @@ to connect and tunnel their local MCP servers through the gateway.
 
 # Standard
 import asyncio
-from functools import partial
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-import uuid
 from urllib.parse import urlparse
+import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
@@ -25,14 +24,12 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.config import settings, Settings
 from mcpgateway.db import get_db
-from mcpgateway.schemas import GatewayCreate, TransportType, ServerCreate
-from mcpgateway.services.server_service import ServerService, ServerNameConflictError
+from mcpgateway.schemas import GatewayCreate, ServerCreate, TransportType
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.server_service import ServerService
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token
-from mcpgateway.utils.verify_credentials import require_auth
-from mcpgateway.config import Settings
 
 # Initialize logging
 logging_service = LoggingService()
@@ -107,7 +104,6 @@ class ReverseProxyManager:
 
         LOGGER.info(f"add_session Now have len(self.sessions): {len(self.sessions)}")
 
-
     async def remove_session(self, session_id: str) -> None:
         """Remove a session.
 
@@ -123,7 +119,6 @@ class ReverseProxyManager:
                 LOGGER.info(f"Removed reverse proxy session: {session_id}")
 
         LOGGER.info(f"remove_session Now have len(self.sessions): {len(self.sessions)}")
-
 
     async def get_session(self, session_id: str) -> Optional[ReverseProxySession]:
         """Get a session by ID.
@@ -178,8 +173,7 @@ manager = ReverseProxyManager()
 pending_responses = {}
 
 
-
-def extract_session_id_from_url( url: str) -> str:
+def extract_session_id_from_url(url: str) -> str:
     LOGGER.info(f"extract_session_id_from_url {url}")
     path_parts = urlparse(url).path.strip("/").split("/")
     try:
@@ -188,7 +182,6 @@ def extract_session_id_from_url( url: str) -> str:
         return path_parts[session_index + 1]
     except (ValueError, IndexError):
         raise ValueError("Invalid URL format — could not extract session ID.")
-
 
 
 async def forward_request_to_session(
@@ -232,7 +225,7 @@ async def forward_request_to_session(
 
         # Notifications don't expect a response
         if is_notification:
-            LOGGER.info(f"Sent notification (no response expected)")
+            LOGGER.info("Sent notification (no response expected)")
             return None
 
         # For requests, create a future and wait for response
@@ -242,7 +235,7 @@ async def forward_request_to_session(
 
         # Wait for the response with a timeout
         response = await asyncio.wait_for(future, timeout=30)
-        LOGGER.info(f"response {response}" )
+        LOGGER.info("response %s", response)
         return response
 
     except asyncio.TimeoutError:
@@ -250,7 +243,7 @@ async def forward_request_to_session(
             pending_responses.pop(request_id, None)
         raise
 
-    except Exception as e:
+    except Exception:
         if request_id:
             pending_responses.pop(request_id, None)
         raise
@@ -344,10 +337,9 @@ async def websocket_endpoint(
     # Client-supplied X-Session-ID is ignored for security (prevents collision/hijack attacks)
     # Get session ID from headers or generate new one
     session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
-    LOGGER.info(f"websocket_endpoint session_id {session_id}")
+    LOGGER.info("websocket_endpoint session_id %s", session_id)
 
-
-    LOGGER.info(f" session_id {session_id}")
+    LOGGER.info("session_id %s", session_id)
 
     # Create session with authenticated user
     session = ReverseProxySession(session_id, websocket, user)
@@ -374,6 +366,7 @@ async def websocket_endpoint(
                     async def process_registration():
                         # Use separate database sessions for gateway and server registration
                         # to avoid transaction conflicts
+                        # First-Party
                         from mcpgateway.db import SessionLocal
 
                         dbsession = SessionLocal()
@@ -402,6 +395,7 @@ async def websocket_endpoint(
                             )
 
                             # Gateway registration - flush and commit before server registration
+                            # First-Party
                             from mcpgateway.services import GatewayService
 
                             try:
@@ -469,17 +463,16 @@ async def websocket_endpoint(
                     LOGGER.info(f"Received {msg_type} from session {session_id} message type {type(message)} message {orjson.dumps(message).decode()}")
 
                     payload = message.get("payload")
-                    LOGGER.info(f"response payload {payload}  type payload {type(payload)}")
+                    LOGGER.info("response payload %s  type payload %s", payload, type(payload))
                     request_id = payload["id"]
-                    LOGGER.info(f"response request_id {request_id}")
+                    LOGGER.info("response request_id %s", request_id)
                     if request_id and request_id in pending_responses:
-                        LOGGER.info(f"request_id found in pending_responses")
+                        LOGGER.info("request_id found in pending_responses")
                         future = pending_responses.pop(request_id)
-                        LOGGER.info(f"future found {future}")
+                        LOGGER.info("future found %s", future)
                         if not future.done():
-                            LOGGER.info(f"set result on future ")
+                            LOGGER.info("set result on future")
                             future.set_result(message)
-
 
                 else:
                     LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
@@ -602,11 +595,7 @@ async def send_request_to_session(
     # Validate session ownership
     _validate_session_ownership(session, credentials, "send request to")
 
-    # Wrap the request in reverse proxy envelope
-    message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
-
     try:
-
         response = await forward_request_to_session(session_id, mcp_request)
         return response
     except asyncio.TimeoutError as e:
@@ -725,5 +714,3 @@ async def sse_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
-
-
