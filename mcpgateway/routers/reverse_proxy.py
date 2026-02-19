@@ -191,10 +191,30 @@ def extract_session_id_from_url( url: str) -> str:
 
 
 
-async def forward_request_to_session(session_id: str,
-                                  mcp_request: Dict[str, Any]
-                                  ):
+async def forward_request_to_session(
+    session_id: str,
+    mcp_request: Dict[str, Any],
+    authentication: Optional[Dict[str, str]] = None,
+    auth_type: Optional[str] = None,
+):
+    """Forward an MCP request to a reverse proxy session.
+
+    Args:
+        session_id: Session ID to forward the request to.
+        mcp_request: MCP request dictionary to forward.
+        authentication: Optional dictionary containing authentication headers.
+        auth_type: Type of authentication being used (for logging/debugging).
+
+    Returns:
+        Response from the proxied server, or None for notifications.
+
+    Raises:
+        ValueError: If session is not found.
+        asyncio.TimeoutError: If request times out.
+    """
     LOGGER.info(f"**** forward_request_to_session session_id {session_id}  mcp_request {mcp_request}")
+    if authentication:
+        LOGGER.debug(f"Authentication provided: type={auth_type}")
     session = await manager.get_session(session_id)
     if not session:
         LOGGER.info("Session with ID '{session_id}' was not found.")

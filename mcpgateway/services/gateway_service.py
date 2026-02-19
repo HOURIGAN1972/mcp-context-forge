@@ -5532,16 +5532,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         
         try:
             # Send initialize request
-            init_response = await forward_request_func(session_id, {
-                "jsonrpc": "2.0",
-                "id": f"init-{session_id}",
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}
-                }
-            })
+            init_response = await forward_request_func(
+                session_id,
+                {
+                    "jsonrpc": "2.0",
+                    "id": f"init-{session_id}",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}
+                    }
+                },
+                authentication=authentication,
+                auth_type=auth_type,
+            )
             
             # Extract capabilities from the response payload
             payload = init_response.get("payload", {})
@@ -5550,19 +5555,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Send initialized notification (required by MCP protocol before listing tools)
             try:
-                await forward_request_func(session_id, {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/initialized"
-                })
+                await forward_request_func(
+                    session_id,
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized"
+                    },
+                    authentication=authentication,
+                    auth_type=auth_type,
+                )
                 await asyncio.sleep(0.2)  # Small delay to ensure notification is processed
 
                 # Now send tools/list request
-                tools_response = await forward_request_func(session_id, {
-                    "jsonrpc": "2.0",
-                    "id": f"tools-{session_id}",
-                    "method": "tools/list",
-                    "params": {}
-                })
+                tools_response = await forward_request_func(
+                    session_id,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": f"tools-{session_id}",
+                        "method": "tools/list",
+                        "params": {}
+                    },
+                    authentication=authentication,
+                    auth_type=auth_type,
+                )
                 payload = tools_response.get("payload", {})
                 tools = payload.get("result", {}).get("tools", [])
                 logger.info(f"Received {len(tools)} tools from proxy")
@@ -5573,12 +5588,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Send resources/list request (try if capabilities indicate support)
             if include_resources and capabilities.get("resources"):
                 try:
-                    resources_response = await forward_request_func(session_id, {
-                        "jsonrpc": "2.0",
-                        "id": f"resources-{session_id}",
-                        "method": "resources/list",
-                        "params": {}
-                    })
+                    resources_response = await forward_request_func(
+                        session_id,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": f"resources-{session_id}",
+                            "method": "resources/list",
+                            "params": {}
+                        },
+                        authentication=authentication,
+                        auth_type=auth_type,
+                    )
                     payload = resources_response.get("payload", {})
                     resources = payload.get("result", {}).get("resources", [])
                     logger.info(f"Received {len(resources)} resources from proxy")
@@ -5589,12 +5609,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Send prompts/list request (try if capabilities indicate support)
             if include_prompts and capabilities.get("prompts"):
                 try:
-                    prompts_response = await forward_request_func(session_id, {
-                        "jsonrpc": "2.0",
-                        "id": f"prompts-{session_id}",
-                        "method": "prompts/list",
-                        "params": {}
-                    })
+                    prompts_response = await forward_request_func(
+                        session_id,
+                        {
+                            "jsonrpc": "2.0",
+                            "id": f"prompts-{session_id}",
+                            "method": "prompts/list",
+                            "params": {}
+                        },
+                        authentication=authentication,
+                        auth_type=auth_type,
+                    )
                     payload = prompts_response.get("payload", {})
                     prompts = payload.get("result", {}).get("prompts", [])
                     logger.info(f"Received {len(prompts)} prompts from proxy")
