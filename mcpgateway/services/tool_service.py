@@ -3783,13 +3783,6 @@ class ToolService:
                         structured = dump.get("structuredContent") or dump.get("structured_content")
                         filtered_response = extract_using_jq(content, tool_jsonpath_filter)
 
-                    dump = tool_call_result.model_dump(by_alias=True)
-                    logger.debug(f"Tool call result dump: {dump}")
-                    content = dump.get("content", [])
-                    # Accept both alias and pythonic names for structured content
-                    structured = dump.get("structuredContent") or dump.get("structured_content")
-                    filtered_response = extract_using_jq(content, tool_jsonpath_filter)
-
                         is_err = getattr(tool_call_result, "is_error", None)
                         if is_err is None:
                             is_err = getattr(tool_call_result, "isError", False)
