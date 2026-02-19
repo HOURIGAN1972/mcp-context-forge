@@ -692,6 +692,9 @@ async def sse_endpoint(
 
         Yields:
             dict: SSE event data.
+
+        Raises:
+            asyncio.CancelledError: If the generator is cancelled.
         """
         try:
             # Send initial connection event
@@ -703,7 +706,7 @@ async def sse_endpoint(
                 yield {"event": "keepalive", "data": orjson.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()}).decode()}
 
         except asyncio.CancelledError:
-            pass
+            raise
 
     return StreamingResponse(
         event_generator(),
