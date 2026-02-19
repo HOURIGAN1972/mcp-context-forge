@@ -1169,6 +1169,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             else:
                 # Create DB model
                 db_gateway = DbGateway(
+                    id=session_id,
                     name=gateway.name,
                     slug=slug_name,
                     url=normalized_url,
