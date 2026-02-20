@@ -499,7 +499,7 @@ class ServerService:
             existing_server_to_update = None
             if created_via == "reverse_proxy":
                 # Log the values we're searching for
-                logger.info(f"Reverse proxy looking for existing server with:")
+                logger.info("Reverse proxy looking for existing server with:")
                 logger.info(f"  server_in.id: {server_in.id}")
                 logger.info(f"  server_in.name: {server_in.name}")
                 logger.info(f"  team_id_to_check: {team_id_to_check}")

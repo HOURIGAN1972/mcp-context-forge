@@ -391,7 +391,7 @@ class ReverseProxyClient:
             # No certificate provided - disable verification (insecure)
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            ssl_context.verify_mode = ssl.CERT_NONE  # noqa: DUO122
 
         # Connect
         self.connection = await websockets.connect(

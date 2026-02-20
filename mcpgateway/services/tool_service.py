@@ -3380,7 +3380,6 @@ class ToolService:
                             ),
                         )
 
-
                     async def connect_to_proxy_server(server_url: str, headers: dict = headers):
                         logger.info(f"connect_to_proxy_server  server_url {server_url} headers {headers} arguments {arguments} ")
 
@@ -3419,7 +3418,7 @@ class ToolService:
                                           "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
                             )
 
-                            result = await forward_request_to_session( session_id=session_id, mcp_request=json_rpc_request)
+                            result = await forward_request_to_session(session_id=session_id, mcp_request=json_rpc_request)
                             logger.info(f"result {result}")
 
                             # Extract the payload from the reverse proxy envelope
@@ -3446,7 +3445,7 @@ class ToolService:
                         except Exception as ex:
                             error_message = str(ex)
                             tool_call_result = ToolResult(
-                                content=[TextContent(type="text", text=str( f"Tool error encountered : {error_message}"))],
+                                content=[TextContent(type="text", text=str(f"Tool error encountered : {error_message}"))],
                                 is_error=True,
                             )
                             # Log failed MCP call (using local variables)
@@ -3629,7 +3628,6 @@ class ToolService:
                         """
 
                         logger.info(f"connect_to_streamablehttp_server server_url {server_url}  headers {headers}  arguments {arguments}")
-
 
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()

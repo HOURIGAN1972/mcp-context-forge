@@ -204,6 +204,7 @@ async def forward_request_to_session(
     Raises:
         ValueError: If session is not found.
         asyncio.TimeoutError: If request times out.
+        Exception: For any other errors during request forwarding.
     """
     LOGGER.info(f"**** forward_request_to_session session_id {session_id}  mcp_request {mcp_request}")
     if authentication:
