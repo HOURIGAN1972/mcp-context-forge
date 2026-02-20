@@ -277,8 +277,8 @@ async def websocket_endpoint(
     auth_header = websocket.headers.get("Authorization", "")
 
     # Determine if auth is required
-    # auth_required = settings.auth_required or settings.mcp_client_auth_enabled
-    auth_required = False
+    auth_required = settings.auth_required or settings.mcp_client_auth_enabled
+    team_id = None  # Initialize team_id to None (will be set if auth is enabled)
 
     if auth_required:
         # Try Bearer token authentication from header
@@ -289,7 +289,10 @@ async def websocket_endpoint(
                 user = payload.get("sub") or payload.get("email")
                 if not user:
                     raise ValueError("Token missing subject claim")
-                LOGGER.debug(f"WebSocket authenticated via JWT: {user}")
+                # Extract first team from token if present
+                teams = payload.get("teams")
+                team_id = teams[0] if teams and isinstance(teams, list) and len(teams) > 0 else None
+                LOGGER.info(f"WebSocket authenticated via JWT: {user}, team_id: {team_id}")
             except HTTPException as e:
                 LOGGER.warning(f"WebSocket JWT authentication failed: {e.detail}")
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
@@ -306,7 +309,10 @@ async def websocket_endpoint(
                 user = payload.get("sub") or payload.get("email")
                 if not user:
                     raise ValueError("Token missing subject claim")
-                LOGGER.debug(f"WebSocket authenticated via query token: {user}")
+                # Extract first team from token if present
+                teams = payload.get("teams")
+                team_id = teams[0] if teams and isinstance(teams, list) and len(teams) > 0 else None
+                LOGGER.info(f"WebSocket authenticated via JWT: {user}, team_id: {team_id}")
             except HTTPException as e:
                 LOGGER.warning(f"WebSocket query token authentication failed: {e.detail}")
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
@@ -369,76 +375,62 @@ async def websocket_endpoint(
                         # First-Party
                         from mcpgateway.db import SessionLocal
 
-                        dbsession = SessionLocal()
-
                         try:
-                            LOGGER.info(f" register session_id {session_id}")
-                            app_domain = Settings().app_domain
-                            url = f"{app_domain}reverse-proxy/sessions/{session_id}/mcp"
+                            with SessionLocal() as dbsession:
+                                LOGGER.info(f" register session_id {session_id}")
+                                app_domain = Settings().app_domain
+                                url = f"{app_domain}reverse-proxy/sessions/{session_id}/mcp"
 
-                            gateway = GatewayCreate(
-                                name=session.server_info.get("name"),
-                                url=url,
-                                description=session.server_info.get("description"),
-                                tags=[],
-                                transport=TransportType.PROXIED,
-                                auth_type=None,
-                                auth_username="",
-                                auth_password="",
-                                auth_token="",
-                                auth_header_key="",
-                                auth_header_value="",
-                                auth_headers=None,
-                                oauth_config=None,
-                                passthrough_headers=None,
-                                visibility="public",
-                            )
-
-                            # Gateway registration - flush and commit before server registration
-                            # First-Party
-                            from mcpgateway.services import GatewayService
-
-                            try:
-                                gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
-                                    db=dbsession,
-                                    gateway=gateway,
-                                    session_id=session_id,
-                                    forward_request_func=forward_request_to_session
+                                gateway = GatewayCreate(
+                                    name=session.server_info.get("name"),
+                                    url=url,
+                                    description=session.server_info.get("description"),
+                                    tags=[],
+                                    transport=TransportType.PROXIED,
+                                    visibility="team",
                                 )
 
-                                LOGGER.info(f"**** Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
-                                server_in = ServerCreate(
-                                    id=gateway.id,
-                                    name="virtual-"+gateway.name,
-                                    description=gateway.description,
-                                    icon=None,
-                                    associated_tools=tool_ids,
-                                    associated_resources=resource_ids,
-                                    associated_prompts=prompt_ids,
-                                    associated_a2a_agents=[],
-                                    team_id=gateway.team_id,
-                                    tags=gateway.tags,
-                                    visibility=gateway.visibility,
-                                    owner_email=None
-                                )
+                                # Gateway registration - flush and commit before server registration
+                                # First-Party
+                                from mcpgateway.services import GatewayService
 
-                                server = await ServerService().register_server(
-                                    dbsession,
-                                    server_in,
-                                    created_by=None,
-                                    created_from_ip=gateway.created_from_ip,
-                                    created_via=gateway.created_via,
-                                    created_user_agent=gateway.created_user_agent,
-                                    team_id=gateway.team_id,
-                                    visibility=gateway.visibility,
-                                )
-                                LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
-                            except Exception as e:
-                                LOGGER.error(f"Failed to register gateway/server: {e}")
-                                dbsession.rollback()
-                                raise
-                            finally:
-                                dbsession.close()
+                                try:
+                                    gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
+                                        db=dbsession,
+                                        gateway=gateway,
+                                        team_id=team_id,
+                                        visibility=gateway.visibility,
+                                        gateway_id=session_id,
+                                        forward_request_func=forward_request_to_session
+                                    )
+
+                                    LOGGER.info(f"**** Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
+                                    server_in = ServerCreate(
+                                        id=gateway.id,
+                                        name="virtual-"+gateway.name,
+                                        description=gateway.description,
+                                        icon=None,
+                                        associated_tools=tool_ids,
+                                        associated_resources=resource_ids,
+                                        associated_prompts=prompt_ids,
+                                        associated_a2a_agents=[],
+                                        team_id=gateway.team_id,
+                                        tags=gateway.tags,
+                                        visibility=gateway.visibility
+                                    )
+
+                                    server = await ServerService().register_server(
+                                        dbsession,
+                                        server_in,
+                                        team_id=gateway.team_id,
+                                        visibility=gateway.visibility,
+                                    )
+                                    LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
+                                    
+                                except Exception as e:
+                                    LOGGER.error(f"Failed to register gateway/server: {e}")
+                                    dbsession.rollback()
+                                    raise
 
                             # Send final success acknowledgment
                             await session.send_message({"type": "register_complete", "sessionId": session_id, "status": "success"})

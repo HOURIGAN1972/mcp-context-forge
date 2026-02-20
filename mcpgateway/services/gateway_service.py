@@ -667,8 +667,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
         # Proxy-specific parameters
-        is_proxy: bool = False,
-        session_id: Optional[str] = None,
+        gateway_id: Optional[str] = None,
         forward_request_func: Optional[Any] = None,
     ) -> Union[GatewayRead, tuple[GatewayRead, List[str], List[str], List[str]]]:
         """Register a new gateway (standard or proxied).
@@ -678,15 +677,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway: Gateway creation schema
             created_by: Username who created this gateway
             created_from_ip: IP address of creator
-            created_via: Creation method (ui, api, federation)
+            created_via: Creation method (ui, api, federation, reverse_proxy)
             created_user_agent: User agent of creation request
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
-            is_proxy (bool): Whether this is a reverse proxy gateway (default: False)
-            session_id (Optional[str]): Session ID for reverse proxy connections (required if is_proxy=True)
-            forward_request_func (Optional[Any]): Function to forward MCP requests to the session (required if is_proxy=True)
+            gateway_id (Optional[str]): gateway ID for reverse proxy (required if created_via="reverse_proxy")
+            forward_request_func (Optional[Any]): Function to forward MCP requests to the session (required if created_via="reverse_proxy")
 
         Returns:
             For standard gateways: GatewayRead
@@ -720,12 +718,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
             >>> asyncio.run(service._http_client.aclose())
         """
+        # Determine if this is a reverse proxy gateway
+        is_reverse_proxied = created_via == "reverse_proxy"
+        
         # Validate proxy-specific parameters
-        if is_proxy and not session_id:
-            raise ValueError("session_id is required when is_proxy=True")
+        if is_reverse_proxied and not gateway_id:
+            raise ValueError("gateway_id is required when created_via='reverse_proxy'")
 
-        if is_proxy:
-            logger.info(f"Registering proxy gateway {gateway.name} for session {session_id}")
+        if is_reverse_proxied:
+            logger.info(f"Registering proxy gateway {gateway.name} for gateway {gateway_id}")
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
             # # Check for name conflicts (both active and inactive)
@@ -740,7 +741,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check for existing gateway with the same slug and visibility
             # Skip this check for proxy mode since we support updating existing gateways
             slug_name = slugify(gateway.name)
-            if not is_proxy:
+            if not is_reverse_proxied:
                 if visibility.lower() == "public":
                     # Check for existing public gateway with the same slug (row-locked)
                     existing_gateway = get_for_update(
@@ -776,7 +777,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Check for duplicate gateway
             # Skip this check for proxy mode since we support updating existing gateways
-            if not gateway.one_time_auth and not is_proxy:
+            if not gateway.one_time_auth and not is_reverse_proxied:
                 duplicate_gateway = self._check_gateway_uniqueness(
                     db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
                 )
@@ -856,8 +857,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 oauth_config,
                                 ca_certificate,
                                 auth_query_params=auth_query_params_decrypted,
-                                is_proxy=is_proxy,
-                                session_id=session_id,
+                                gateway_id=gateway_id,
                                 forward_request_func=forward_request_func,
                             ),
                             timeout=initialize_timeout,
@@ -874,8 +874,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     oauth_config,
                     ca_certificate,
                     auth_query_params=auth_query_params_decrypted,
-                    is_proxy=is_proxy,
-                    session_id=session_id,
+                    gateway_id=gateway_id,
                     forward_request_func=forward_request_func,
                 )
 
@@ -895,7 +894,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     original_description=tool.description,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
-                    request_type="PROXIED" if is_proxy else tool.request_type,
+                    request_type="PROXIED" if is_reverse_proxied else tool.request_type,
                     headers=tool.headers,
                     input_schema=tool.input_schema,
                     output_schema=tool.output_schema if hasattr(tool, "output_schema") else None,
@@ -1087,12 +1086,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Check for existing gateway (proxy mode supports upsert)
             existing_gateway = None
-            if is_proxy and session_id:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == session_id)).scalar_one_or_none()
+            if is_reverse_proxied and gateway_id:
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
 
             if existing_gateway:
                 # Update existing proxy gateway
-                logger.info(f"Updating existing proxy gateway for session {session_id}")
+                logger.info(f"Updating existing proxy gateway for session {gateway_id}")
 
                 # Get existing tools/resources/prompts by original_name for updating
                 existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
@@ -1169,7 +1168,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             else:
                 # Create DB model
                 db_gateway = DbGateway(
-                    id=session_id,
+                    id=gateway_id,
                     name=gateway.name,
                     slug=slug_name,
                     url=normalized_url,
@@ -1264,7 +1263,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Return appropriate response based on mode
             gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
 
-            if is_proxy:
+            if is_reverse_proxied:
                 # For proxy mode, return gateway with tool/resource/prompt IDs
                 tool_ids = [str(t.id) for t in db_gateway.tools]
                 resource_ids = [str(r.id) for r in db_gateway.resources]
@@ -1383,29 +1382,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self,
         db: Session,
         gateway: GatewayCreate,
-        session_id: str,
+        gateway_id: str,
         forward_request_func: Optional[Any] = None,
-        created_by: Optional[str] = None,
-        created_from_ip: Optional[str] = None,
-        created_via: Optional[str] = None,
-        created_user_agent: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
     ) -> tuple[GatewayRead, List[str], List[str], List[str]]:
         """Register a new proxy gateway.
 
-        This is a convenience wrapper around register_gateway() with is_proxy=True.
+        This is a convenience wrapper around register_gateway() with created_via="reverse_proxy".
 
         Args:
             db: Database Session
             gateway: Gateway creation schema
-            session_id: Session ID for the reverse proxy connection
+            gateway_id: gateway ID for the reverse proxy
             forward_request_func: Function to forward MCP requests to the session
-            created_by: Username who created this gateway
-            created_from_ip: IP address of creator
-            created_via: Creation method (ui, api, federation)
-            created_user_agent: User agent of creation request
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
@@ -1423,16 +1414,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         return await self.register_gateway(
             db=db,
             gateway=gateway,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
+            created_via="reverse_proxy",
             team_id=team_id,
             owner_email=owner_email,
             visibility=visibility,
             initialize_timeout=None,
-            is_proxy=True,
-            session_id=session_id,
+            gateway_id=gateway_id,
             forward_request_func=forward_request_func,
         )
 
@@ -3748,8 +3735,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         auth_query_params: Optional[Dict[str, str]] = None,
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
         # Proxy-specific parameters
-        is_proxy: bool = False,
-        session_id: Optional[str] = None,
+        gateway_id: Optional[str] = None,
         forward_request_func: Optional[Any] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
@@ -3772,9 +3758,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             oauth_auto_fetch_tool_flag: Whether to skip the early return for OAuth Authorization Code flow.
                 When False (default), auth_code gateways return empty lists immediately (for health checks).
                 When True, attempts to connect even for auth_code gateways (for activation after user authorization).
-            is_proxy: Whether this is a reverse proxy connection (default: False)
-            session_id: Session ID for reverse proxy connections (required if is_proxy=True)
-            forward_request_func: Function to forward MCP requests via WebSocket (required if is_proxy=True)
+            gateway_id: gateway ID for reverse proxy (required for reverse proxy mode)
+            forward_request_func: Function to forward MCP requests via WebSocket (required for reverse proxy mode)
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3782,7 +3767,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Raises:
             GatewayConnectionError: If connection or initialization fails
-            ValueError: If is_proxy=True but session_id or forward_request_func is missing
+            ValueError: If reverse proxy mode but gateway_id or forward_request_func is missing
 
         Examples:
             >>> service = GatewayService()
@@ -3860,13 +3845,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 authentication = decode_auth(authentication)
 
             # Route to appropriate connection method based on mode
-            if is_proxy:
+            # Determine if this is reverse proxy mode by checking if gateway_id and forward_request_func are provided
+            is_reverse_proxied = gateway_id is not None and forward_request_func is not None
+            if is_reverse_proxied:
                 # Proxy mode: use WebSocket-based MCP protocol
                 logger.info("calling connect_to_proxy_server")
-                if not session_id or not forward_request_func:
-                    raise ValueError("session_id and forward_request_func required for proxy mode")
+                if not gateway_id or not forward_request_func:
+                    raise ValueError("gateway_id and forward_request_func required for proxy mode")
                 capabilities, tools, resources, prompts = await self.connect_to_proxy_server(
-                    session_id=session_id,
+                    session_id=gateway_id,
                     forward_request_func=forward_request_func,
                     authentication=authentication,
                     auth_type=auth_type,
