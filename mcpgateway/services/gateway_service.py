@@ -720,7 +720,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         # Determine if this is a reverse proxy gateway
         is_reverse_proxied = created_via == "reverse_proxy"
-        
+
         # Validate proxy-specific parameters
         if is_reverse_proxied and not gateway_id:
             raise ValueError("gateway_id is required when created_via='reverse_proxy'")
