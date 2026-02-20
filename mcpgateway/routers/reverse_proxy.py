@@ -173,6 +173,7 @@ pending_responses = {}
 
 
 def extract_session_id_from_url(url: str) -> str:
+    """Extract session ID from URL path containing /sessions/{session_id}."""
     LOGGER.info(f"extract_session_id_from_url {url}")
     path_parts = urlparse(url).path.strip("/").split("/")
     try:
