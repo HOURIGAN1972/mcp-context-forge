@@ -3387,15 +3387,7 @@ class ToolService:
                         correlation_id = get_correlation_id()
 
                         # Create the JSON-RPC request
-                        json_rpc_request = {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            'params': {
-                                "name" : tool_name_original,
-                                "arguments" : arguments
-                             },
-                            'id': str(uuid.uuid4())
-                        }
+                        json_rpc_request = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": tool_name_original, "arguments": arguments}, "id": str(uuid.uuid4())}
 
                         logger.info(f"json_rpc_request {json_rpc_request} ")
 
@@ -3414,8 +3406,7 @@ class ToolService:
                                 message=f"MCP tool call started: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
-                                metadata={"event": "mcp_call_started", "tool_name": tool_name_original,
-                                          "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
+                                metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
                             )
 
                             result = await forward_request_to_session(session_id=session_id, mcp_request=json_rpc_request)
@@ -3426,10 +3417,7 @@ class ToolService:
                             logger.info(f"payload {payload}")
 
                             # Return the raw payload as ToolResult - filtering will be done by the common code path
-                            tool_call_result = ToolResult(
-                                content=payload.get("result", {}).get("content", []),
-                                is_error=payload.get("result", {}).get("isError", False)
-                            )
+                            tool_call_result = ToolResult(content=payload.get("result", {}).get("content", []), is_error=payload.get("result", {}).get("isError", False))
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000

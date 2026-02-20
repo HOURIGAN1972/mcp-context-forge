@@ -849,19 +849,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts = await asyncio.wait_for(
-                            self._initialize_gateway(
-                                init_url,  # URL with query params if applicable
-                                authentication_headers,
-                                gateway.transport,
-                                auth_type,
-                                oauth_config,
-                                ca_certificate,
-                                auth_query_params=auth_query_params_decrypted,
-                                gateway_id=gateway_id,
-                                forward_request_func=forward_request_func,
-                            ),
-                            timeout=initialize_timeout,
-                        )
+                        self._initialize_gateway(
+                            init_url,  # URL with query params if applicable
+                            authentication_headers,
+                            gateway.transport,
+                            auth_type,
+                            oauth_config,
+                            ca_certificate,
+                            auth_query_params=auth_query_params_decrypted,
+                            gateway_id=gateway_id,
+                            forward_request_func=forward_request_func,
+                        ),
+                        timeout=initialize_timeout,
+                    )
                 except asyncio.TimeoutError as exc:
                     sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
                     raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
@@ -1124,7 +1124,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_resource.name = new_resource.name
                         existing_resource.description = new_resource.description
                         existing_resource.mime_type = new_resource.mime_type
-                        existing_resource.annotations = new_resource.annotations if hasattr(new_resource, 'annotations') else None
+                        existing_resource.annotations = new_resource.annotations if hasattr(new_resource, "annotations") else None
                         existing_resource.updated_at = datetime.now(timezone.utc)
                         updated_resources.append(existing_resource)
                     else:
@@ -1139,7 +1139,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_prompt = existing_prompts_map[new_prompt.original_name]
                         existing_prompt.description = new_prompt.description
                         existing_prompt.argument_schema = new_prompt.argument_schema
-                        existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, 'annotations') else None
+                        existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, "annotations") else None
                         existing_prompt.updated_at = datetime.now(timezone.utc)
                         updated_prompts.append(existing_prompt)
                     else:
@@ -5238,11 +5238,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     "jsonrpc": "2.0",
                     "id": f"init-{session_id}",
                     "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}
-                    }
+                    "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "mcpgateway", "version": "1.0.0"}},
                 },
                 authentication=authentication,
                 auth_type=auth_type,
@@ -5257,10 +5253,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             try:
                 await forward_request_func(
                     session_id,
-                    {
-                        "jsonrpc": "2.0",
-                        "method": "notifications/initialized"
-                    },
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
                     authentication=authentication,
                     auth_type=auth_type,
                 )
@@ -5269,12 +5262,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Now send tools/list request
                 tools_response = await forward_request_func(
                     session_id,
-                    {
-                        "jsonrpc": "2.0",
-                        "id": f"tools-{session_id}",
-                        "method": "tools/list",
-                        "params": {}
-                    },
+                    {"jsonrpc": "2.0", "id": f"tools-{session_id}", "method": "tools/list", "params": {}},
                     authentication=authentication,
                     auth_type=auth_type,
                 )
@@ -5290,12 +5278,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     resources_response = await forward_request_func(
                         session_id,
-                        {
-                            "jsonrpc": "2.0",
-                            "id": f"resources-{session_id}",
-                            "method": "resources/list",
-                            "params": {}
-                        },
+                        {"jsonrpc": "2.0", "id": f"resources-{session_id}", "method": "resources/list", "params": {}},
                         authentication=authentication,
                         auth_type=auth_type,
                     )
@@ -5311,12 +5294,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     prompts_response = await forward_request_func(
                         session_id,
-                        {
-                            "jsonrpc": "2.0",
-                            "id": f"prompts-{session_id}",
-                            "method": "prompts/list",
-                            "params": {}
-                        },
+                        {"jsonrpc": "2.0", "id": f"prompts-{session_id}", "method": "prompts/list", "params": {}},
                         authentication=authentication,
                         auth_type=auth_type,
                     )

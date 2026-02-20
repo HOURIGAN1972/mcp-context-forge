@@ -451,7 +451,7 @@ class ReverseProxyClient:
         if self.use_websocket:
             # Ensure message is string for WebSocket text frames
             if isinstance(message, bytes):
-                message = message.decode('utf-8')
+                message = message.decode("utf-8")
             await cast(Any, conn).send(message)
         else:
             # SSE would POST to message endpoint
@@ -500,7 +500,7 @@ class ReverseProxyClient:
             async for message in conn:
                 # Ensure message is string
                 if isinstance(message, bytes):
-                    message = message.decode('utf-8')
+                    message = message.decode("utf-8")
                 await self._handle_gateway_message(message)
         except Exception as e:  # Catch broad exceptions to avoid dependency-specific attribute errors
             closed_exc = None

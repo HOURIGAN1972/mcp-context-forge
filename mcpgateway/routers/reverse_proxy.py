@@ -150,22 +150,21 @@ class ReverseProxyManager:
             True
         """
         async with self._lock:
-            LOGGER.info(
-                f"list_sessions manager {hex(id(self))} sessions {hex(id(self.sessions))} sessions.values {self.sessions.values()}")
+            LOGGER.info(f"list_sessions manager {hex(id(self))} sessions {hex(id(self.sessions))} sessions.values {self.sessions.values()}")
 
             # Return a shallow copy to prevent external mutation
             return [
-                    {
-                        "session_id": session.session_id,
-                        "server_info": session.server_info,
-                        "connected_at": session.connected_at.isoformat(),
-                        "last_activity": session.last_activity.isoformat(),
-                        "message_count": session.message_count,
-                        "bytes_transferred": session.bytes_transferred,
-                        "user": session.user if isinstance(session.user, str) else session.user.get("sub") if isinstance(session.user, dict) else None,
-                    }
-                    for session in self.sessions.values()
-                ]
+                {
+                    "session_id": session.session_id,
+                    "server_info": session.server_info,
+                    "connected_at": session.connected_at.isoformat(),
+                    "last_activity": session.last_activity.isoformat(),
+                    "message_count": session.message_count,
+                    "bytes_transferred": session.bytes_transferred,
+                    "user": session.user if isinstance(session.user, str) else session.user.get("sub") if isinstance(session.user, dict) else None,
+                }
+                for session in self.sessions.values()
+            ]
 
 
 # Global manager instance
@@ -397,12 +396,7 @@ async def websocket_endpoint(
 
                                 try:
                                     gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
-                                        db=dbsession,
-                                        gateway=gateway,
-                                        team_id=team_id,
-                                        visibility=gateway.visibility,
-                                        gateway_id=session_id,
-                                        forward_request_func=forward_request_to_session
+                                        db=dbsession, gateway=gateway, team_id=team_id, visibility=gateway.visibility, gateway_id=session_id, forward_request_func=forward_request_to_session
                                     )
 
                                     LOGGER.info(f"Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
@@ -417,7 +411,7 @@ async def websocket_endpoint(
                                         associated_a2a_agents=[],
                                         team_id=gateway.team_id,
                                         tags=gateway.tags,
-                                        visibility=gateway.visibility
+                                        visibility=gateway.visibility,
                                     )
 
                                     server = await ServerService().register_server(
