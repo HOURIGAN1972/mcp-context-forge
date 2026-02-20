@@ -503,7 +503,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_sse_path_calls_connect_sse(self):
         """connect() calls the SSE path when use_websocket is False."""
-        client = ReverseProxyClient(gateway_url="tcp://gateway.example.com", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="tcp://gateway.example.com", local_command="echo test", server_id="test-server", token=None)
         assert client.use_websocket is False
 
         with patch.object(client.stdio_process, "start", new_callable=AsyncMock):
@@ -542,7 +542,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_websocket_prefixes_wss_when_missing_scheme(self):
         """Gateway URLs without scheme are prefixed with wss://."""
-        client = ReverseProxyClient(gateway_url="gateway.example.com", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="gateway.example.com", local_command="echo test", server_id="test-server", token=None)
 
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())
@@ -560,7 +560,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_connect_websocket_does_not_duplicate_reverse_proxy_path(self):
         """If /reverse-proxy is already present, urljoin isn't applied again."""
-        client = ReverseProxyClient(gateway_url="https://gateway.example.com/reverse-proxy/ws", local_command="echo test", token=None)
+        client = ReverseProxyClient(gateway_url="https://gateway.example.com/reverse-proxy/ws", local_command="echo test", server_id="test-server", token=None)
 
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())

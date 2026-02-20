@@ -377,7 +377,7 @@ async def websocket_endpoint(
 
                         try:
                             with SessionLocal() as dbsession:
-                                LOGGER.info(f" register session_id {session_id}")
+                                LOGGER.info(f"register session_id {session_id}")
                                 app_domain = Settings().app_domain
                                 url = f"{app_domain}reverse-proxy/sessions/{session_id}/mcp"
 
@@ -404,10 +404,10 @@ async def websocket_endpoint(
                                         forward_request_func=forward_request_to_session
                                     )
 
-                                    LOGGER.info(f"**** Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
+                                    LOGGER.info(f"Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
                                     server_in = ServerCreate(
                                         id=gateway.id,
-                                        name="virtual-"+gateway.name,
+                                        name=gateway.name,
                                         description=gateway.description,
                                         icon=None,
                                         associated_tools=tool_ids,
@@ -424,9 +424,10 @@ async def websocket_endpoint(
                                         server_in,
                                         team_id=gateway.team_id,
                                         visibility=gateway.visibility,
+                                        created_via="reverse_proxy",
                                     )
                                     LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
-                                    
+
                                 except Exception as e:
                                     LOGGER.error(f"Failed to register gateway/server: {e}")
                                     dbsession.rollback()

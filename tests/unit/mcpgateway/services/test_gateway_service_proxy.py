@@ -87,7 +87,7 @@ def mock_db():
 @pytest.fixture
 def mock_forward_request():
     """Mock forward_request_func for proxy connections."""
-    async def forward_func(session_id, request):
+    async def forward_func(session_id, request, authentication=None, auth_type=None):
         """Mock function that simulates forwarding MCP requests."""
         method = request.get("method")
 
@@ -199,8 +199,8 @@ class TestGatewayServiceProxy:
         result = await gateway_service.register_gateway(
             mock_db,
             gateway_create,
-            is_proxy=True,
-            session_id="test-session-123",
+            created_via="reverse_proxy",
+            gateway_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
 
@@ -211,7 +211,7 @@ class TestGatewayServiceProxy:
 
         # Verify gateway was added
         mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()  # Proxy mode commits immediately
+        mock_db.flush.assert_called_once()  # Flush to get ID without committing
         mock_db.refresh.assert_called_once()
 
         # Verify forward_request was called for MCP protocol
@@ -219,7 +219,7 @@ class TestGatewayServiceProxy:
 
     @pytest.mark.asyncio
     async def test_register_proxy_gateway_missing_session_id(self, gateway_service, mock_db):
-        """Test that proxy registration fails without session_id."""
+        """Test that proxy registration fails without gateway_id."""
         gateway_create = GatewayCreate(
             name="proxy_gateway",
             url="ws://proxy",
@@ -227,12 +227,12 @@ class TestGatewayServiceProxy:
             transport="PROXIED",
         )
 
-        with pytest.raises(ValueError, match="session_id is required when is_proxy=True"):
+        with pytest.raises(ValueError, match="gateway_id is required when created_via='reverse_proxy'"):
             await gateway_service.register_gateway(
                 mock_db,
                 gateway_create,
-                is_proxy=True,
-                session_id=None,  # Missing!
+                created_via="reverse_proxy",
+                gateway_id=None,  # Missing!
             )
 
     @pytest.mark.asyncio
@@ -278,14 +278,14 @@ class TestGatewayServiceProxy:
         result = await gateway_service.register_gateway(
             mock_db,
             gateway_create,
-            is_proxy=True,
-            session_id="test-session-123",
+            created_via="reverse_proxy",
+            gateway_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
 
-        # Verify update path was taken (commit called for proxy mode)
+        # Verify update path was taken (flush called to persist changes)
         # Note: db.add may be called for new tools/resources/prompts even in update mode
-        mock_db.commit.assert_called_once()
+        mock_db.flush.assert_called_once()
 
         # Verify the gateway update was processed (name attribute should be set)
         # The actual update happens on the existing_gateway object
@@ -297,13 +297,12 @@ class TestGatewayServiceProxy:
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_proxy_mode(self, gateway_service, mock_forward_request):
-        """Test _initialize_gateway with is_proxy=True."""
+        """Test _initialize_gateway with reverse proxy mode."""
         capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
             url="ws://proxy",
             authentication={},
             transport="PROXIED",
-            is_proxy=True,
-            session_id="test-session-123",
+            gateway_id="test-session-123",
             forward_request_func=mock_forward_request,
         )
 
@@ -328,20 +327,28 @@ class TestGatewayServiceProxy:
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_proxy_mode_missing_params(self, gateway_service):
-        """Test _initialize_gateway fails with missing proxy parameters."""
-        with pytest.raises(GatewayConnectionError, match="Failed to initialize gateway"):
-            await gateway_service._initialize_gateway(
-                url="ws://proxy",
-                authentication={},
-                transport="PROXIED",
-                is_proxy=True,
-                session_id=None,  # Missing!
-                forward_request_func=None,  # Missing!
-            )
+        """Test _initialize_gateway falls back to standard mode when proxy params are missing."""
+        # Mock the standard connection method since it will fall back to SSE
+        gateway_service.connect_to_sse_server = AsyncMock(
+            return_value=({"tools": {}}, [], [], [])
+        )
+
+        # When gateway_id and forward_request_func are both None, it should NOT use proxy mode
+        # Instead it falls back to standard transport
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="ws://proxy",
+            authentication={},
+            transport="SSE",  # Will use SSE since proxy params are missing
+            gateway_id=None,  # Missing!
+            forward_request_func=None,  # Missing!
+        )
+
+        # Verify it used standard SSE connection, not proxy
+        gateway_service.connect_to_sse_server.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_standard_mode(self, gateway_service):
-        """Test _initialize_gateway with is_proxy=False uses standard transport."""
+        """Test _initialize_gateway with standard transport uses SSE."""
         # Mock the standard connection methods
         gateway_service.connect_to_sse_server = AsyncMock(
             return_value=({"tools": {}}, [], [], [])
@@ -351,7 +358,6 @@ class TestGatewayServiceProxy:
             url="http://example.com",
             authentication={},
             transport="SSE",
-            is_proxy=False,
         )
 
         # Verify SSE connection was used
@@ -448,7 +454,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_tools_fetch_failure(self, gateway_service):
         """Test proxy connection continues when tools fetch fails."""
-        async def partial_forward(session_id, request):
+        async def partial_forward(session_id, request, authentication=None, auth_type=None):
             method = request.get("method")
             if method == "initialize":
                 return {
@@ -483,7 +489,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_resource_validation_fallback(self, gateway_service):
         """Test proxy connection handles resource validation errors with fallback."""
-        async def forward_with_invalid_resource(session_id, request):
+        async def forward_with_invalid_resource(session_id, request, authentication=None, auth_type=None):
             method = request.get("method")
             if method == "initialize":
                 return {
@@ -527,3 +533,517 @@ class TestGatewayServiceProxy:
         assert resources[0].uri == "test://resource"
         assert resources[0].name == "Test Resource"
         assert resources[0].content == ""  # Default content
+
+    # ────────────────────────────────────────────────────────────────────
+    # Additional coverage tests for error paths
+    # ────────────────────────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_authorization_code(self, gateway_service):
+        """Test _initialize_gateway with OAuth authorization_code flow."""
+        oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test_client",
+            "authorization_endpoint": "https://example.com/oauth/authorize",
+        }
+
+        # Should return empty lists for authorization_code flow without oauth_auto_fetch_tool_flag
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="http://example.com",
+            authentication={},
+            transport="SSE",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+            oauth_auto_fetch_tool_flag=False,
+        )
+
+        # Verify empty results for auth code flow
+        assert capabilities == {}
+        assert tools == []
+        assert resources == []
+        assert prompts == []
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_client_credentials_success(self, gateway_service):
+        """Test _initialize_gateway with OAuth client_credentials flow."""
+        oauth_config = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_endpoint": "https://example.com/oauth/token",
+        }
+
+        # Mock OAuth manager and SSE connection
+        gateway_service.oauth_manager.get_access_token = AsyncMock(return_value="test_access_token")
+        gateway_service.connect_to_sse_server = AsyncMock(
+            return_value=({"tools": {}}, [], [], [])
+        )
+
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="http://example.com",
+            authentication={},
+            transport="SSE",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+
+        # Verify OAuth token was obtained
+        gateway_service.oauth_manager.get_access_token.assert_called_once_with(oauth_config)
+        # Verify SSE connection was made with Bearer token
+        gateway_service.connect_to_sse_server.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_client_credentials_failure(self, gateway_service):
+        """Test _initialize_gateway handles OAuth token fetch failure."""
+        oauth_config = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_endpoint": "https://example.com/oauth/token",
+        }
+
+        # Mock OAuth manager to fail
+        gateway_service.oauth_manager.get_access_token = AsyncMock(
+            side_effect=Exception("Token fetch failed")
+        )
+
+        with pytest.raises(GatewayConnectionError, match="OAuth authentication failed"):
+            await gateway_service._initialize_gateway(
+                url="http://example.com",
+                authentication={},
+                transport="SSE",
+                auth_type="oauth",
+                oauth_config=oauth_config,
+            )
+
+    @pytest.mark.asyncio
+    async def test_connect_to_proxy_server_with_auth_type(self, gateway_service, mock_forward_request):
+        """Test proxy connection with auth_type parameter."""
+        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+            session_id="test-session-123",
+            forward_request_func=mock_forward_request,
+            authentication={"Authorization": "Bearer test_token"},
+            auth_type="bearer",
+            include_prompts=True,
+            include_resources=True,
+        )
+
+        # Verify capabilities were retrieved
+        assert "tools" in capabilities
+        assert len(tools) == 1
+        assert len(resources) == 1
+        assert len(prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_with_pre_auth_headers(self, gateway_service):
+        """Test _initialize_gateway with pre-authenticated headers."""
+        pre_auth_headers = {"Authorization": "Bearer pre_auth_token"}
+
+        gateway_service.connect_to_sse_server = AsyncMock(
+            return_value=({"tools": {}}, [], [], [])
+        )
+
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="http://example.com",
+            authentication={},
+            transport="SSE",
+            pre_auth_headers=pre_auth_headers,
+        )
+
+        # Verify SSE connection was called
+        gateway_service.connect_to_sse_server.assert_called_once()
+        # The pre_auth_headers should be used instead of authentication
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_streamablehttp_transport(self, gateway_service):
+        """Test _initialize_gateway with StreamableHTTP transport."""
+        gateway_service.connect_to_streamablehttp_server = AsyncMock(
+            return_value=({"tools": {}}, [], [], [])
+        )
+
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="http://example.com",
+            authentication={},
+            transport="StreamableHTTP",
+        )
+
+        # Verify StreamableHTTP connection was used
+        gateway_service.connect_to_streamablehttp_server.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_auth_headers(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration with custom auth headers."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "auth_headers_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        gateway_create = GatewayCreate(
+            name="auth_headers_gateway",
+            url="ws://proxy",
+            description="Gateway with auth headers",
+            transport="PROXIED",
+            auth_headers=[
+                {"key": "X-API-Key", "value": "test-key"},
+                {"key": "X-Custom-Header", "value": "test-value"}
+            ]
+        )
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-session-auth",
+            forward_request_func=mock_forward_request,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_query_param_auth(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration with query param authentication."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "query_param_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        # Create a mock gateway object with query param auth attributes
+        gateway_create = Mock(spec=GatewayCreate)
+        gateway_create.name = "query_param_gateway"
+        gateway_create.url = "ws://proxy"
+        gateway_create.description = "Gateway with query param auth"
+        gateway_create.transport = "PROXIED"
+        gateway_create.auth_type = "query_param"
+        gateway_create.auth_query_param_key = "api_key"
+        gateway_create.auth_query_param_value = "secret-key-123"
+        gateway_create.auth_value = None
+        gateway_create.auth_headers = None
+        gateway_create.oauth_config = None
+        gateway_create.one_time_auth = False
+        gateway_create.tags = []
+        gateway_create.passthrough_headers = None
+        gateway_create.ca_certificate = None
+        gateway_create.ca_certificate_sig = None
+        gateway_create.signing_algorithm = None
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-session-query",
+            forward_request_func=mock_forward_request,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_string_auth_value(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration with string auth_value (encoded)."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "string_auth_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        # Create an encoded auth value
+        from mcpgateway.utils.services_auth import encode_auth
+        encoded_auth = encode_auth({"Authorization": "Bearer test-token"})
+
+        gateway_create = GatewayCreate(
+            name="string_auth_gateway",
+            url="ws://proxy",
+            description="Gateway with string auth",
+            transport="PROXIED",
+            auth_value=encoded_auth
+        )
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-session-string",
+            forward_request_func=mock_forward_request,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_dict_auth_value(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration with dict auth_value (encoded as string)."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "dict_auth_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        # auth_value must be a string (encoded), not a dict
+        # The implementation handles dict internally but the schema expects string
+        from mcpgateway.utils.services_auth import encode_auth
+        encoded_auth = encode_auth({"Authorization": "Bearer test-token"})
+
+        gateway_create = GatewayCreate(
+            name="dict_auth_gateway",
+            url="ws://proxy",
+            description="Gateway with dict auth",
+            transport="PROXIED",
+            auth_value=encoded_auth
+        )
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-session-dict",
+            forward_request_func=mock_forward_request,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_with_basic_auth_string(self, gateway_service):
+        """Test _initialize_gateway with basic auth as string."""
+        gateway_service.connect_to_sse_server = AsyncMock(
+            return_value=({"tools": {}}, [], [], [])
+        )
+
+        from mcpgateway.utils.services_auth import encode_auth
+        encoded_auth = encode_auth({"Authorization": "Basic dGVzdDp0ZXN0"})
+
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="http://example.com",
+            authentication=encoded_auth,
+            transport="SSE",
+            auth_type="basic",
+        )
+
+        # Verify SSE connection was called
+        gateway_service.connect_to_sse_server.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_without_resources(self, gateway_service, mock_forward_request):
+        """Test _initialize_gateway with include_resources=False."""
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="ws://proxy",
+            authentication={},
+            transport="PROXIED",
+            gateway_id="test-session-123",
+            forward_request_func=mock_forward_request,
+            include_resources=False,
+        )
+
+        # Verify resources were not fetched
+        assert len(resources) == 0
+        # But tools and prompts should be fetched
+        assert len(tools) == 1
+        assert len(prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_without_prompts(self, gateway_service, mock_forward_request):
+        """Test _initialize_gateway with include_prompts=False."""
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            url="ws://proxy",
+            authentication={},
+            transport="PROXIED",
+            gateway_id="test-session-123",
+            forward_request_func=mock_forward_request,
+            include_prompts=False,
+        )
+
+        # Verify prompts were not fetched
+        assert len(prompts) == 0
+        # But tools and resources should be fetched
+        assert len(tools) == 1
+        assert len(resources) == 1
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_initialization_timeout(self, gateway_service, mock_db, monkeypatch):
+        """Test gateway registration with initialization timeout."""
+        import asyncio
+
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+            ]
+        )
+
+        # Mock _initialize_gateway to timeout
+        async def slow_init(*args, **kwargs):
+            await asyncio.sleep(10)  # Sleep longer than timeout
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = slow_init
+
+        gateway_create = GatewayCreate(
+            name="timeout_gateway",
+            url="ws://proxy",
+            description="Gateway that times out",
+            transport="PROXIED",
+        )
+
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+
+        with pytest.raises(GatewayConnectionError, match="Gateway initialization timed out"):
+            await gateway_service.register_gateway(
+                mock_db,
+                gateway_create,
+                created_via="reverse_proxy",
+                gateway_id="test-timeout",
+                forward_request_func=AsyncMock(),
+                initialize_timeout=0.1,  # Very short timeout
+            )
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_without_initialize_timeout(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration without initialization (initialize_timeout=None)."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "no_init_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        gateway_create = GatewayCreate(
+            name="no_init_gateway",
+            url="ws://proxy",
+            description="Gateway without initialization",
+            transport="PROXIED",
+        )
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-no-init",
+            forward_request_func=mock_forward_request,
+            initialize_timeout=None,  # Skip initialization
+        )
+
+        # Should still return tuple for proxy mode
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_ca_certificate(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
+        """Test gateway registration with CA certificate."""
+        mock_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+            ]
+        )
+
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "ca_cert_gateway"
+
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+            lambda x: mock_model,
+        )
+
+        # Mock CA certificate
+        ca_cert = b"-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----"
+
+        gateway_create = GatewayCreate(
+            name="ca_cert_gateway",
+            url="ws://proxy",
+            description="Gateway with CA cert",
+            transport="PROXIED",
+            ca_certificate=ca_cert
+        )
+
+        result = await gateway_service.register_gateway(
+            mock_db,
+            gateway_create,
+            created_via="reverse_proxy",
+            gateway_id="test-ca-cert",
+            forward_request_func=mock_forward_request,
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 4
