@@ -479,7 +479,7 @@ class ServerService:
 
             # Log all input parameters to understand where team_id comes from
             logger.debug("register_server called with:")
-            logger.debuf(f"  server_in.name: {server_in.name}")
+            logger.debug(f"  server_in.name: {server_in.name}")
             logger.debug(f"  server_in.id: {getattr(server_in, 'id', None)}")
             logger.debug(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
             logger.debug(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
