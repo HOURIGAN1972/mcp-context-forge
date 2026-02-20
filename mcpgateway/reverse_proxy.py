@@ -464,7 +464,7 @@ class ReverseProxyClient:
             message: JSON-RPC message from stdio.
         """
         try:
-            LOGGER.info(f"**** _handle_stdio_message message {message}")
+            LOGGER.debug(f"_handle_stdio_message message {message}")
 
             # Parse to check if it's a response or notification
             data = orjson.loads(message)
@@ -527,7 +527,7 @@ class ReverseProxyClient:
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
-                LOGGER.info(f"*** _handle_gateway_message called {message}")
+                LOGGER.debug(f"_handle_gateway_message called {message}")
 
                 # Forward request to local server
                 payload = data.get("payload", {})

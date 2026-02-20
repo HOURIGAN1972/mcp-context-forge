@@ -478,16 +478,16 @@ class ServerService:
             logger.info("Registering server: %s", server_in.name)
 
             # Log all input parameters to understand where team_id comes from
-            logger.info("register_server called with:")
-            logger.info(f"  server_in.name: {server_in.name}")
-            logger.info(f"  server_in.id: {getattr(server_in, 'id', None)}")
-            logger.info(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
-            logger.info(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
-            logger.info(f"  server_in.visibility: {getattr(server_in, 'visibility', None)}")
-            logger.info(f"  Parameter team_id: {team_id}")
-            logger.info(f"  Parameter owner_email: {owner_email}")
-            logger.info(f"  Parameter visibility: {visibility}")
-            logger.info(f"  Parameter created_by: {created_by}")
+            logger.debug("register_server called with:")
+            logger.debuf(f"  server_in.name: {server_in.name}")
+            logger.debug(f"  server_in.id: {getattr(server_in, 'id', None)}")
+            logger.debug(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
+            logger.debug(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
+            logger.debug(f"  server_in.visibility: {getattr(server_in, 'visibility', None)}")
+            logger.debug(f"  Parameter team_id: {team_id}")
+            logger.debug(f"  Parameter owner_email: {owner_email}")
+            logger.debug(f"  Parameter visibility: {visibility}")
+            logger.debug(f"  Parameter created_by: {created_by}")
 
             # Check for existing server with the same name (with row locking to prevent race conditions)
             # The unique constraint is on (team_id, owner_email, name), so we check based on that
