@@ -173,7 +173,17 @@ pending_responses = {}
 
 
 def extract_session_id_from_url(url: str) -> str:
-    """Extract session ID from URL path containing /sessions/{session_id}."""
+    """Extract session ID from URL path containing /sessions/{session_id}.
+
+    Args:
+        url: The URL string to parse for session ID extraction.
+
+    Returns:
+        str: The extracted session ID from the URL path.
+
+    Raises:
+        ValueError: If the URL format is invalid or session ID cannot be extracted.
+    """
     LOGGER.info(f"extract_session_id_from_url {url}")
     path_parts = urlparse(url).path.strip("/").split("/")
     try:
@@ -388,16 +398,16 @@ async def websocket_endpoint(
                                     description=session.server_info.get("description"),
                                     tags=[],
                                     transport=TransportType.PROXIED,
-                                    visibility="team",
+                                    visibility="team" if team_id is not None else "public",
                                 )
 
-                                # Gateway registration - flush and commit before server registration
+                                # Gateway registration
                                 # First-Party
                                 from mcpgateway.services import GatewayService
 
                                 try:
                                     gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
-                                        db=dbsession, gateway=gateway, team_id=team_id, visibility=gateway.visibility, gateway_id=session_id, forward_request_func=forward_request_to_session
+                                        db=dbsession, gateway=gateway, team_id=team_id, owner_email=user, visibility=gateway.visibility, gateway_id=session_id, forward_request_func=forward_request_to_session, created_by=user
                                     )
 
                                     LOGGER.info(f"Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
@@ -405,13 +415,10 @@ async def websocket_endpoint(
                                         id=gateway.id,
                                         name=gateway.name,
                                         description=gateway.description,
-                                        icon=None,
                                         associated_tools=tool_ids,
                                         associated_resources=resource_ids,
                                         associated_prompts=prompt_ids,
-                                        associated_a2a_agents=[],
                                         team_id=gateway.team_id,
-                                        tags=gateway.tags,
                                         visibility=gateway.visibility,
                                     )
 
@@ -421,6 +428,8 @@ async def websocket_endpoint(
                                         team_id=gateway.team_id,
                                         visibility=gateway.visibility,
                                         created_via="reverse_proxy",
+                                        created_by=gateway.created_by,
+                                        owner_email=gateway.owner_email
                                     )
                                     LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
 

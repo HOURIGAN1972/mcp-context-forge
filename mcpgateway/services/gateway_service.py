@@ -906,7 +906,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Federation metadata
                     created_by=created_by or "system",
                     created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated tools
+                    created_via=created_via,  # These are federated tools
                     created_user_agent=created_user_agent,
                     federation_source=gateway.name,
                     version=1,
@@ -998,7 +998,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             tags=getattr(r, "tags", []) or [],
                             created_by=created_by or "system",
                             created_from_ip=created_from_ip,
-                            created_via="federation",
+                            created_via=created_via,
                             created_user_agent=created_user_agent,
                             import_batch_id=None,
                             federation_source=gateway.name,
@@ -1073,7 +1073,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Federation metadata
                             created_by=created_by or "system",
                             created_from_ip=created_from_ip,
-                            created_via="federation",  # These are federated prompts
+                            created_via=created_via,  # These are federated prompts
                             created_user_agent=created_user_agent,
                             federation_source=gateway.name,
                             version=1,
@@ -1164,6 +1164,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 existing_gateway.resources = updated_resources
                 existing_gateway.prompts = updated_prompts
                 existing_gateway.visibility = visibility
+                # Update owner_email and created_by only if they are currently null
+                # This allows setting them on first reconnection but preserving them afterwards
+                if existing_gateway.owner_email is None and owner_email is not None:
+                    logger.info(f"Setting owner_email on existing gateway: {owner_email}")
+                    existing_gateway.owner_email = owner_email
+                if existing_gateway.created_by is None and created_by is not None:
+                    logger.info(f"Setting created_by on existing gateway: {created_by}")
+                    existing_gateway.created_by = created_by
                 db_gateway = existing_gateway
             else:
                 # Create DB model
@@ -1387,6 +1395,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
+        created_by: Optional[str] = None,
     ) -> tuple[GatewayRead, List[str], List[str], List[str]]:
         """Register a new proxy gateway.
 
@@ -1400,6 +1409,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
+            created_by: (Optional[str]): user who created gateway
 
         Returns:
             tuple[GatewayRead, List[str], List[str], List[str]]: Gateway info and IDs of tools, resources, and prompts
@@ -1420,6 +1430,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             visibility=visibility,
             initialize_timeout=None,
             gateway_id=gateway_id,
+            created_by=created_by,
             forward_request_func=forward_request_func,
         )
 

@@ -531,6 +531,15 @@ class ServerService:
                     existing_server_to_update.oauth_enabled = getattr(server_in, "oauth_enabled", False) or False
                     existing_server_to_update.oauth_config = getattr(server_in, "oauth_config", None)
 
+                    # Update owner_email and created_by only if they are currently null
+                    # This allows setting them on first reconnection but preserving them afterwards
+                    if existing_server_to_update.owner_email is None and owner_email_to_check is not None:
+                        logger.info(f"Setting owner_email on existing server: {owner_email_to_check}")
+                        existing_server_to_update.owner_email = owner_email_to_check
+                    if existing_server_to_update.created_by is None and created_by is not None:
+                        logger.info(f"Setting created_by on existing server: {created_by}")
+                        existing_server_to_update.created_by = created_by
+
                     # Update metadata
                     existing_server_to_update.modified_by = created_by
                     existing_server_to_update.modified_from_ip = created_from_ip
