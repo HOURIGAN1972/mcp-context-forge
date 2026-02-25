@@ -2483,7 +2483,7 @@ class GatewayCreate(BaseModel):
     Attributes:
         model_config (ConfigDict): Configuration for the model.
         name (str): Unique name for the gateway.
-        url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
+        url (Optional[Union[str, AnyHttpUrl]]): Gateway endpoint URL (optional).
         description (Optional[str]): Optional description of the gateway.
         transport (str): Transport used by the MCP server, default is "SSE".
         auth_type (Optional[str]): Type of authentication (basic, bearer, headers, or none).
@@ -2499,7 +2499,7 @@ class GatewayCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -2593,15 +2593,17 @@ class GatewayCreate(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def validate_url(cls, v: str) -> str:
+    def validate_url(cls, v: Optional[str]) -> Optional[str]:
         """Validate gateway URL
 
         Args:
-            v (str): Value to validate
+            v (Optional[str]): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            Optional[str]: Value if validated as safe, or None
         """
+        if v is None or v == "":
+            return None
         return SecurityValidator.validate_url(v, "Gateway URL")
 
     @field_validator("description")
@@ -2821,6 +2823,8 @@ class GatewayCreate(BaseModel):
 
         # Check host allowlist (if configured)
         if settings.insecure_queryparam_auth_allowed_hosts:
+            if not self.url:
+                raise ValueError("URL is required when using query parameter authentication with host allowlist")
             parsed = urlparse(str(self.url))
             # Extract hostname properly (handles IPv6, ports, userinfo)
             hostname = parsed.hostname or ""

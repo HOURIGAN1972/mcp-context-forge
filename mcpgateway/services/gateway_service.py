@@ -761,8 +761,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if existing_gateway:
                         raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
-            # Normalize the gateway URL
-            normalized_url = self.normalize_url(str(gateway.url))
+            if gateway.transport == "PROXIED" and (gateway.url is None or gateway.url == ""):
+                app_domain = settings.app_domain
+                # Generate gateway_id if not provided (for PROXIED transport without URL)
+                if not gateway_id:
+                    gateway_id = uuid.uuid4().hex
+                generated_url = f"{app_domain}reverse-proxy/sessions/{gateway_id}/mcp"
+                logger.info(f"PROXIED gateway being registered without URL. Generating URL {generated_url}")
+                # Update normalized_url to use the generated URL
+                normalized_url = self.normalize_url(generated_url)
+            else:
+                # Normalize the gateway URL
+                normalized_url = self.normalize_url(str(gateway.url))
 
             decoded_auth_value = None
             if gateway.auth_value:
@@ -845,336 +855,384 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
                 raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
 
-            # Initialize gateway capabilities, tools, resources, and prompts
-            if initialize_timeout is not None:
-                try:
-                    capabilities, tools, resources, prompts = await asyncio.wait_for(
-                        self._initialize_gateway(
-                            init_url,  # URL with query params if applicable
-                            authentication_headers,
-                            gateway.transport,
-                            auth_type,
-                            oauth_config,
-                            ca_certificate,
-                            auth_query_params=auth_query_params_decrypted,
-                            gateway_id=gateway_id,
-                            forward_request_func=forward_request_func,
-                        ),
-                        timeout=initialize_timeout,
-                    )
-                except asyncio.TimeoutError as exc:
-                    sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
-                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
-            else:
-                capabilities, tools, resources, prompts = await self._initialize_gateway(
-                    init_url,  # URL with query params if applicable
-                    authentication_headers,
-                    gateway.transport,
-                    auth_type,
-                    oauth_config,
-                    ca_certificate,
-                    auth_query_params=auth_query_params_decrypted,
-                    gateway_id=gateway_id,
-                    forward_request_func=forward_request_func,
-                )
+            transport = getattr(gateway, "transport", "sse")
 
-            if gateway.one_time_auth:
-                # For one-time auth, clear auth_type and auth_value after initialization
-                auth_type = "one_time_auth"
-                auth_value = None
-                oauth_config = None
-
-            tools = [
-                DbTool(
-                    original_name=tool.name,
-                    custom_name=tool.name,
-                    custom_name_slug=slugify(tool.name),
-                    display_name=generate_display_name(tool.name),
-                    url=normalized_url,
-                    original_description=tool.description,
-                    description=tool.description,
-                    integration_type="MCP",  # Gateway-discovered tools are MCP type
-                    request_type="PROXIED" if is_reverse_proxied else tool.request_type,
-                    headers=tool.headers,
-                    input_schema=tool.input_schema,
-                    output_schema=tool.output_schema if hasattr(tool, "output_schema") else None,
-                    annotations=tool.annotations if hasattr(tool, "annotations") else None,
-                    jsonpath_filter=tool.jsonpath_filter if hasattr(tool, "jsonpath_filter") else None,
-                    auth_type=auth_type,
-                    auth_value=auth_value,
-                    enabled=True,  # Explicitly set enabled to avoid NULL constraint violation
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via=created_via,  # These are federated tools
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for tool in tools
-            ]
-
-            # Create resource DB models with upsert logic for ORPHANED resources only
-            # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
-            # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
-            # gateway deletions (e.g., issue #2341 crash scenarios).
-            # We only update orphaned resources - resources belonging to active gateways are not touched.
-            resource_uris = [r.uri for r in resources]
-            effective_owner = owner_email or created_by
-
-            # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
-            # We query all resources matching our URIs, then filter to orphaned ones in Python
-            # to handle per-resource team/owner overrides correctly
-            orphaned_resources_map: Dict[tuple, DbResource] = {}
-            if resource_uris:
-                try:
-                    # Get valid gateway IDs to identify orphaned resources
-                    valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
-                    candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
-                    for res in candidate_resources:
-                        # Only consider orphaned resources (no gateway or gateway doesn't exist)
-                        is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
-                        if is_orphaned:
-                            key = (res.team_id, res.owner_email, res.uri)
-                            orphaned_resources_map[key] = res
-                    if orphaned_resources_map:
-                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {gateway.name}")
-                except Exception as e:
-                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
-                    # This is conservative - we won't accidentally reassign resources from active gateways
-                    logger.debug(f"Orphan resource detection skipped: {e}")
-
+            # Initialize variables that may not be set for PROXIED gateways
+            tools = []
             db_resources = []
-            for r in resources:
-                mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
-                r_team_id = getattr(r, "team_id", None) or team_id
-                r_owner_email = getattr(r, "owner_email", None) or effective_owner
-                r_visibility = getattr(r, "visibility", None) or visibility
-
-                # Check if there's an orphaned resource with matching unique key
-                lookup_key = (r_team_id, r_owner_email, r.uri)
-                if lookup_key in orphaned_resources_map:
-                    # Update orphaned resource - reassign to new gateway
-                    existing = orphaned_resources_map[lookup_key]
-                    existing.name = r.name
-                    existing.description = r.description
-                    existing.mime_type = mime_type
-                    existing.uri_template = r.uri_template or None
-                    existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
-                    existing.binary_content = (
-                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                    )
-                    existing.size = len(r.content) if r.content else 0
-                    existing.tags = getattr(r, "tags", []) or []
-                    existing.federation_source = gateway.name
-                    existing.modified_by = created_by
-                    existing.modified_from_ip = created_from_ip
-                    existing.modified_via = "federation"
-                    existing.modified_user_agent = created_user_agent
-                    existing.updated_at = datetime.now(timezone.utc)
-                    existing.visibility = r_visibility
-                    # Note: gateway_id will be set when gateway is created (relationship)
-                    db_resources.append(existing)
-                else:
-                    # Create new resource
-                    db_resources.append(
-                        DbResource(
-                            uri=r.uri,
-                            name=r.name,
-                            description=r.description,
-                            mime_type=mime_type,
-                            uri_template=r.uri_template or None,
-                            text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                            binary_content=(
-                                r.content.encode()
-                                if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
-                                else r.content if isinstance(r.content, bytes) else None
-                            ),
-                            size=len(r.content) if r.content else 0,
-                            tags=getattr(r, "tags", []) or [],
-                            created_by=created_by or "system",
-                            created_from_ip=created_from_ip,
-                            created_via=created_via,
-                            created_user_agent=created_user_agent,
-                            import_batch_id=None,
-                            federation_source=gateway.name,
-                            version=1,
-                            team_id=r_team_id,
-                            owner_email=r_owner_email,
-                            visibility=r_visibility,
-                        )
-                    )
-
-            # Create prompt DB models with upsert logic for ORPHANED prompts only
-            # Query for existing ORPHANED prompts (gateway_id IS NULL or points to non-existent gateway)
-            # with same (team_id, owner_email, name) to handle prompts left behind from incomplete
-            # gateway deletions. We only update orphaned prompts - prompts belonging to active gateways are not touched.
-            prompt_names = [p.name for p in prompts]
-
-            # Build lookup map: (team_id, owner_email, name) -> orphaned DbPrompt
-            orphaned_prompts_map: Dict[tuple, DbPrompt] = {}
-            if prompt_names:
-                try:
-                    # Get valid gateway IDs to identify orphaned prompts
-                    valid_gateway_ids_for_prompts = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
-                    candidate_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
-                    for pmt in candidate_prompts:
-                        # Only consider orphaned prompts (no gateway or gateway doesn't exist)
-                        is_orphaned = pmt.gateway_id is None or pmt.gateway_id not in valid_gateway_ids_for_prompts
-                        if is_orphaned:
-                            key = (pmt.team_id, pmt.owner_email, pmt.name)
-                            orphaned_prompts_map[key] = pmt
-                    if orphaned_prompts_map:
-                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {gateway.name}")
-                except Exception as e:
-                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
-                    logger.debug(f"Orphan prompt detection skipped: {e}")
-
             db_prompts = []
-            for prompt in prompts:
-                # Prompts inherit team/owner from gateway (no per-prompt overrides)
-                p_team_id = team_id
-                p_owner_email = owner_email or effective_owner
+            capabilities = {}
 
-                # Check if there's an orphaned prompt with matching unique key
-                lookup_key = (p_team_id, p_owner_email, prompt.name)
-                if lookup_key in orphaned_prompts_map:
-                    # Update orphaned prompt - reassign to new gateway
-                    existing = orphaned_prompts_map[lookup_key]
-                    existing.original_name = prompt.name
-                    existing.custom_name = prompt.name
-                    existing.display_name = prompt.name
-                    existing.description = prompt.description
-                    existing.template = prompt.template if hasattr(prompt, "template") else ""
-                    existing.federation_source = gateway.name
-                    existing.modified_by = created_by
-                    existing.modified_from_ip = created_from_ip
-                    existing.modified_via = "federation"
-                    existing.modified_user_agent = created_user_agent
-                    existing.updated_at = datetime.now(timezone.utc)
-                    existing.visibility = visibility
-                    # Note: gateway_id will be set when gateway is created (relationship)
-                    db_prompts.append(existing)
+            db_gateway = None
+            if transport != "PROXIED" or is_reverse_proxied:
+
+                # Initialize gateway capabilities, tools, resources, and prompts
+                if initialize_timeout is not None:
+                    try:
+                        capabilities, tools, resources, prompts = await asyncio.wait_for(
+                            self._initialize_gateway(
+                                init_url,  # URL with query params if applicable
+                                authentication_headers,
+                                gateway.transport,
+                                auth_type,
+                                oauth_config,
+                                ca_certificate,
+                                auth_query_params=auth_query_params_decrypted,
+                                gateway_id=gateway_id,
+                                forward_request_func=forward_request_func,
+                            ),
+                            timeout=initialize_timeout,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
+                        raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
                 else:
-                    # Create new prompt
-                    db_prompts.append(
-                        DbPrompt(
-                            name=prompt.name,
-                            original_name=prompt.name,
-                            custom_name=prompt.name,
-                            display_name=prompt.name,
-                            description=prompt.description,
-                            template=prompt.template if hasattr(prompt, "template") else "",
-                            argument_schema={},  # Use argument_schema instead of arguments
-                            # Federation metadata
-                            created_by=created_by or "system",
+                    capabilities, tools, resources, prompts = await self._initialize_gateway(
+                        init_url,  # URL with query params if applicable
+                        authentication_headers,
+                        gateway.transport,
+                        auth_type,
+                        oauth_config,
+                        ca_certificate,
+                        auth_query_params=auth_query_params_decrypted,
+                        gateway_id=gateway_id,
+                        forward_request_func=forward_request_func,
+                    )
+
+                if gateway.one_time_auth:
+                    # For one-time auth, clear auth_type and auth_value after initialization
+                    auth_type = "one_time_auth"
+                    auth_value = None
+                    oauth_config = None
+
+                tools = [
+                    DbTool(
+                        original_name=tool.name,
+                        custom_name=tool.name,
+                        custom_name_slug=slugify(tool.name),
+                        display_name=generate_display_name(tool.name),
+                        url=normalized_url,
+                        original_description=tool.description,
+                        description=tool.description,
+                        integration_type="MCP",  # Gateway-discovered tools are MCP type
+                        request_type="PROXIED" if is_reverse_proxied else tool.request_type,
+                        headers=tool.headers,
+                        input_schema=tool.input_schema,
+                        output_schema=tool.output_schema if hasattr(tool, "output_schema") else None,
+                        annotations=tool.annotations if hasattr(tool, "annotations") else None,
+                        jsonpath_filter=tool.jsonpath_filter if hasattr(tool, "jsonpath_filter") else None,
+                        auth_type=auth_type,
+                        auth_value=auth_value,
+                        enabled=True,  # Explicitly set enabled to avoid NULL constraint violation
+                        # Federation metadata
+                        created_by=created_by or "system",
+                        created_from_ip=created_from_ip,
+                        created_via=created_via,  # These are federated tools
+                        created_user_agent=created_user_agent,
+                        federation_source=gateway.name,
+                        version=1,
+                        # Inherit team assignment from gateway
+                        team_id=team_id,
+                        owner_email=owner_email,
+                        visibility=visibility,
+                    )
+                    for tool in tools
+                ]
+
+                # Create resource DB models with upsert logic for ORPHANED resources only
+                # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
+                # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
+                # gateway deletions (e.g., issue #2341 crash scenarios).
+                # We only update orphaned resources - resources belonging to active gateways are not touched.
+                resource_uris = [r.uri for r in resources]
+                effective_owner = owner_email or created_by
+
+                # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
+                # We query all resources matching our URIs, then filter to orphaned ones in Python
+                # to handle per-resource team/owner overrides correctly
+                orphaned_resources_map: Dict[tuple, DbResource] = {}
+                if resource_uris:
+                    try:
+                        # Get valid gateway IDs to identify orphaned resources
+                        valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                        candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+                        for res in candidate_resources:
+                            # Only consider orphaned resources (no gateway or gateway doesn't exist)
+                            is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
+                            if is_orphaned:
+                                key = (res.team_id, res.owner_email, res.uri)
+                                orphaned_resources_map[key] = res
+                        if orphaned_resources_map:
+                            logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {gateway.name}")
+                    except Exception as e:
+                        # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
+                        # This is conservative - we won't accidentally reassign resources from active gateways
+                        logger.debug(f"Orphan resource detection skipped: {e}")
+
+                db_resources = []
+                for r in resources:
+                    mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                    r_team_id = getattr(r, "team_id", None) or team_id
+                    r_owner_email = getattr(r, "owner_email", None) or effective_owner
+                    r_visibility = getattr(r, "visibility", None) or visibility
+
+                    # Check if there's an orphaned resource with matching unique key
+                    lookup_key = (r_team_id, r_owner_email, r.uri)
+                    if lookup_key in orphaned_resources_map:
+                        # Update orphaned resource - reassign to new gateway
+                        existing = orphaned_resources_map[lookup_key]
+                        existing.name = r.name
+                        existing.description = r.description
+                        existing.mime_type = mime_type
+                        existing.uri_template = r.uri_template or None
+                        existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
+                        existing.binary_content = (
+                            r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
+                        )
+                        existing.size = len(r.content) if r.content else 0
+                        existing.tags = getattr(r, "tags", []) or []
+                        existing.federation_source = gateway.name
+                        existing.modified_by = created_by
+                        existing.modified_from_ip = created_from_ip
+                        existing.modified_via = "federation"
+                        existing.modified_user_agent = created_user_agent
+                        existing.updated_at = datetime.now(timezone.utc)
+                        existing.visibility = r_visibility
+                        # Note: gateway_id will be set when gateway is created (relationship)
+                        db_resources.append(existing)
+                    else:
+                        # Create new resource
+                        db_resources.append(
+                            DbResource(
+                                uri=r.uri,
+                                name=r.name,
+                                description=r.description,
+                                mime_type=mime_type,
+                                uri_template=r.uri_template or None,
+                                text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                                binary_content=(
+                                    r.content.encode()
+                                    if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
+                                    else r.content if isinstance(r.content, bytes) else None
+                                ),
+                                size=len(r.content) if r.content else 0,
+                                tags=getattr(r, "tags", []) or [],
+                                created_by=created_by or "system",
+                                created_from_ip=created_from_ip,
+                                created_via=created_via,
+                                created_user_agent=created_user_agent,
+                                import_batch_id=None,
+                                federation_source=gateway.name,
+                                version=1,
+                                team_id=r_team_id,
+                                owner_email=r_owner_email,
+                                visibility=r_visibility,
+                            )
+                        )
+
+                # Create prompt DB models with upsert logic for ORPHANED prompts only
+                # Query for existing ORPHANED prompts (gateway_id IS NULL or points to non-existent gateway)
+                # with same (team_id, owner_email, name) to handle prompts left behind from incomplete
+                # gateway deletions. We only update orphaned prompts - prompts belonging to active gateways are not touched.
+                prompt_names = [p.name for p in prompts]
+
+                # Build lookup map: (team_id, owner_email, name) -> orphaned DbPrompt
+                orphaned_prompts_map: Dict[tuple, DbPrompt] = {}
+                if prompt_names:
+                    try:
+                        # Get valid gateway IDs to identify orphaned prompts
+                        valid_gateway_ids_for_prompts = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                        candidate_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+                        for pmt in candidate_prompts:
+                            # Only consider orphaned prompts (no gateway or gateway doesn't exist)
+                            is_orphaned = pmt.gateway_id is None or pmt.gateway_id not in valid_gateway_ids_for_prompts
+                            if is_orphaned:
+                                key = (pmt.team_id, pmt.owner_email, pmt.name)
+                                orphaned_prompts_map[key] = pmt
+                        if orphaned_prompts_map:
+                            logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {gateway.name}")
+                    except Exception as e:
+                        # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
+                        logger.debug(f"Orphan prompt detection skipped: {e}")
+
+                db_prompts = []
+                for prompt in prompts:
+                    # Prompts inherit team/owner from gateway (no per-prompt overrides)
+                    p_team_id = team_id
+                    p_owner_email = owner_email or effective_owner
+
+                    # Check if there's an orphaned prompt with matching unique key
+                    lookup_key = (p_team_id, p_owner_email, prompt.name)
+                    if lookup_key in orphaned_prompts_map:
+                        # Update orphaned prompt - reassign to new gateway
+                        existing = orphaned_prompts_map[lookup_key]
+                        existing.original_name = prompt.name
+                        existing.custom_name = prompt.name
+                        existing.display_name = prompt.name
+                        existing.description = prompt.description
+                        existing.template = prompt.template if hasattr(prompt, "template") else ""
+                        existing.federation_source = gateway.name
+                        existing.modified_by = created_by
+                        existing.modified_from_ip = created_from_ip
+                        existing.modified_via = "federation"
+                        existing.modified_user_agent = created_user_agent
+                        existing.updated_at = datetime.now(timezone.utc)
+                        existing.visibility = visibility
+                        # Note: gateway_id will be set when gateway is created (relationship)
+                        db_prompts.append(existing)
+                    else:
+                        # Create new prompt
+                        db_prompts.append(
+                            DbPrompt(
+                                name=prompt.name,
+                                original_name=prompt.name,
+                                custom_name=prompt.name,
+                                display_name=prompt.name,
+                                description=prompt.description,
+                                template=prompt.template if hasattr(prompt, "template") else "",
+                                argument_schema={},  # Use argument_schema instead of arguments
+                                # Federation metadata
+                                created_by=created_by or "system",
+                                created_from_ip=created_from_ip,
+                                created_via=created_via,  # These are federated prompts
+                                created_user_agent=created_user_agent,
+                                federation_source=gateway.name,
+                                version=1,
+                                # Inherit team assignment from gateway
+                                team_id=team_id,
+                                owner_email=owner_email,
+                                visibility=visibility,
+                            )
+                        )
+
+                # Check for existing gateway (proxy mode supports upsert)
+                existing_gateway = None
+                if is_reverse_proxied and gateway_id:
+                    existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+                if existing_gateway:
+                    # Update existing proxy gateway
+                    logger.info(f"Updating existing proxy gateway for session {gateway_id}")
+
+                    # Get existing tools/resources/prompts by original_name for updating
+                    existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
+                    existing_resources_map = {r.uri: r for r in existing_gateway.resources}
+                    existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
+
+                    # Update or create tools
+                    updated_tools = []
+                    for new_tool in tools:
+                        if new_tool.original_name in existing_tools_map:
+                            # Update existing tool
+                            existing_tool = existing_tools_map[new_tool.original_name]
+                            existing_tool.url = new_tool.url
+                            existing_tool.description = new_tool.description
+                            existing_tool.input_schema = new_tool.input_schema
+                            existing_tool.annotations = new_tool.annotations
+                            existing_tool.enabled = new_tool.enabled
+                            existing_tool.updated_at = datetime.now(timezone.utc)
+                            updated_tools.append(existing_tool)
+                        else:
+                            # Add new tool
+                            updated_tools.append(new_tool)
+
+                    # Update or create resources
+                    updated_resources = []
+                    for new_resource in db_resources:
+                        if new_resource.uri in existing_resources_map:
+                            # Update existing resource
+                            existing_resource = existing_resources_map[new_resource.uri]
+                            existing_resource.name = new_resource.name
+                            existing_resource.description = new_resource.description
+                            existing_resource.mime_type = new_resource.mime_type
+                            existing_resource.annotations = new_resource.annotations if hasattr(new_resource, "annotations") else None
+                            existing_resource.updated_at = datetime.now(timezone.utc)
+                            updated_resources.append(existing_resource)
+                        else:
+                            # Add new resource
+                            updated_resources.append(new_resource)
+
+                    # Update or create prompts
+                    updated_prompts = []
+                    for new_prompt in db_prompts:
+                        if new_prompt.original_name in existing_prompts_map:
+                            # Update existing prompt
+                            existing_prompt = existing_prompts_map[new_prompt.original_name]
+                            existing_prompt.description = new_prompt.description
+                            existing_prompt.argument_schema = new_prompt.argument_schema
+                            existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, "annotations") else None
+                            existing_prompt.updated_at = datetime.now(timezone.utc)
+                            updated_prompts.append(existing_prompt)
+                        else:
+                            # Add new prompt
+                            updated_prompts.append(new_prompt)
+
+                    # Update fields directly on the existing object
+                    existing_gateway.name = gateway.name
+                    existing_gateway.slug = slug_name
+                    existing_gateway.url = normalized_url
+                    existing_gateway.description = gateway.description
+                    existing_gateway.tags = gateway.tags
+                    existing_gateway.transport = gateway.transport
+                    existing_gateway.capabilities = capabilities
+                    existing_gateway.reachable = True  # Mark as reachable/active
+                    existing_gateway.last_seen = datetime.now(timezone.utc)
+                    existing_gateway.auth_type = auth_type
+                    existing_gateway.auth_value = auth_value
+                    existing_gateway.oauth_config = oauth_config
+                    existing_gateway.passthrough_headers = gateway.passthrough_headers
+                    existing_gateway.tools = updated_tools
+                    existing_gateway.resources = updated_resources
+                    existing_gateway.prompts = updated_prompts
+                    existing_gateway.visibility = visibility
+                    # Update owner_email and created_by only if they are currently null
+                    # This allows setting them on first reconnection but preserving them afterwards
+                    if existing_gateway.owner_email is None and owner_email is not None:
+                        logger.info(f"Setting owner_email on existing gateway: {owner_email}")
+                        existing_gateway.owner_email = owner_email
+                    if existing_gateway.created_by is None and created_by is not None:
+                        logger.info(f"Setting created_by on existing gateway: {created_by}")
+                        existing_gateway.created_by = created_by
+                    db_gateway = existing_gateway
+                else:
+                    # Create DB model
+                    db_gateway = DbGateway(
+                            id=gateway_id,
+                            name=gateway.name,
+                            slug=slug_name,
+                            url=normalized_url,
+                            description=gateway.description,
+                            tags=gateway.tags or [],
+                            transport=gateway.transport,
+                            capabilities=capabilities,
+                            last_seen=datetime.now(timezone.utc),
+                            auth_type=auth_type,
+                            auth_value=auth_value,
+                            auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
+                            oauth_config=oauth_config,
+                            passthrough_headers=gateway.passthrough_headers,
+                            tools=tools,
+                            resources=db_resources,
+                            prompts=db_prompts,
+                            # Gateway metadata
+                            created_by=created_by,
                             created_from_ip=created_from_ip,
-                            created_via=created_via,  # These are federated prompts
+                            created_via=created_via or "api",
                             created_user_agent=created_user_agent,
-                            federation_source=gateway.name,
                             version=1,
-                            # Inherit team assignment from gateway
+                            # Team scoping fields
                             team_id=team_id,
                             owner_email=owner_email,
                             visibility=visibility,
+                            ca_certificate=gateway.ca_certificate,
+                            ca_certificate_sig=gateway.ca_certificate_sig,
+                            signing_algorithm=gateway.signing_algorithm,
+                            # Gateway mode configuration
+                            gateway_mode=gateway_mode,
                         )
-                    )
-
-            # Check for existing gateway (proxy mode supports upsert)
-            existing_gateway = None
-            if is_reverse_proxied and gateway_id:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-
-            if existing_gateway:
-                # Update existing proxy gateway
-                logger.info(f"Updating existing proxy gateway for session {gateway_id}")
-
-                # Get existing tools/resources/prompts by original_name for updating
-                existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
-                existing_resources_map = {r.uri: r for r in existing_gateway.resources}
-                existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
-
-                # Update or create tools
-                updated_tools = []
-                for new_tool in tools:
-                    if new_tool.original_name in existing_tools_map:
-                        # Update existing tool
-                        existing_tool = existing_tools_map[new_tool.original_name]
-                        existing_tool.url = new_tool.url
-                        existing_tool.description = new_tool.description
-                        existing_tool.input_schema = new_tool.input_schema
-                        existing_tool.annotations = new_tool.annotations
-                        existing_tool.enabled = new_tool.enabled
-                        existing_tool.updated_at = datetime.now(timezone.utc)
-                        updated_tools.append(existing_tool)
-                    else:
-                        # Add new tool
-                        updated_tools.append(new_tool)
-
-                # Update or create resources
-                updated_resources = []
-                for new_resource in db_resources:
-                    if new_resource.uri in existing_resources_map:
-                        # Update existing resource
-                        existing_resource = existing_resources_map[new_resource.uri]
-                        existing_resource.name = new_resource.name
-                        existing_resource.description = new_resource.description
-                        existing_resource.mime_type = new_resource.mime_type
-                        existing_resource.annotations = new_resource.annotations if hasattr(new_resource, "annotations") else None
-                        existing_resource.updated_at = datetime.now(timezone.utc)
-                        updated_resources.append(existing_resource)
-                    else:
-                        # Add new resource
-                        updated_resources.append(new_resource)
-
-                # Update or create prompts
-                updated_prompts = []
-                for new_prompt in db_prompts:
-                    if new_prompt.original_name in existing_prompts_map:
-                        # Update existing prompt
-                        existing_prompt = existing_prompts_map[new_prompt.original_name]
-                        existing_prompt.description = new_prompt.description
-                        existing_prompt.argument_schema = new_prompt.argument_schema
-                        existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, "annotations") else None
-                        existing_prompt.updated_at = datetime.now(timezone.utc)
-                        updated_prompts.append(existing_prompt)
-                    else:
-                        # Add new prompt
-                        updated_prompts.append(new_prompt)
-
-                # Update fields directly on the existing object
-                existing_gateway.name = gateway.name
-                existing_gateway.slug = slug_name
-                existing_gateway.url = normalized_url
-                existing_gateway.description = gateway.description
-                existing_gateway.tags = gateway.tags
-                existing_gateway.transport = gateway.transport
-                existing_gateway.capabilities = capabilities
-                existing_gateway.reachable = True  # Mark as reachable/active
-                existing_gateway.last_seen = datetime.now(timezone.utc)
-                existing_gateway.auth_type = auth_type
-                existing_gateway.auth_value = auth_value
-                existing_gateway.oauth_config = oauth_config
-                existing_gateway.passthrough_headers = gateway.passthrough_headers
-                existing_gateway.tools = updated_tools
-                existing_gateway.resources = updated_resources
-                existing_gateway.prompts = updated_prompts
-                existing_gateway.visibility = visibility
-                # Update owner_email and created_by only if they are currently null
-                # This allows setting them on first reconnection but preserving them afterwards
-                if existing_gateway.owner_email is None and owner_email is not None:
-                    logger.info(f"Setting owner_email on existing gateway: {owner_email}")
-                    existing_gateway.owner_email = owner_email
-                if existing_gateway.created_by is None and created_by is not None:
-                    logger.info(f"Setting created_by on existing gateway: {created_by}")
-                    existing_gateway.created_by = created_by
-                db_gateway = existing_gateway
             else:
-                # Create DB model
+                # Create placeholder DB model for gateway with proxied transport and wait for
+                # reverse proxy to connect and initialise to retrieve tools, prompts and resources
                 db_gateway = DbGateway(
                     id=gateway_id,
                     name=gateway.name,
@@ -1183,16 +1241,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     description=gateway.description,
                     tags=gateway.tags or [],
                     transport=gateway.transport,
-                    capabilities=capabilities,
+                    capabilities={},
                     last_seen=datetime.now(timezone.utc),
                     auth_type=auth_type,
                     auth_value=auth_value,
                     auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                     oauth_config=oauth_config,
                     passthrough_headers=gateway.passthrough_headers,
-                    tools=tools,
-                    resources=db_resources,
-                    prompts=db_prompts,
+                    tools=[],
+                    resources=[],
+                    prompts=[],
                     # Gateway metadata
                     created_by=created_by,
                     created_from_ip=created_from_ip,
@@ -2252,140 +2310,144 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
                             init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
-                # Try to reinitialize connection if URL actually changed
-                # if url_changed:
-                # Initialize empty lists in case initialization fails
-                tools_to_add = []
-                resources_to_add = []
-                prompts_to_add = []
 
-                try:
-                    ca_certificate = getattr(gateway, "ca_certificate", None)
-                    capabilities, tools, resources, prompts = await self._initialize_gateway(
-                        init_url,
-                        gateway.auth_value,
-                        gateway.transport,
-                        gateway.auth_type,
-                        gateway.oauth_config,
-                        ca_certificate,
-                        auth_query_params=auth_query_params_decrypted,
-                    )
-                    new_tool_names = [tool.name for tool in tools]
-                    new_resource_uris = [resource.uri for resource in resources]
-                    new_prompt_names = [prompt.name for prompt in prompts]
+                # Only initialize gateway is transport is not equal to PROXIED
+                # since reconnect from reverse proxy will cause update to tools, resources and prompts.
+                if gateway.transport != "PROXIED":
+                    # Try to reinitialize connection if URL actually changed
+                    # if url_changed:
+                    # Initialize empty lists in case initialization fails
+                    tools_to_add = []
+                    resources_to_add = []
+                    prompts_to_add = []
 
-                    if gateway_update.one_time_auth:
-                        # For one-time auth, clear auth_type and auth_value after initialization
-                        gateway.auth_type = "one_time_auth"
-                        gateway.auth_value = None
-                        gateway.oauth_config = None
+                    try:
+                        ca_certificate = getattr(gateway, "ca_certificate", None)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(
+                            init_url,
+                            gateway.auth_value,
+                            gateway.transport,
+                            gateway.auth_type,
+                            gateway.oauth_config,
+                            ca_certificate,
+                            auth_query_params=auth_query_params_decrypted,
+                        )
+                        new_tool_names = [tool.name for tool in tools]
+                        new_resource_uris = [resource.uri for resource in resources]
+                        new_prompt_names = [prompt.name for prompt in prompts]
 
-                    # Update tools using helper method
-                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
+                        if gateway_update.one_time_auth:
+                            # For one-time auth, clear auth_type and auth_value after initialization
+                            gateway.auth_type = "one_time_auth"
+                            gateway.auth_value = None
+                            gateway.oauth_config = None
 
-                    # Update resources using helper method
-                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
+                        # Update tools using helper method
+                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
 
-                    # Update prompts using helper method
-                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+                        # Update resources using helper method
+                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
 
-                    # Log newly added items
-                    items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
-                    if items_added > 0:
+                        # Update prompts using helper method
+                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+
+                        # Log newly added items
+                        items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
+                        if items_added > 0:
+                            if tools_to_add:
+                                logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
+                            if resources_to_add:
+                                logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
+                            if prompts_to_add:
+                                logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
+                            logger.info(f"Total {items_added} new items added during gateway update")
+
+                        # Count items before cleanup for logging
+
+                        # Bulk delete tools that are no longer available from the gateway
+                        # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
+                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        if stale_tool_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_tool_ids), 500):
+                                chunk = stale_tool_ids[i : i + 500]
+                                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+
+                        # Bulk delete resources that are no longer available from the gateway
+                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        if stale_resource_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_resource_ids), 500):
+                                chunk = stale_resource_ids[i : i + 500]
+                                db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
+                                db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
+                                db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
+                                db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+
+                        # Bulk delete prompts that are no longer available from the gateway
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+                        if stale_prompt_ids:
+                            # Delete child records first to avoid FK constraint violations
+                            for i in range(0, len(stale_prompt_ids), 500):
+                                chunk = stale_prompt_ids[i : i + 500]
+                                db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
+                                db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
+                                db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+
+                        # Expire gateway to clear cached relationships after bulk deletes
+                        # This prevents SQLAlchemy from trying to re-delete already-deleted items
+                        if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
+                            db.expire(gateway)
+
+                        gateway.capabilities = capabilities
+
+                        # Register capabilities for notification-driven actions
+                        register_gateway_capabilities_for_notifications(gateway.id, capabilities)
+
+                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
+
+                        # Log cleanup results
+                        tools_removed = len(stale_tool_ids)
+                        resources_removed = len(stale_resource_ids)
+                        prompts_removed = len(stale_prompt_ids)
+
+                        if tools_removed > 0:
+                            logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
+                        if resources_removed > 0:
+                            logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
+                        if prompts_removed > 0:
+                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
+
+                        gateway.last_seen = datetime.now(timezone.utc)
+
+                        # Add new items to database session in chunks to prevent lock escalation
+                        chunk_size = 50
+
                         if tools_to_add:
-                            logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
+                            for i in range(0, len(tools_to_add), chunk_size):
+                                chunk = tools_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if resources_to_add:
-                            logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
+                            for i in range(0, len(resources_to_add), chunk_size):
+                                chunk = resources_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
                         if prompts_to_add:
-                            logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
-                        logger.info(f"Total {items_added} new items added during gateway update")
+                            for i in range(0, len(prompts_to_add), chunk_size):
+                                chunk = prompts_to_add[i : i + chunk_size]
+                                db.add_all(chunk)
+                                db.flush()
 
-                    # Count items before cleanup for logging
-
-                    # Bulk delete tools that are no longer available from the gateway
-                    # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
-                    stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
-                    if stale_tool_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_tool_ids), 500):
-                            chunk = stale_tool_ids[i : i + 500]
-                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                            db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
-
-                    # Bulk delete resources that are no longer available from the gateway
-                    stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
-                    if stale_resource_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_resource_ids), 500):
-                            chunk = stale_resource_ids[i : i + 500]
-                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                            db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
-
-                    # Bulk delete prompts that are no longer available from the gateway
-                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
-                    if stale_prompt_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_prompt_ids), 500):
-                            chunk = stale_prompt_ids[i : i + 500]
-                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
-
-                    # Expire gateway to clear cached relationships after bulk deletes
-                    # This prevents SQLAlchemy from trying to re-delete already-deleted items
-                    if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
-                        db.expire(gateway)
-
-                    gateway.capabilities = capabilities
-
-                    # Register capabilities for notification-driven actions
-                    register_gateway_capabilities_for_notifications(gateway.id, capabilities)
-
-                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                    gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
-
-                    # Log cleanup results
-                    tools_removed = len(stale_tool_ids)
-                    resources_removed = len(stale_resource_ids)
-                    prompts_removed = len(stale_prompt_ids)
-
-                    if tools_removed > 0:
-                        logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
-                    if resources_removed > 0:
-                        logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
-                    if prompts_removed > 0:
-                        logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
-
-                    gateway.last_seen = datetime.now(timezone.utc)
-
-                    # Add new items to database session in chunks to prevent lock escalation
-                    chunk_size = 50
-
-                    if tools_to_add:
-                        for i in range(0, len(tools_to_add), chunk_size):
-                            chunk = tools_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-                    if resources_to_add:
-                        for i in range(0, len(resources_to_add), chunk_size):
-                            chunk = resources_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-                    if prompts_to_add:
-                        for i in range(0, len(prompts_to_add), chunk_size):
-                            chunk = prompts_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-
-                    # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
-                except Exception as e:
-                    logger.warning(f"Failed to initialize updated gateway: {e}")
+                        # Update tracking with new URL
+                        self._active_gateways.discard(gateway.url)
+                        self._active_gateways.add(gateway.url)
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize updated gateway: {e}")
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
@@ -3565,7 +3627,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
 
                     # Auto-refresh tools/resources/prompts if enabled
-                    if settings.auto_refresh_servers:
+                    if puto_refresh_servers:
                         try:
                             # Throttling: Check if refresh is needed based on last_refresh_at
                             refresh_needed = True
