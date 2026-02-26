@@ -2310,7 +2310,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
                             init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
-
                 # Only initialize gateway is transport is not equal to PROXIED
                 # since reconnect from reverse proxy will cause update to tools, resources and prompts.
                 if gateway.transport != "PROXIED":
