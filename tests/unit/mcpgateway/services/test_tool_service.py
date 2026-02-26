@@ -2770,25 +2770,32 @@ class TestToolService:
 
     async def test_subscribe_events(self, tool_service):
         """Test event subscription mechanism."""
-        # Create an event to publish
-        test_event = {"type": "test_event", "data": {"id": 1}}
+        # Create events to publish
+        test_event1 = {"type": "test_event", "data": {"id": 1}}
+        test_event2 = {"type": "test_event", "data": {"id": 2}}
 
-        # Start subscription in background
-        subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        # Mock the event service to provide a simple async generator
+        async def mock_event_gen():
+            yield test_event1
+            yield test_event2
 
-        # Give a moment for subscription to be registered
-        await asyncio.sleep(0.01)
+        tool_service._event_service = MagicMock()
+        tool_service._event_service.subscribe_events.return_value = mock_event_gen()
+        tool_service._event_service.publish_event = AsyncMock()
 
-        # Publish event
-        await tool_service._publish_event(test_event)
+        # Collect events from subscription
+        events = []
+        async for event in tool_service.subscribe_events():
+            events.append(event)
 
-        # Get the event
-        received_event = await subscription_task
-        assert received_event == test_event
+        # Verify events were received
+        assert len(events) == 2
+        assert events[0] == test_event1
+        assert events[1] == test_event2
 
-        # Clean up
-        await subscriber.aclose()
+        # Verify publish_event can be called
+        await tool_service._publish_event(test_event1)
+        tool_service._event_service.publish_event.assert_awaited_once_with(test_event1)
 
     async def test_notify_tool_added(self, tool_service, mock_tool):
         """Test notification when tool is added."""

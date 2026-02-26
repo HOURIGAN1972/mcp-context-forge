@@ -3627,7 +3627,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
 
                     # Auto-refresh tools/resources/prompts if enabled
-                    if puto_refresh_servers:
+                    if settings.auto_refresh_servers:
                         try:
                             # Throttling: Check if refresh is needed based on last_refresh_at
                             refresh_needed = True

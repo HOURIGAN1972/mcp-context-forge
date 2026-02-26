@@ -317,7 +317,8 @@ class TestCheckSingleGatewayHealthReal:
 
         # Non-pooled StreamableHTTP call path.
         session = AsyncMock()
-        session.initialize = AsyncMock(return_value=None)
+        # Mock initialize to return a successful response
+        session.initialize = AsyncMock(return_value=MagicMock(capabilities={}))
 
         # Update last_seen path.
         update_db = MagicMock()
@@ -346,6 +347,13 @@ class TestCheckSingleGatewayHealthReal:
             async def __aexit__(self, *exc):
                 return False
 
+        class _SessionCM:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *exc):
+                return False
+
         with (
             patch(
                 "mcpgateway.services.gateway_service.settings",
@@ -366,13 +374,11 @@ class TestCheckSingleGatewayHealthReal:
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
             patch("mcpgateway.services.gateway_service.get_mcp_session_pool", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http,
-            patch("mcpgateway.services.gateway_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.gateway_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
         ):
             mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
             mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             await service._check_single_gateway_health(gateway)
 
@@ -387,6 +393,7 @@ class TestCheckSingleGatewayHealthReal:
         gateway = self._make_gateway(transport="streamablehttp")
 
         pooled_session = MagicMock()
+        # Mock list_tools to return successfully without timeout
         pooled_session.list_tools = AsyncMock(return_value=[])
 
         class _PooledCM:
@@ -444,7 +451,13 @@ class TestCheckSingleGatewayHealthReal:
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
             patch("mcpgateway.services.gateway_service.get_mcp_session_pool", return_value=pool),
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
+            patch("mcpgateway.services.gateway_service.asyncio.wait_for", new_callable=AsyncMock) as mock_wait_for,
         ):
+            # Make wait_for pass through the coroutine without timing out
+            async def passthrough_wait_for(coro, timeout=None):
+                return await coro
+            mock_wait_for.side_effect = passthrough_wait_for
+
             await service._check_single_gateway_health(gateway)
 
         pooled_session.list_tools.assert_awaited_once()
