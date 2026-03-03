@@ -1405,9 +1405,9 @@ class TestStartRpcListener:
                             with pytest.raises(asyncio.CancelledError):
                                 await pool.start_rpc_listener()
 
-        # Subscribe/unsubscribe to worker-specific channels
-        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
-        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        # Subscribe/unsubscribe to worker-specific channels (SSE, Streamable HTTP, and Reverse Proxy)
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
 
         # rpc_forward executed and response published
         mock_exec_rpc.assert_awaited_once()
@@ -1445,9 +1445,9 @@ class TestStartRpcListener:
                 with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
                     await pool.start_rpc_listener()
 
-        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
         mock_pubsub.get_message.assert_not_awaited()
-        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
 
     @pytest.mark.asyncio
     async def test_start_rpc_listener_skips_non_messages_and_missing_response_channel(self):
@@ -1495,8 +1495,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code=200):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1532,8 +1533,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data):
+            def __init__(self, data, status_code=200):
                 self._data = data
+                self.status_code = status_code
             def json(self):
                 return self._data
 

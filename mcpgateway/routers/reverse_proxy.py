@@ -13,6 +13,8 @@ to connect and tunnel their local MCP servers through the gateway.
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import os
+import socket
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 import uuid
@@ -37,6 +39,10 @@ LOGGER = logging_service.get_logger("mcpgateway.routers.reverse_proxy")
 
 router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
+# Worker ID for multi-worker session affinity
+# Uses hostname + PID to be unique across Docker containers and gunicorn workers
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+
 
 class ReverseProxySession:
     """Manages a reverse proxy session."""
@@ -57,6 +63,10 @@ class ReverseProxySession:
         self.last_activity = datetime.now(tz=timezone.utc)
         self.message_count = 0
         self.bytes_transferred = 0
+        # Timestamp (monotonic) of the last Redis ownership TTL refresh.
+        # Used by ReverseProxyManager.refresh_session_ownership_if_due() to
+        # throttle EXPIRE calls so we don't hit Redis on every heartbeat.
+        self.last_ownership_refresh: float = 0.0
 
     async def send_message(self, message: Dict[str, Any]) -> None:
         """Send message to the client.
@@ -83,12 +93,333 @@ class ReverseProxySession:
 
 
 class ReverseProxyManager:
-    """Manages all reverse proxy sessions."""
+    """Manages all reverse proxy sessions with distributed session affinity support.
+
+    Session affinity uses the same Redis Pub/Sub mechanism as SSE and Streamable HTTP
+    transports (see ADR-038). The reverse proxy channel is integrated into the shared
+    ``MCPSessionPool.start_rpc_listener()`` loop, which handles three message types:
+
+    - ``rpc_forward``           → SSE JSON-RPC forwarding
+    - ``http_forward``          → Streamable HTTP request forwarding
+    - ``reverse_proxy_forward`` → Reverse proxy WebSocket message forwarding (this module)
+
+    Redis key patterns used:
+    - ``mcpgw:reverse_proxy_owner:{session_id}``  – ownership (same TTL as pool_owner)
+    - ``mcpgw:reverse_proxy:{worker_id}``         – per-worker Pub/Sub channel
+    - ``mcpgw:reverse_proxy_response:{uuid}``     – per-request response channel
+    """
 
     def __init__(self):
         """Initialize the manager."""
         self.sessions: Dict[str, ReverseProxySession] = {}
         self._lock = asyncio.Lock()
+
+    async def register_session_ownership(self, session_id: str) -> None:
+        """Register session ownership in Redis using an unconditional SET EX.
+
+        Uses ``SET key value EX ttl`` (unconditional, **no NX**) so that a
+        reconnecting proxy always claims ownership on the new worker, overwriting
+        any stale key left by a previous connection that disconnected.
+
+        Unlike ``MCPSessionPool.register_session_mapping()`` which uses NX (first
+        writer wins for upstream pool sessions), the reverse proxy WebSocket
+        connection IS the ownership proof — the live WebSocket always wins.
+
+        The TTL is kept alive by ``refresh_session_ownership_if_due()`` (called
+        from the heartbeat handler, throttled to at most once per ``TTL/2``
+        seconds) and the key is explicitly deleted by
+        ``release_session_ownership()`` on disconnect, so the TTL is only a
+        safety net for crash recovery.
+
+        Args:
+            session_id: Session ID to register ownership for.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Session affinity disabled – local-only mode for session {session_id[:8]}...")
+            return
+
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if not redis:
+            LOGGER.warning("[REVERSE_PROXY_AFFINITY] Redis not available – falling back to local-only mode (session affinity inactive)")
+            return
+
+        owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
+        try:
+            # Unconditional SET EX – new WebSocket connection always wins ownership.
+            # This handles reconnects: if the proxy disconnected and reconnected
+            # (possibly to a different worker), the new connection must be able to
+            # claim ownership even if the old TTL key still exists in Redis.
+            ttl = int(settings.mcpgateway_session_affinity_ttl)
+            await redis.set(owner_key, WORKER_ID, ex=ttl)
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Ownership CLAIMED (SET EX {ttl}s) → key {owner_key}")
+        except Exception as e:
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to register ownership: {e}", exc_info=True)
+
+    async def release_session_ownership(self, session_id: str) -> None:
+        """Release session ownership in Redis by deleting the ownership key.
+
+        Called on WebSocket disconnect so that a reconnecting proxy on any worker
+        can immediately claim ownership without waiting for the TTL to expire.
+
+        Args:
+            session_id: Session ID to release ownership for.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if not redis:
+            return
+
+        owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
+        try:
+            await redis.delete(owner_key)
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Ownership RELEASED (DEL {owner_key})")
+        except Exception as e:
+            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to release ownership: {e}")
+
+    async def refresh_session_ownership_if_due(self, session_id: str, session: "ReverseProxySession") -> None:
+        """Refresh the Redis ownership TTL if enough time has passed since the last refresh.
+
+        Called from the heartbeat handler.  Heartbeats may arrive frequently
+        (e.g. every few seconds), so we throttle Redis ``EXPIRE`` calls to at
+        most once per ``TTL/2`` seconds using ``session.last_ownership_refresh``.
+
+        This keeps the ownership key alive for long-lived idle connections without
+        hammering Redis on every heartbeat.
+
+        Args:
+            session_id: Session ID whose ownership TTL to refresh.
+            session: The ``ReverseProxySession`` instance (holds the throttle timestamp).
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # Standard
+        import time  # pylint: disable=import-outside-toplevel
+
+        ttl = int(settings.mcpgateway_session_affinity_ttl)
+        refresh_interval = max(ttl // 2, 30)  # Refresh at TTL/2, minimum 30s
+        now = time.monotonic()
+
+        if now - session.last_ownership_refresh < refresh_interval:
+            return  # Not due yet – skip Redis call
+
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if not redis:
+            return
+
+        owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
+        try:
+            refreshed = await redis.expire(owner_key, int(ttl))
+            session.last_ownership_refresh = now
+            if refreshed:
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Ownership TTL refreshed via heartbeat (EXPIRE {ttl}s)")
+            else:
+                # Key expired between heartbeats – re-claim unconditionally
+                LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Ownership key missing during heartbeat refresh – re-claiming")
+                await redis.set(owner_key, WORKER_ID, ex=ttl)
+        except Exception as e:
+            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Heartbeat TTL refresh failed: {e}")
+
+    async def get_session_owner(self, session_id: str) -> Optional[str]:
+        """Get the worker ID that owns this session.
+
+        Args:
+            session_id: Session ID to check ownership for.
+
+        Returns:
+            Worker ID string that owns the session, or None if not found in Redis.
+        """
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if not redis:
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Redis unavailable – assuming local ownership for session {session_id[:8]}...")
+            return WORKER_ID  # Assume local ownership when Redis unavailable
+
+        owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
+        try:
+            owner = await redis.get(owner_key)
+            owner_id = owner.decode() if isinstance(owner, bytes) else owner
+            if owner_id:
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Owner from Redis: {owner_id}")
+            else:
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | No owner in Redis (unregistered session)")
+            return owner_id
+        except Exception as e:
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to get owner from Redis: {e}", exc_info=True)
+            return WORKER_ID  # Fallback to local
+
+    async def forward_message_to_owner(
+        self,
+        session_id: str,
+        message: Dict[str, Any],
+        timeout: float = 30.0,
+    ) -> Dict[str, Any]:
+        """Forward message to session owner via Redis Pub/Sub.
+
+        Uses the same polling pattern as ``MCPSessionPool.forward_request_to_owner()``
+        and ``forward_streamable_http_to_owner()``:
+        subscribe → publish → poll with ``get_message()`` inside ``asyncio.timeout()``.
+
+        Raises:
+            RuntimeError: If the message forwarding fails or times out.
+
+        Args:
+            session_id: Session ID to forward message to.
+            message: Message to forward.
+            timeout: Timeout in seconds for response.
+
+        Returns:
+            Response from the owner worker.
+
+        Raises:
+            ValueError: If session not found.
+            asyncio.TimeoutError: If request times out.
+        """
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if not redis:
+            raise RuntimeError("Redis unavailable for cross-worker forwarding")
+
+        response_id = uuid.uuid4().hex
+        response_channel = f"mcpgw:reverse_proxy_response:{response_id}"
+
+        forward_data = {
+            "type": "reverse_proxy_forward",
+            "session_id": session_id,
+            "message": message,
+            "response_channel": response_channel,
+            "original_worker": WORKER_ID,
+        }
+
+        owner = await self.get_session_owner(session_id)
+        owner_channel = f"mcpgw:reverse_proxy:{owner}"
+
+        # Subscribe to response channel BEFORE publishing (prevent race) –
+        # same ordering as forward_streamable_http_to_owner()
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(response_channel)
+        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Subscribed to response channel {response_channel}")
+
+        try:
+            await redis.publish(owner_channel, orjson.dumps(forward_data))
+            LOGGER.info(
+                f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                f"Published forward request to {owner_channel} | response_channel={response_channel} | timeout={timeout}s"
+            )
+
+            # Poll with get_message() inside asyncio.timeout() –
+            # matches MCPSessionPool.forward_request_to_owner() pattern exactly
+            async with asyncio.timeout(timeout):
+                while True:
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                    if msg and msg["type"] == "message":
+                        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Response received from owner {owner} via {response_channel}")
+                        return orjson.loads(msg["data"])
+        except asyncio.TimeoutError:
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"TIMEOUT ({timeout}s) waiting for response from owner {owner} on {response_channel}")
+            raise
+        finally:
+            await pubsub.unsubscribe(response_channel)
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Unsubscribed from {response_channel}")
+
+    async def _wait_for_response(self, request_id: str, timeout: float = 30.0) -> Dict[str, Any]:
+        """Wait for a response to a request via the pending_responses dict.
+
+        Args:
+            request_id: Request ID to wait for.
+            timeout: Timeout in seconds.
+
+        Returns:
+            Response message.
+
+        Raises:
+            asyncio.TimeoutError: If timeout occurs.
+        """
+        # Use get_running_loop() – get_event_loop() is deprecated in Python 3.10+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        pending_responses[request_id] = future
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            pending_responses.pop(request_id, None)
+
+    async def execute_forwarded_message(self, data: Dict[str, Any], redis: Any) -> None:
+        """Execute a forwarded reverse-proxy message on the owner worker.
+
+        Called by ``MCPSessionPool.start_rpc_listener()`` when it receives a
+        ``reverse_proxy_forward`` message on the worker's channel.  The response
+        is published back to the requesting worker via ``data["response_channel"]``.
+
+        Args:
+            data: Forwarded message data containing session_id, message, and response_channel.
+            redis: Redis client for publishing the response.
+        """
+        session_id = data["session_id"]
+        message = data["message"]
+        response_channel = data["response_channel"]
+        original_worker = data.get("original_worker", "unknown")
+        request_id = message.get("payload", {}).get("id")
+        is_notification = request_id is None
+
+        LOGGER.info(
+            f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+            f"Received forwarded {'notification' if is_notification else f'request id={request_id}'} from worker {original_worker}"
+        )
+
+        session = await self.get_session(session_id)
+        if not session:
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Session NOT FOUND locally – cannot execute forwarded message from {original_worker}")
+            error_response = {
+                "error": f"Session {session_id} not found on owner worker {WORKER_ID}",
+                "status": "error",
+            }
+            await redis.publish(response_channel, orjson.dumps(error_response))
+            return
+
+        try:
+            # Send message to the WebSocket client (reverse proxy agent)
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Sending message to WebSocket agent")
+            await session.send_message(message)
+
+            # Wait for response if this is a request (has id field in payload)
+            if request_id:
+                LOGGER.info(
+                    f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                    f"Waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
+                )
+                response = await self._wait_for_response(request_id, timeout=settings.mcpgateway_pool_rpc_forward_timeout)
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Agent responded (request_id={request_id}) – publishing to {response_channel}")
+                await redis.publish(response_channel, orjson.dumps(response))
+            else:
+                # Notification – no response expected
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Notification sent (no response expected)")
+                await redis.publish(response_channel, orjson.dumps({"status": "notification_sent"}))
+        except asyncio.TimeoutError:
+            LOGGER.error(
+                f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                f"TIMEOUT waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
+            )
+            await redis.publish(response_channel, orjson.dumps({"error": "Timeout waiting for agent response", "status": "error"}))
+        except Exception as e:
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Error executing forwarded message: {e}", exc_info=True)
+            await redis.publish(response_channel, orjson.dumps({"error": str(e), "status": "error"}))
 
     async def add_session(self, session: ReverseProxySession) -> None:
         """Add a new session.
@@ -96,13 +427,10 @@ class ReverseProxyManager:
         Args:
             session: Session to add.
         """
-        LOGGER.info(f"add_session called {session.session_id}")
-
         async with self._lock:
             self.sessions[session.session_id] = session
-            LOGGER.info(f"Added reverse proxy session: {session.session_id}")
-
-        LOGGER.info(f"add_session Now have len(self.sessions): {len(self.sessions)}")
+            count = len(self.sessions)
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session.session_id[:8]}... | Added (total local sessions: {count})")
 
     async def remove_session(self, session_id: str) -> None:
         """Remove a session.
@@ -110,15 +438,15 @@ class ReverseProxyManager:
         Args:
             session_id: Session ID to remove.
         """
-
-        LOGGER.info(f"Removed reverse proxy session: {session_id}")
-
         async with self._lock:
-            if session_id in self.sessions:
+            existed = session_id in self.sessions
+            if existed:
                 del self.sessions[session_id]
-                LOGGER.info(f"Removed reverse proxy session: {session_id}")
-
-        LOGGER.info(f"remove_session Now have len(self.sessions): {len(self.sessions)}")
+            count = len(self.sessions)
+        if existed:
+            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Removed (total local sessions: {count})")
+        else:
+            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Remove called but session not found locally (may be on another worker)")
 
     async def get_session(self, session_id: str) -> Optional[ReverseProxySession]:
         """Get a session by ID.
@@ -150,8 +478,6 @@ class ReverseProxyManager:
             True
         """
         async with self._lock:
-            LOGGER.info(f"list_sessions manager {hex(id(self))} sessions {hex(id(self.sessions))} sessions.values {self.sessions.values()}")
-
             # Return a shallow copy to prevent external mutation
             return [
                 {
@@ -200,7 +526,7 @@ async def forward_request_to_session(
     authentication: Optional[Dict[str, str]] = None,
     auth_type: Optional[str] = None,
 ):
-    """Forward an MCP request to a reverse proxy session.
+    """Forward an MCP request to a reverse proxy session with session affinity support.
 
     Args:
         session_id: Session ID to forward the request to.
@@ -216,42 +542,66 @@ async def forward_request_to_session(
         asyncio.TimeoutError: If request times out.
         Exception: For any other errors during request forwarding.
     """
-    LOGGER.info(f"**** forward_request_to_session session_id {session_id}  mcp_request {mcp_request}")
-    if authentication:
-        LOGGER.debug(f"Authentication provided: type={auth_type}")
-    session = await manager.get_session(session_id)
-    if not session:
-        LOGGER.info("Session with ID '{session_id}' was not found.")
-        raise ValueError(f"Session with ID '{session_id}' was not found.")
-
-    # Check if this is a notification (no id field) or a request (has id field)
+    method = mcp_request.get("method", "unknown")
     request_id = mcp_request.get("id")
     is_notification = request_id is None
+    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}")
+    if authentication:
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Auth type={auth_type}")
+
+    # Check if we own the session or need to forward to owner (only when affinity is enabled)
+    if settings.mcpgateway_session_affinity_enabled:
+        owner = await manager.get_session_owner(session_id)
+
+        if owner and owner != WORKER_ID:
+            # Forward to owner worker via Redis
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"method={method} | NOT owner (owner={owner}) → forwarding via Redis Pub/Sub")
+            message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
+            return await manager.forward_message_to_owner(session_id, message)
+
+        LOGGER.info(
+            f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"method={method} | {'We own it' if owner == WORKER_ID else 'No owner registered'} → executing locally"
+        )
+    else:
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Affinity disabled → executing locally")
+
+    # We own it or Redis not available - process locally
+    session = await manager.get_session(session_id)
+    if not session:
+        LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Session NOT FOUND locally despite ownership claim – possible stale Redis key")
+        raise ValueError(f"Session with ID '{session_id}' was not found.")
 
     # Wrap the request in reverse proxy envelope
     message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
 
     try:
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Sending message to WebSocket agent (method={method})")
         await session.send_message(message)
 
         # Notifications don't expect a response
         if is_notification:
-            LOGGER.info("Sent notification (no response expected)")
+            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Notification sent (no response expected)")
             return None
 
         # For requests, create a future and wait for response
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
         pending_responses[request_id] = future
 
+        timeout = settings.mcpgateway_pool_rpc_forward_timeout
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Waiting for agent response (request_id={request_id}, timeout={timeout}s)")
         # Wait for the response with a timeout
-        response = await asyncio.wait_for(future, timeout=30)
-        LOGGER.info("response %s", response)
+        response = await asyncio.wait_for(future, timeout=timeout)
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Response received (request_id={request_id})")
         return response
 
     except asyncio.TimeoutError:
         if request_id:
             pending_responses.pop(request_id, None)
+        LOGGER.error(
+            f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+            f"TIMEOUT waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
+        )
         raise
 
     except Exception:
@@ -354,16 +704,17 @@ async def websocket_endpoint(
     # Client-supplied X-Session-ID is ignored for security (prevents collision/hijack attacks)
     # Get session ID from headers or generate new one
     session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
-    LOGGER.info("websocket_endpoint session_id %s", session_id)
-
-    LOGGER.info("session_id %s", session_id)
+    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | WebSocket connected (user={user})")
 
     # Create session with authenticated user
     session = ReverseProxySession(session_id, websocket, user)
+
+    # Register ownership in Redis BEFORE adding to local dict (for session affinity)
+    await manager.register_session_ownership(session_id)
     await manager.add_session(session)
 
     try:
-        LOGGER.info(f"Reverse proxy connected: {session_id}")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Entering message loop")
 
         # Main message loop
         while True:
@@ -407,7 +758,14 @@ async def websocket_endpoint(
 
                                 try:
                                     gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
-                                        db=dbsession, gateway=gateway, team_id=team_id, owner_email=user, visibility=gateway.visibility, gateway_id=session_id, forward_request_func=forward_request_to_session, created_by=user
+                                        db=dbsession,
+                                        gateway=gateway,
+                                        team_id=team_id,
+                                        owner_email=user,
+                                        visibility=gateway.visibility,
+                                        gateway_id=session_id,
+                                        forward_request_func=forward_request_to_session,
+                                        created_by=user,
                                     )
 
                                     LOGGER.info(f"Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
@@ -429,7 +787,7 @@ async def websocket_endpoint(
                                         visibility=gateway.visibility,
                                         created_via="reverse_proxy",
                                         created_by=gateway.created_by,
-                                        owner_email=gateway.owner_email
+                                        owner_email=gateway.owner_email,
                                     )
                                     LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
 
@@ -453,24 +811,24 @@ async def websocket_endpoint(
                     break
 
                 elif msg_type == "heartbeat":
-                    # Respond to heartbeat
+                    # Respond to heartbeat and refresh Redis ownership TTL (throttled to TTL/2 interval)
                     await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
+                    await manager.refresh_session_ownership_if_due(session_id, session)
 
                 elif msg_type in ("response", "notification"):
                     # Handle MCP response/notification from the proxied server
-                    LOGGER.info(f"Received {msg_type} from session {session_id} message type {type(message)} message {orjson.dumps(message).decode()}")
-
                     payload = message.get("payload")
-                    LOGGER.info("response payload %s  type payload %s", payload, type(payload))
-                    request_id = payload["id"]
-                    LOGGER.info("response request_id %s", request_id)
+                    request_id = payload["id"] if payload else None
+                    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Received {msg_type} from agent (request_id={request_id})")
                     if request_id and request_id in pending_responses:
-                        LOGGER.info("request_id found in pending_responses")
                         future = pending_responses.pop(request_id)
-                        LOGGER.info("future found %s", future)
                         if not future.done():
-                            LOGGER.info("set result on future")
+                            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Resolved pending future for request_id={request_id}")
                             future.set_result(message)
+                        else:
+                            LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Future already done for request_id={request_id} (timeout or cancelled?)")
+                    elif request_id:
+                        LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | No pending future for request_id={request_id} (already timed out?)")
 
                 else:
                     LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
@@ -487,7 +845,8 @@ async def websocket_endpoint(
 
     finally:
         await manager.remove_session(session_id)
-        LOGGER.info(f"Reverse proxy session ended: {session_id}")
+        await manager.release_session_ownership(session_id)
+        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | WebSocket session ended")
 
 
 @router.get("/sessions")

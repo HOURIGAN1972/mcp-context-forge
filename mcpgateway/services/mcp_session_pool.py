@@ -1466,12 +1466,18 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return None  # Execute locally on error
 
     async def start_rpc_listener(self) -> None:
-        """Start listening for forwarded RPC and HTTP requests on this worker's channels.
+        """Start listening for forwarded RPC, HTTP, and reverse-proxy requests on this worker's channels.
 
         This method subscribes to Redis pub/sub channels specific to this worker
         and processes incoming forwarded requests from other workers:
-        - mcpgw:pool_rpc:{WORKER_ID} - for SSE transport JSON-RPC forwards
-        - mcpgw:pool_http:{WORKER_ID} - for Streamable HTTP request forwards
+
+        - ``mcpgw:pool_rpc:{WORKER_ID}``          – SSE transport JSON-RPC forwards
+        - ``mcpgw:pool_http:{WORKER_ID}``          – Streamable HTTP request forwards
+        - ``mcpgw:reverse_proxy:{WORKER_ID}``      – Reverse proxy WebSocket message forwards
+
+        All three transports share a single pubsub connection per worker, avoiding
+        redundant Redis connections.  The ``reverse_proxy_forward`` type is dispatched
+        to ``ReverseProxyManager.execute_forwarded_message()`` (see ADR-038).
         """
         if not settings.mcpgateway_session_affinity_enabled:
             return
@@ -1487,9 +1493,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
             http_channel = f"mcpgw:pool_http:{WORKER_ID}"
+            reverse_proxy_channel = f"mcpgw:reverse_proxy:{WORKER_ID}"
             pubsub = redis.pubsub()
-            await pubsub.subscribe(rpc_channel, http_channel)
-            logger.info(f"RPC/HTTP listener started for worker {WORKER_ID} on channels: {rpc_channel}, {http_channel}")
+            await pubsub.subscribe(rpc_channel, http_channel, reverse_proxy_channel)
+            logger.info(f"RPC/HTTP/ReverseProxy listener started for worker {WORKER_ID} on channels: " f"{rpc_channel}, {http_channel}, {reverse_proxy_channel}")
 
             try:
                 while not self._closed:
@@ -1509,16 +1516,24 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                 elif forward_type == "http_forward":
                                     # Execute forwarded HTTP request for Streamable HTTP transport
                                     await self._execute_forwarded_http_request(request, redis)
+                                elif forward_type == "reverse_proxy_forward":
+                                    # Execute forwarded WebSocket message for reverse proxy transport
+                                    # Lazy import to avoid circular dependency at module load time
+                                    # First-Party
+                                    from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+
+                                    await reverse_proxy_manager.execute_forwarded_message(request, redis)
+                                    logger.debug(f"Processed forwarded reverse-proxy message, response sent to {response_channel}")
                                 else:
                                     logger.warning(f"Unknown forward type: {forward_type}")
                     except Exception as e:
                         logger.warning(f"Error processing forwarded request: {e}")
             finally:
-                await pubsub.unsubscribe(rpc_channel, http_channel)
-                logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
+                await pubsub.unsubscribe(rpc_channel, http_channel, reverse_proxy_channel)
+                logger.info(f"RPC/HTTP/ReverseProxy listener stopped for worker {WORKER_ID}")
 
         except Exception as e:
-            logger.warning(f"RPC/HTTP listener failed: {e}")
+            logger.warning(f"RPC/HTTP/ReverseProxy listener failed: {e}")
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a forwarded RPC request locally via internal HTTP call.
@@ -1561,6 +1576,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
+
+                # Check HTTP status code first
+                if response.status_code >= 400:
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"HTTP {response.status_code}: {response.text}"}}
 
                 # Parse response
                 response_data = response.json()

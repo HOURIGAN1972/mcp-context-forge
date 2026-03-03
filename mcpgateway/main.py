@@ -603,7 +603,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting MCP Gateway services")
 
     # Initialize Redis client early (shared pool for all services)
-    await get_redis_client()
+    # Wrap in timeout to prevent hanging on connection issues
+    logger.info("About to initialize Redis client...")
+    try:
+        await asyncio.wait_for(get_redis_client(), timeout=10.0)
+        logger.info("Redis client initialization completed")
+    except asyncio.TimeoutError:
+        logger.warning("Redis client initialization timeout - continuing without Redis")
+    except Exception as e:
+        logger.warning(f"Redis client initialization failed: {e} - continuing without Redis")
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -682,14 +690,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_pool_notification_service(gateway_service)
 
-            # Start RPC listener for multi-worker session affinity
-            if settings.mcpgateway_session_affinity_enabled:
-                # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        # Start RPC listener for multi-worker session affinity.
+        # This must run whenever session affinity is enabled, independently of whether
+        # the full session pool is enabled (affinity needs the ownership registry but
+        # not the full pooling functionality – see ADR-038).
+        if settings.mcpgateway_session_affinity_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
-                pool = get_mcp_session_pool()
-                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
-                logger.info("Multi-worker session affinity RPC listener started")
+            pool = get_mcp_session_pool()
+            pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
+            # start_rpc_listener() handles SSE, Streamable HTTP, AND reverse proxy
+            # channels in a single shared pubsub connection (see ADR-038).
+            logger.info("Multi-worker session affinity RPC/HTTP/ReverseProxy listener started")
 
         await root_service.initialize()
         await completion_service.initialize()

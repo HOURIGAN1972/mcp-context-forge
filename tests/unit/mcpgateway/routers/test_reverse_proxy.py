@@ -12,7 +12,7 @@ session management, and HTTP endpoints.
 # Standard
 import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import orjson
@@ -328,7 +328,15 @@ class TestWebSocketEndpoint:
         """Test handling register message."""
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         register_msg = {"type": "register", "server": {"name": "test-server", "version": "1.0"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), asyncio.CancelledError()]
+        heartbeat_msg = {"type": "heartbeat"}
+
+        # Provide register message, then heartbeat to keep loop alive, then cancel
+        # The heartbeat gives the background registration task time to complete
+        mock_websocket.receive_text.side_effect = [
+            orjson.dumps(register_msg).decode(),
+            orjson.dumps(heartbeat_msg).decode(),
+            asyncio.CancelledError()
+        ]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
@@ -361,12 +369,19 @@ class TestWebSocketEndpoint:
             except asyncio.CancelledError:
                 pass
 
-        # Should send register acknowledgment with "processing" status
-        # (registration happens in background, so immediate ack is "processing")
+            # Give background task a moment to complete
+            await asyncio.sleep(0.1)
+
+        # Should send register acknowledgment with "processing" status as the first message
+        # (immediate ack before async registration), then "register_complete" when done
         mock_websocket.send_text.assert_called()
-        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
-        assert sent_data["type"] == "register_ack"
-        assert sent_data["status"] == "processing"
+        first_call_data = orjson.loads(mock_websocket.send_text.call_args_list[0][0][0])
+        assert first_call_data["type"] == "register_ack"
+        assert first_call_data["status"] == "processing"
+        # Final message should be register_complete with success
+        last_call_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
+        assert last_call_data["type"] == "register_complete"
+        assert last_call_data["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_websocket_unregister_message(self, mock_websocket):
@@ -1233,3 +1248,231 @@ class TestWebSocketTokenMissingSubject:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestCrossWorkerForwarding:
+    """Test cross-worker session affinity forwarding via Redis Pub/Sub.
+
+    These tests exercise the path where a tools/call HTTP request lands on a
+    worker that does NOT own the WebSocket session.  The non-owner worker must:
+      1. Detect it is not the owner (Redis GET returns a different WORKER_ID)
+      2. Publish the message to the owner's Redis channel
+      3. Wait for the response on a unique response channel
+
+    The owner worker (via start_rpc_listener) must:
+      1. Receive the ``reverse_proxy_forward`` message
+      2. Dispatch to ``execute_forwarded_message()``
+      3. Send the message to the local WebSocket session
+      4. Wait for the agent response via ``_wait_for_response()``
+      5. Publish the response back to the response channel
+
+    Both sides are tested here with mocked Redis so no live multi-worker
+    deployment is required.
+    """
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_message_success(self, mock_websocket):
+        """Owner worker executes a forwarded request and publishes the response.
+
+        The real flow: execute_forwarded_message() calls _wait_for_response() which
+        registers a Future in pending_responses[request_id].  The WebSocket message
+        loop resolves that future when the agent replies.  We simulate this by running
+        a concurrent task that polls pending_responses until the key appears, then
+        sets the result – exactly as the real message loop does.
+        """
+        # Standard Library
+        import asyncio
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import ReverseProxyManager, ReverseProxySession, pending_responses
+
+        owner_manager = ReverseProxyManager()
+        session = ReverseProxySession("sess-owner", mock_websocket, "user@test.com")
+        await owner_manager.add_session(session)
+
+        expected_response = {"type": "response", "payload": {"result": "ok"}, "sessionId": "sess-owner"}
+
+        async def _simulate_agent_reply():
+            """Poll pending_responses until req-001 is registered, then resolve it."""
+            for _ in range(100):
+                if "req-001" in pending_responses:
+                    pending_responses["req-001"].set_result(expected_response)
+                    return
+                await asyncio.sleep(0.01)
+
+        mock_redis = AsyncMock()
+
+        forward_data = {
+            "type": "reverse_proxy_forward",
+            "session_id": "sess-owner",
+            "message": {"type": "request", "payload": {"method": "tools/call", "id": "req-001"}},
+            "response_channel": "mcpgw:reverse_proxy_response:abc123",
+            "original_worker": "other-host:9999",
+        }
+
+        # Run both concurrently: execute_forwarded_message waits for the future;
+        # _simulate_agent_reply resolves it once registered.
+        await asyncio.gather(
+            owner_manager.execute_forwarded_message(forward_data, mock_redis),
+            _simulate_agent_reply(),
+        )
+
+        # Owner must have published the response to the response channel
+        mock_redis.publish.assert_called_once()
+        channel_arg, payload_arg = mock_redis.publish.call_args[0]
+        assert channel_arg == "mcpgw:reverse_proxy_response:abc123"
+        published = orjson.loads(payload_arg)
+        assert published == expected_response
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_message_session_not_found(self):
+        """Owner worker publishes error when session is not found locally."""
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import ReverseProxyManager
+
+        owner_manager = ReverseProxyManager()
+        # Session NOT added – simulates request arriving on wrong worker
+
+        mock_redis = AsyncMock()
+
+        forward_data = {
+            "type": "reverse_proxy_forward",
+            "session_id": "missing-session",
+            "message": {"type": "request", "payload": {"method": "tools/call", "id": "req-002"}},
+            "response_channel": "mcpgw:reverse_proxy_response:def456",
+            "original_worker": "other-host:9999",
+        }
+
+        await owner_manager.execute_forwarded_message(forward_data, mock_redis)
+
+        # Must publish an error response so the non-owner worker doesn't hang
+        mock_redis.publish.assert_called_once()
+        channel_arg, payload_arg = mock_redis.publish.call_args[0]
+        assert channel_arg == "mcpgw:reverse_proxy_response:def456"
+        published = orjson.loads(payload_arg)
+        assert published["status"] == "error"
+        assert "missing-session" in published["error"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_notification_no_response_wait(self, mock_websocket):
+        """Owner worker sends notification without waiting for a response."""
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import ReverseProxyManager, ReverseProxySession
+
+        owner_manager = ReverseProxyManager()
+        session = ReverseProxySession("sess-notif", mock_websocket, "user@test.com")
+        await owner_manager.add_session(session)
+
+        mock_redis = AsyncMock()
+
+        # Notification: no ``id`` field in payload → is_notification=True
+        forward_data = {
+            "type": "reverse_proxy_forward",
+            "session_id": "sess-notif",
+            "message": {"type": "notification", "payload": {"method": "notifications/initialized"}},
+            "response_channel": "mcpgw:reverse_proxy_response:ghi789",
+            "original_worker": "other-host:9999",
+        }
+
+        await owner_manager.execute_forwarded_message(forward_data, mock_redis)
+
+        # Must publish notification_sent ack (no agent response wait)
+        mock_redis.publish.assert_called_once()
+        channel_arg, payload_arg = mock_redis.publish.call_args[0]
+        assert channel_arg == "mcpgw:reverse_proxy_response:ghi789"
+        published = orjson.loads(payload_arg)
+        assert published["status"] == "notification_sent"
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_session_publishes_to_owner_channel(self, mock_websocket):
+        """Non-owner worker publishes to the correct owner Redis channel via forward_message_to_owner."""
+        # Standard Library
+        import asyncio
+
+        # First-Party
+        import orjson as _orjson
+        from mcpgateway.routers.reverse_proxy import ReverseProxyManager
+
+        non_owner_manager = ReverseProxyManager()
+
+        expected_response = {"type": "response", "payload": {"result": "forwarded-ok"}}
+
+        # Build a mock Redis that:
+        # - Returns the owner worker ID from GET (ownership check in get_session_owner)
+        # - Simulates a pubsub that immediately delivers the response message
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+
+        # get_message must yield to the event loop so asyncio.timeout() can fire.
+        # Use a coroutine side_effect that includes asyncio.sleep(0).
+        _responses = [{"type": "message", "data": _orjson.dumps(expected_response)}, None]
+        _call_count = [0]
+
+        async def _get_message_side_effect(**kwargs):
+            await asyncio.sleep(0)  # yield to event loop
+            idx = _call_count[0]
+            _call_count[0] += 1
+            if idx < len(_responses):
+                return _responses[idx]
+            return None
+
+        mock_pubsub.get_message = _get_message_side_effect
+
+        mock_redis = AsyncMock()
+        # get_session_owner calls redis.get(owner_key) → returns owner worker ID
+        mock_redis.get = AsyncMock(return_value=b"owner-host:1234")
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+        # forward_message_to_owner(session_id, message) – the method that does Redis Pub/Sub
+        message = {"type": "request", "sessionId": "sess-remote", "payload": {"method": "tools/call", "id": "req-003"}}
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_redis):
+            result = await non_owner_manager.forward_message_to_owner("sess-remote", message, timeout=5.0)
+
+        # Must have published to the owner's channel (mcpgw:reverse_proxy:{owner_worker_id})
+        mock_redis.publish.assert_called_once()
+        channel_arg, payload_arg = mock_redis.publish.call_args[0]
+        assert channel_arg == "mcpgw:reverse_proxy:owner-host:1234"
+        published = _orjson.loads(payload_arg)
+        assert published["type"] == "reverse_proxy_forward"
+        assert published["session_id"] == "sess-remote"
+        assert published["message"] == message
+
+        # Must return the response received from the owner via pubsub
+        assert result == expected_response
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_session_timeout(self, mock_websocket):
+        """Non-owner worker raises TimeoutError when owner doesn't respond."""
+        # Standard Library
+        import asyncio
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import ReverseProxyManager
+
+        non_owner_manager = ReverseProxyManager()
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        # Never delivers a message → timeout.
+        # Must yield to the event loop so asyncio.timeout() can actually fire.
+        async def _never_respond(**kwargs):
+            await asyncio.sleep(0)  # yield to event loop
+            return None
+
+        mock_pubsub.get_message = _never_respond
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"owner-host:1234")
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+        message = {"type": "request", "sessionId": "sess-remote", "payload": {"method": "tools/call", "id": "req-004"}}
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_redis):
+            with pytest.raises(asyncio.TimeoutError):
+                await non_owner_manager.forward_message_to_owner("sess-remote", message, timeout=0.1)
+
+        # Must have unsubscribed from the response channel even on timeout
+        mock_pubsub.unsubscribe.assert_called_once()

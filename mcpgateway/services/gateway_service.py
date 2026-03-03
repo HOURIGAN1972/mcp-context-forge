@@ -1197,39 +1197,39 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 else:
                     # Create DB model
                     db_gateway = DbGateway(
-                            id=gateway_id,
-                            name=gateway.name,
-                            slug=slug_name,
-                            url=normalized_url,
-                            description=gateway.description,
-                            tags=gateway.tags or [],
-                            transport=gateway.transport,
-                            capabilities=capabilities,
-                            last_seen=datetime.now(timezone.utc),
-                            auth_type=auth_type,
-                            auth_value=auth_value,
-                            auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
-                            oauth_config=oauth_config,
-                            passthrough_headers=gateway.passthrough_headers,
-                            tools=tools,
-                            resources=db_resources,
-                            prompts=db_prompts,
-                            # Gateway metadata
-                            created_by=created_by,
-                            created_from_ip=created_from_ip,
-                            created_via=created_via or "api",
-                            created_user_agent=created_user_agent,
-                            version=1,
-                            # Team scoping fields
-                            team_id=team_id,
-                            owner_email=owner_email,
-                            visibility=visibility,
-                            ca_certificate=gateway.ca_certificate,
-                            ca_certificate_sig=gateway.ca_certificate_sig,
-                            signing_algorithm=gateway.signing_algorithm,
-                            # Gateway mode configuration
-                            gateway_mode=gateway_mode,
-                        )
+                        id=gateway_id,
+                        name=gateway.name,
+                        slug=slug_name,
+                        url=normalized_url,
+                        description=gateway.description,
+                        tags=gateway.tags or [],
+                        transport=gateway.transport,
+                        capabilities=capabilities,
+                        last_seen=datetime.now(timezone.utc),
+                        auth_type=auth_type,
+                        auth_value=auth_value,
+                        auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
+                        oauth_config=oauth_config,
+                        passthrough_headers=gateway.passthrough_headers,
+                        tools=tools,
+                        resources=db_resources,
+                        prompts=db_prompts,
+                        # Gateway metadata
+                        created_by=created_by,
+                        created_from_ip=created_from_ip,
+                        created_via=created_via or "api",
+                        created_user_agent=created_user_agent,
+                        version=1,
+                        # Team scoping fields
+                        team_id=team_id,
+                        owner_email=owner_email,
+                        visibility=visibility,
+                        ca_certificate=gateway.ca_certificate,
+                        ca_certificate_sig=gateway.ca_certificate_sig,
+                        signing_algorithm=gateway.signing_algorithm,
+                        # Gateway mode configuration
+                        gateway_mode=gateway_mode,
+                    )
             else:
                 # Create placeholder DB model for gateway with proxied transport and wait for
                 # reverse proxy to connect and initialise to retrieve tools, prompts and resources
@@ -4449,7 +4449,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.auth_type = gateway.auth_type
-                        existing_tool.auth_value = gateway.auth_value
+                        existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         existing_tool.visibility = gateway.visibility
                         logger.debug(f"Updated existing tool: {tool.name}")
                 else:

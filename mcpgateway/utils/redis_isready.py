@@ -205,7 +205,12 @@ def wait_for_redis_ready(
             sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
             sys.exit(2)
 
-        redis_client = Redis.from_url(redis_url)
+        # Add socket timeout to prevent indefinite hanging
+        redis_client = Redis.from_url(
+            redis_url,
+            socket_connect_timeout=5,  # 5 second connection timeout
+            socket_timeout=5,  # 5 second read/write timeout
+        )
         interval_s = retry_interval_ms / 1000.0  # Convert to seconds
         for attempt in range(1, max_retries + 1):
             try:

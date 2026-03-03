@@ -2087,21 +2087,37 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
-                # Look for mcp-session-id in response headers
-                response_headers = message.get("headers", [])
-                for header_name, header_value in response_headers:
-                    if isinstance(header_name, bytes):
-                        header_name = header_name.decode("latin-1")
-                    if isinstance(header_value, bytes):
-                        header_value = header_value.decode("latin-1")
-                    if header_name.lower() == "mcp-session-id":
-                        captured_session_id = header_value
-                        break
+            if message["type"] == "http.response.start":
+                # Log response status for debugging
+                status = message.get("status", 0)
+                logger.info(f"[DEBUG_400] SDK returning response | Status: {status} | Session: {mcp_session_id}")
+
+                if settings.mcpgateway_session_affinity_enabled:
+                    # Look for mcp-session-id in response headers
+                    response_headers = message.get("headers", [])
+                    for header_name, header_value in response_headers:
+                        if isinstance(header_name, bytes):
+                            header_name = header_name.decode("latin-1")
+                        if isinstance(header_value, bytes):
+                            header_value = header_value.decode("latin-1")
+                        if header_name.lower() == "mcp-session-id":
+                            captured_session_id = header_value
+                            break
+            elif message["type"] == "http.response.body":
+                # Log response body for 400 errors
+                body = message.get("body", b"")
+                if body:
+                    try:
+                        body_str = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+                        logger.info(f"[DEBUG_400] SDK response body | Body: {body_str[:500]}")
+                    except Exception:
+                        logger.info(f"[DEBUG_400] SDK response body | Body (binary): {len(body)} bytes")
             await send(message)
 
         try:
+            logger.info(f"[DEBUG_400] About to call SDK handle_request | Path: {path} | Method: {method} | Session: {mcp_session_id} | Headers: {list(headers.keys())}")
             await self.session_manager.handle_request(scope, receive, send_with_capture)
+            logger.info(f"[DEBUG_400] SDK handle_request completed successfully | Session: {mcp_session_id}")
             logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
 
             # Register ownership for the session we just handled
@@ -2130,6 +2146,7 @@ class SessionManagerWrapper:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
+            logger.error(f"[DEBUG_400] SDK handle_request raised exception | Path: {path} | Method: {method} | Session: {mcp_session_id} | Error type: {type(e).__name__} | Error: {e}")
             logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
             logger.exception(f"Error handling streamable HTTP request: {e}")
             raise
