@@ -2975,7 +2975,7 @@ class ToolService:
         a2a_agent_name: Optional[str] = None
         a2a_agent_endpoint_url: Optional[str] = None
         a2a_agent_type: Optional[str] = None
-        a2a_agent_protocol_version: Optional[str] = None
+        # a2a_agent_protocol_version: Optional[str] = None  # Not currently used
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
@@ -2999,7 +2999,7 @@ class ToolService:
             a2a_agent_name = a2a_agent.name
             a2a_agent_endpoint_url = a2a_agent.endpoint_url
             a2a_agent_type = a2a_agent.agent_type
-            a2a_agent_protocol_version = a2a_agent.protocol_version
+            # a2a_agent_protocol_version = a2a_agent.protocol_version  # Not currently used
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
@@ -3381,7 +3381,10 @@ class ToolService:
                         )
 
                     async def connect_to_proxy_server(server_url: str, headers: dict = headers):
-                        logger.info(f"connect_to_proxy_server  server_url {server_url} headers {headers} arguments {arguments} ")
+                        # Import get_worker_id for logging
+                        from mcpgateway.routers.reverse_proxy import get_worker_id
+                        worker_id = get_worker_id()
+                        logger.info(f"[PROXY_TOOL_CALL] Worker {worker_id} | connect_to_proxy_server server_url={server_url} headers={headers} arguments={arguments}")
 
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -3444,7 +3447,7 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                error_details={"error_type": type(ex).__name__, "error_message": str(ex)},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
 
@@ -3847,15 +3850,30 @@ class ToolService:
                             method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
                         request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
                     else:
-                        # Custom agents: Pass parameters directly
-                        params = arguments if isinstance(arguments, dict) else {}
-                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
+                        # Custom agents: Pass arguments directly as request body (no wrapping)
+                        # This allows custom agents to receive their expected format directly
+                        request_data = arguments if isinstance(arguments, dict) else {}
 
-                    # Add authentication
-                    if a2a_agent_auth_type == "api_key" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
-                    elif a2a_agent_auth_type == "bearer" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
+                    # Add authentication (decrypt auth_value to get headers dict, matching a2a_service.py pattern)
+                    if a2a_agent_auth_type in ("api_key", "bearer", "authheaders") and a2a_agent_auth_value:
+                        # Decrypt auth_value and extract headers (follows a2a_service pattern)
+                        if isinstance(a2a_agent_auth_value, str):
+                            try:
+                                logger.info(f"[A2A_AUTH_DEBUG] Decrypting {a2a_agent_auth_type} auth for agent '{a2a_agent_name}', encrypted value length: {len(a2a_agent_auth_value)}")
+                                auth_headers = decode_auth(a2a_agent_auth_value)
+                                logger.info(f"[A2A_AUTH_DEBUG] Decrypted headers keys: {list(auth_headers.keys())}")
+                                # Log first 50 chars of Authorization header if present
+                                if "Authorization" in auth_headers:
+                                    auth_preview = auth_headers["Authorization"][:50] if len(auth_headers["Authorization"]) > 50 else auth_headers["Authorization"]
+                                    logger.info(f"[A2A_AUTH_DEBUG] Authorization header preview: {auth_preview}...")
+                                # Update headers with decrypted auth headers (e.g., {"Authorization": "Bearer <token>"})
+                                headers.update(auth_headers)
+                            except Exception as e:
+                                logger.error(f"[A2A_AUTH_DEBUG] Failed to decrypt {a2a_agent_auth_type} auth for A2A agent '{a2a_agent_name}': {e}")
+                        elif isinstance(a2a_agent_auth_value, dict):
+                            logger.info(f"[A2A_AUTH_DEBUG] Auth value is already a dict for agent '{a2a_agent_name}', keys: {list(a2a_agent_auth_value.keys())}")
+                            # Already a dict, use directly
+                            headers.update({str(k): str(v) for k, v in a2a_agent_auth_value.items()})
                     elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
                         auth_query_params_decrypted: dict[str, str] = {}
                         for param_key, encrypted_value in a2a_agent_auth_query_params.items():

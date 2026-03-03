@@ -41,7 +41,23 @@ router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers and gunicorn workers
-WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+# IMPORTANT: Must be a function to get current PID after fork (not cached at import time)
+def get_worker_id() -> str:
+    """Get the current worker ID (hostname:pid).
+    
+    This must be a function, not a module-level constant, because with
+    gunicorn's preload_app=True, the module is imported in the parent process
+    before forking. If we cache the PID at import time, all workers will
+    have the parent's PID instead of their own.
+    
+    Returns:
+        Worker ID string in format "hostname:pid"
+    """
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+# For backward compatibility, provide WORKER_ID as a property-like access
+# But this should be replaced with get_worker_id() calls throughout
+WORKER_ID = get_worker_id()
 
 
 class ReverseProxySession:
@@ -153,10 +169,11 @@ class ReverseProxyManager:
             # (possibly to a different worker), the new connection must be able to
             # claim ownership even if the old TTL key still exists in Redis.
             ttl = int(settings.mcpgateway_session_affinity_ttl)
-            await redis.set(owner_key, WORKER_ID, ex=ttl)
-            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Ownership CLAIMED (SET EX {ttl}s) → key {owner_key}")
+            worker_id = get_worker_id()
+            await redis.set(owner_key, worker_id, ex=ttl)
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {worker_id} | Session {session_id[:8]}... | Ownership CLAIMED (SET EX {ttl}s) → key {owner_key}")
         except Exception as e:
-            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to register ownership: {e}", exc_info=True)
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Failed to register ownership: {e}", exc_info=True)
 
     async def release_session_ownership(self, session_id: str) -> None:
         """Release session ownership in Redis by deleting the ownership key.
@@ -180,9 +197,9 @@ class ReverseProxyManager:
         owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
         try:
             await redis.delete(owner_key)
-            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Ownership RELEASED (DEL {owner_key})")
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Ownership RELEASED (DEL {owner_key})")
         except Exception as e:
-            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to release ownership: {e}")
+            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Failed to release ownership: {e}")
 
     async def refresh_session_ownership_if_due(self, session_id: str, session: "ReverseProxySession") -> None:
         """Refresh the Redis ownership TTL if enough time has passed since the last refresh.
@@ -223,13 +240,14 @@ class ReverseProxyManager:
             refreshed = await redis.expire(owner_key, int(ttl))
             session.last_ownership_refresh = now
             if refreshed:
-                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Ownership TTL refreshed via heartbeat (EXPIRE {ttl}s)")
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Ownership TTL refreshed via heartbeat (EXPIRE {ttl}s)")
             else:
                 # Key expired between heartbeats – re-claim unconditionally
-                LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Ownership key missing during heartbeat refresh – re-claiming")
-                await redis.set(owner_key, WORKER_ID, ex=ttl)
+                worker_id = get_worker_id()
+                LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {worker_id} | Session {session_id[:8]}... | " f"Ownership key missing during heartbeat refresh – re-claiming")
+                await redis.set(owner_key, worker_id, ex=ttl)
         except Exception as e:
-            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Heartbeat TTL refresh failed: {e}")
+            LOGGER.warning(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Heartbeat TTL refresh failed: {e}")
 
     async def get_session_owner(self, session_id: str) -> Optional[str]:
         """Get the worker ID that owns this session.
@@ -246,20 +264,20 @@ class ReverseProxyManager:
         redis = await get_redis_client()
         if not redis:
             LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Redis unavailable – assuming local ownership for session {session_id[:8]}...")
-            return WORKER_ID  # Assume local ownership when Redis unavailable
+            return get_worker_id()  # Assume local ownership when Redis unavailable
 
         owner_key = f"mcpgw:reverse_proxy_owner:{session_id}"
         try:
             owner = await redis.get(owner_key)
             owner_id = owner.decode() if isinstance(owner, bytes) else owner
             if owner_id:
-                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Owner from Redis: {owner_id}")
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Owner from Redis: {owner_id}")
             else:
-                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | No owner in Redis (unregistered session)")
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | No owner in Redis (unregistered session)")
             return owner_id
         except Exception as e:
-            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Failed to get owner from Redis: {e}", exc_info=True)
-            return WORKER_ID  # Fallback to local
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Failed to get owner from Redis: {e}", exc_info=True)
+            return get_worker_id()  # Fallback to local
 
     async def forward_message_to_owner(
         self,
@@ -303,7 +321,7 @@ class ReverseProxyManager:
             "session_id": session_id,
             "message": message,
             "response_channel": response_channel,
-            "original_worker": WORKER_ID,
+            "original_worker": get_worker_id(),
         }
 
         owner = await self.get_session_owner(session_id)
@@ -313,12 +331,12 @@ class ReverseProxyManager:
         # same ordering as forward_streamable_http_to_owner()
         pubsub = redis.pubsub()
         await pubsub.subscribe(response_channel)
-        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Subscribed to response channel {response_channel}")
+        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Subscribed to response channel {response_channel}")
 
         try:
             await redis.publish(owner_channel, orjson.dumps(forward_data))
             LOGGER.info(
-                f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
                 f"Published forward request to {owner_channel} | response_channel={response_channel} | timeout={timeout}s"
             )
 
@@ -328,14 +346,14 @@ class ReverseProxyManager:
                 while True:
                     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                     if msg and msg["type"] == "message":
-                        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Response received from owner {owner} via {response_channel}")
+                        LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Response received from owner {owner} via {response_channel}")
                         return orjson.loads(msg["data"])
         except asyncio.TimeoutError:
-            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"TIMEOUT ({timeout}s) waiting for response from owner {owner} on {response_channel}")
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"TIMEOUT ({timeout}s) waiting for response from owner {owner} on {response_channel}")
             raise
         finally:
             await pubsub.unsubscribe(response_channel)
-            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Unsubscribed from {response_channel}")
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Unsubscribed from {response_channel}")
 
     async def _wait_for_response(self, request_id: str, timeout: float = 30.0) -> Dict[str, Any]:
         """Wait for a response to a request via the pending_responses dict.
@@ -379,15 +397,16 @@ class ReverseProxyManager:
         is_notification = request_id is None
 
         LOGGER.info(
-            f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+            f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
             f"Received forwarded {'notification' if is_notification else f'request id={request_id}'} from worker {original_worker}"
         )
 
         session = await self.get_session(session_id)
         if not session:
-            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Session NOT FOUND locally – cannot execute forwarded message from {original_worker}")
+            worker_id = get_worker_id()
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {worker_id} | Session {session_id[:8]}... | " f"Session NOT FOUND locally – cannot execute forwarded message from {original_worker}")
             error_response = {
-                "error": f"Session {session_id} not found on owner worker {WORKER_ID}",
+                "error": f"Session {session_id} not found on owner worker {worker_id}",
                 "status": "error",
             }
             await redis.publish(response_channel, orjson.dumps(error_response))
@@ -395,30 +414,30 @@ class ReverseProxyManager:
 
         try:
             # Send message to the WebSocket client (reverse proxy agent)
-            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Sending message to WebSocket agent")
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Sending message to WebSocket agent")
             await session.send_message(message)
 
             # Wait for response if this is a request (has id field in payload)
             if request_id:
                 LOGGER.info(
-                    f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                    f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
                     f"Waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
                 )
                 response = await self._wait_for_response(request_id, timeout=settings.mcpgateway_pool_rpc_forward_timeout)
-                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Agent responded (request_id={request_id}) – publishing to {response_channel}")
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Agent responded (request_id={request_id}) – publishing to {response_channel}")
                 await redis.publish(response_channel, orjson.dumps(response))
             else:
                 # Notification – no response expected
-                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Notification sent (no response expected)")
+                LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Notification sent (no response expected)")
                 await redis.publish(response_channel, orjson.dumps({"status": "notification_sent"}))
         except asyncio.TimeoutError:
             LOGGER.error(
-                f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+                f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
                 f"TIMEOUT waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
             )
             await redis.publish(response_channel, orjson.dumps({"error": "Timeout waiting for agent response", "status": "error"}))
         except Exception as e:
-            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | Error executing forwarded message: {e}", exc_info=True)
+            LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Error executing forwarded message: {e}", exc_info=True)
             await redis.publish(response_channel, orjson.dumps({"error": str(e), "status": "error"}))
 
     async def add_session(self, session: ReverseProxySession) -> None:
@@ -430,7 +449,7 @@ class ReverseProxyManager:
         async with self._lock:
             self.sessions[session.session_id] = session
             count = len(self.sessions)
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session.session_id[:8]}... | Added (total local sessions: {count})")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session.session_id[:8]}... | Added (total local sessions: {count})")
 
     async def remove_session(self, session_id: str) -> None:
         """Remove a session.
@@ -444,9 +463,9 @@ class ReverseProxyManager:
                 del self.sessions[session_id]
             count = len(self.sessions)
         if existed:
-            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Removed (total local sessions: {count})")
+            LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Removed (total local sessions: {count})")
         else:
-            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Remove called but session not found locally (may be on another worker)")
+            LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Remove called but session not found locally (may be on another worker)")
 
     async def get_session(self, session_id: str) -> Optional[ReverseProxySession]:
         """Get a session by ID.
@@ -545,42 +564,47 @@ async def forward_request_to_session(
     method = mcp_request.get("method", "unknown")
     request_id = mcp_request.get("id")
     is_notification = request_id is None
-    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}")
+    LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}")
     if authentication:
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Auth type={auth_type}")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Auth type={auth_type}")
 
     # Check if we own the session or need to forward to owner (only when affinity is enabled)
     if settings.mcpgateway_session_affinity_enabled:
         owner = await manager.get_session_owner(session_id)
 
-        if owner and owner != WORKER_ID:
+        worker_id = get_worker_id()
+        if owner and owner != worker_id:
             # Forward to owner worker via Redis
-            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"method={method} | NOT owner (owner={owner}) → forwarding via Redis Pub/Sub")
+            LOGGER.info(f"[REVERSE_PROXY_AFFINITY] Worker {worker_id} | Session {session_id[:8]}... | " f"method={method} | NOT owner (owner={owner}) → forwarding via Redis Pub/Sub")
             message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
             return await manager.forward_message_to_owner(session_id, message)
 
         LOGGER.info(
-            f"[REVERSE_PROXY_AFFINITY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"method={method} | {'We own it' if owner == WORKER_ID else 'No owner registered'} → executing locally"
+            f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"method={method} | {'We own it' if owner == worker_id else 'No owner registered'} → executing locally"
         )
     else:
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Affinity disabled → executing locally")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Affinity disabled → executing locally")
 
     # We own it or Redis not available - process locally
     session = await manager.get_session(session_id)
     if not session:
-        LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Session NOT FOUND locally despite ownership claim – possible stale Redis key")
-        raise ValueError(f"Session with ID '{session_id}' was not found.")
+        LOGGER.warning(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Session NOT FOUND locally despite ownership claim – cleaning up stale Redis key")
+        
+        # Clean up stale Redis ownership key to prevent future conflicts
+        await manager.release_session_ownership(session_id)
+        
+        raise ValueError(f"Session with ID '{session_id}' is no longer active. Please reconnect the reverse proxy agent.")
 
     # Wrap the request in reverse proxy envelope
     message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
 
     try:
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Sending message to WebSocket agent (method={method})")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Sending message to WebSocket agent (method={method})")
         await session.send_message(message)
 
         # Notifications don't expect a response
         if is_notification:
-            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Notification sent (no response expected)")
+            LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Notification sent (no response expected)")
             return None
 
         # For requests, create a future and wait for response
@@ -589,17 +613,17 @@ async def forward_request_to_session(
         pending_responses[request_id] = future
 
         timeout = settings.mcpgateway_pool_rpc_forward_timeout
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Waiting for agent response (request_id={request_id}, timeout={timeout}s)")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Waiting for agent response (request_id={request_id}, timeout={timeout}s)")
         # Wait for the response with a timeout
         response = await asyncio.wait_for(future, timeout=timeout)
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Response received (request_id={request_id})")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Response received (request_id={request_id})")
         return response
 
     except asyncio.TimeoutError:
         if request_id:
             pending_responses.pop(request_id, None)
         LOGGER.error(
-            f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | "
+            f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
             f"TIMEOUT waiting for agent response (request_id={request_id}, timeout={settings.mcpgateway_pool_rpc_forward_timeout}s)"
         )
         raise
@@ -704,7 +728,7 @@ async def websocket_endpoint(
     # Client-supplied X-Session-ID is ignored for security (prevents collision/hijack attacks)
     # Get session ID from headers or generate new one
     session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
-    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | WebSocket connected (user={user})")
+    LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | WebSocket connected (user={user})")
 
     # Create session with authenticated user
     session = ReverseProxySession(session_id, websocket, user)
@@ -714,7 +738,7 @@ async def websocket_endpoint(
     await manager.add_session(session)
 
     try:
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Entering message loop")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Entering message loop")
 
         # Main message loop
         while True:
@@ -819,16 +843,16 @@ async def websocket_endpoint(
                     # Handle MCP response/notification from the proxied server
                     payload = message.get("payload")
                     request_id = payload["id"] if payload else None
-                    LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | " f"Received {msg_type} from agent (request_id={request_id})")
+                    LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Received {msg_type} from agent (request_id={request_id})")
                     if request_id and request_id in pending_responses:
                         future = pending_responses.pop(request_id)
                         if not future.done():
-                            LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Resolved pending future for request_id={request_id}")
+                            LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Resolved pending future for request_id={request_id}")
                             future.set_result(message)
                         else:
-                            LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | Future already done for request_id={request_id} (timeout or cancelled?)")
+                            LOGGER.warning(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Future already done for request_id={request_id} (timeout or cancelled?)")
                     elif request_id:
-                        LOGGER.warning(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | No pending future for request_id={request_id} (already timed out?)")
+                        LOGGER.warning(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | No pending future for request_id={request_id} (already timed out?)")
 
                 else:
                     LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
@@ -846,7 +870,7 @@ async def websocket_endpoint(
     finally:
         await manager.remove_session(session_id)
         await manager.release_session_ownership(session_id)
-        LOGGER.info(f"[REVERSE_PROXY] Worker {WORKER_ID} | Session {session_id[:8]}... | WebSocket session ended")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | WebSocket session ended")
 
 
 @router.get("/sessions")
