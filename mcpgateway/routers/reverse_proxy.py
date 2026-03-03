@@ -39,21 +39,23 @@ LOGGER = logging_service.get_logger("mcpgateway.routers.reverse_proxy")
 
 router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
+
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers and gunicorn workers
 # IMPORTANT: Must be a function to get current PID after fork (not cached at import time)
 def get_worker_id() -> str:
     """Get the current worker ID (hostname:pid).
-    
+
     This must be a function, not a module-level constant, because with
     gunicorn's preload_app=True, the module is imported in the parent process
     before forking. If we cache the PID at import time, all workers will
     have the parent's PID instead of their own.
-    
+
     Returns:
         Worker ID string in format "hostname:pid"
     """
     return f"{socket.gethostname()}:{os.getpid()}"
+
 
 # For backward compatibility, provide WORKER_ID as a property-like access
 # But this should be replaced with get_worker_id() calls throughout
@@ -564,7 +566,9 @@ async def forward_request_to_session(
     method = mcp_request.get("method", "unknown")
     request_id = mcp_request.get("id")
     is_notification = request_id is None
-    LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}")
+    LOGGER.info(
+        f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}"
+    )
     if authentication:
         LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Auth type={auth_type}")
 
@@ -580,7 +584,8 @@ async def forward_request_to_session(
             return await manager.forward_message_to_owner(session_id, message)
 
         LOGGER.info(
-            f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"method={method} | {'We own it' if owner == worker_id else 'No owner registered'} → executing locally"
+            f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | "
+            f"method={method} | {'We own it' if owner == worker_id else 'No owner registered'} → executing locally"
         )
     else:
         LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Affinity disabled → executing locally")
@@ -589,10 +594,10 @@ async def forward_request_to_session(
     session = await manager.get_session(session_id)
     if not session:
         LOGGER.warning(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Session NOT FOUND locally despite ownership claim – cleaning up stale Redis key")
-        
+
         # Clean up stale Redis ownership key to prevent future conflicts
         await manager.release_session_ownership(session_id)
-        
+
         raise ValueError(f"Session with ID '{session_id}' is no longer active. Please reconnect the reverse proxy agent.")
 
     # Wrap the request in reverse proxy envelope

@@ -3382,7 +3382,9 @@ class ToolService:
 
                     async def connect_to_proxy_server(server_url: str, headers: dict = headers):
                         # Import get_worker_id for logging
+                        # First-Party
                         from mcpgateway.routers.reverse_proxy import get_worker_id
+
                         worker_id = get_worker_id()
                         logger.info(f"[PROXY_TOOL_CALL] Worker {worker_id} | connect_to_proxy_server server_url={server_url} headers={headers} arguments={arguments}")
 
