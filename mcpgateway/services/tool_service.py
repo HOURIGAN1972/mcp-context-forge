@@ -3415,14 +3415,24 @@ class ToolService:
                             )
 
                             result = await forward_request_to_session(session_id=session_id, mcp_request=json_rpc_request)
-                            logger.info(f"result {result}")
+                            logger.info(f"[PROXY_TOOL_CALL] Raw result from forward_request_to_session: {result}")
 
                             # Extract the payload from the reverse proxy envelope
+                            # The result structure is: {"type": "response", "sessionId": "...", "payload": {"jsonrpc": "2.0", "id": "...", "result": {...}}}
                             payload = result.get("payload", result)
-                            logger.info(f"payload {payload}")
+                            logger.info(f"[PROXY_TOOL_CALL] Extracted payload: {payload}")
+
+                            # Extract the actual MCP result from the JSON-RPC response
+                            mcp_result = payload.get("result", {})
+                            logger.info(f"[PROXY_TOOL_CALL] MCP result: {mcp_result}")
+
+                            # Get content and error status
+                            content = mcp_result.get("content", [])
+                            is_error = mcp_result.get("isError", False)
+                            logger.info(f"[PROXY_TOOL_CALL] Content: {content}, isError: {is_error}")
 
                             # Return the raw payload as ToolResult - filtering will be done by the common code path
-                            tool_call_result = ToolResult(content=payload.get("result", {}).get("content", []), is_error=payload.get("result", {}).get("isError", False))
+                            tool_call_result = ToolResult(content=content, is_error=is_error)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
