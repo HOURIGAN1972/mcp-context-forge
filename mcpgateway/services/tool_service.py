@@ -3446,9 +3446,10 @@ class ToolService:
                             )
 
                         except Exception as ex:
-                            error_message = str(ex)
+                            error_message = str(ex) if str(ex) else f"{type(ex).__name__}: {repr(ex)}"
+                            logger.error(f"[PROXY_TOOL_CALL] Exception in connect_to_proxy_server: {error_message}", exc_info=True)
                             tool_call_result = ToolResult(
-                                content=[TextContent(type="text", text=str(f"Tool error encountered : {error_message}"))],
+                                content=[TextContent(type="text", text=f"Tool error encountered: {error_message}")],
                                 is_error=True,
                             )
                             # Log failed MCP call (using local variables)
@@ -3459,8 +3460,8 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(ex).__name__, "error_message": str(ex)},
-                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
+                                error_details={"error_type": type(ex).__name__, "error_message": error_message, "traceback": str(ex.__traceback__)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "proxied"},
                             )
 
                         return tool_call_result
