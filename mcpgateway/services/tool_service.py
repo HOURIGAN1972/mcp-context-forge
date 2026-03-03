@@ -2999,7 +2999,7 @@ class ToolService:
             a2a_agent_name = a2a_agent.name
             a2a_agent_endpoint_url = a2a_agent.endpoint_url
             a2a_agent_type = a2a_agent.agent_type
-            # a2a_agent_protocol_version = a2a_agent.protocol_version  # Not currently used
+            a2a_agent_protocol_version = a2a_agent.protocol_version
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
@@ -3853,6 +3853,9 @@ class ToolService:
                         # Custom agents: Pass arguments directly as request body (no wrapping)
                         # This allows custom agents to receive their expected format directly
                         request_data = arguments if isinstance(arguments, dict) else {}
+                        # Add protocol_version to custom agent payloads
+                        if isinstance(request_data, dict) and a2a_agent_protocol_version:
+                            request_data["protocol_version"] = a2a_agent_protocol_version
 
                     # Add authentication (decrypt auth_value to get headers dict, matching a2a_service.py pattern)
                     if a2a_agent_auth_type in ("api_key", "bearer", "authheaders") and a2a_agent_auth_value:

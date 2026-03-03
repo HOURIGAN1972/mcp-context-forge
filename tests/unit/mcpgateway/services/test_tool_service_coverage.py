@@ -5516,7 +5516,10 @@ class TestInvokeToolA2A:
         assert result is not None
         assert captured["url"] == "http://a2a-agent:9000"
         assert captured["headers"]["X-Test"] == "1"
+        # Custom agents (without trailing slash) should include protocol_version in payload
         assert captured["json"]["protocol_version"] == "0.3"
+        assert captured["json"]["interaction_type"] == "query"
+        assert captured["json"]["foo"] == "bar"
         plugin_manager.invoke_hook.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -5528,7 +5531,9 @@ class TestInvokeToolA2A:
             annotations={"a2a_agent_id": "agent-uuid-1"},
         )
         db = MagicMock()
-        a2a_agent = _make_a2a_agent(auth_type="api_key", auth_value="my-api-key")
+        # Properly encrypt the auth_value as expected by decode_auth
+        encrypted_auth = encode_auth({"Authorization": "Bearer my-api-key"})
+        a2a_agent = _make_a2a_agent(auth_type="api_key", auth_value=encrypted_auth)
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
         captured_headers = {}
