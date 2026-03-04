@@ -5379,6 +5379,9 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
+    Raises:
+        ValueError: If the prompt argument schema is invalid.
+
     """
     # You can use mapper and connection later, if required.
     _ = mapper
