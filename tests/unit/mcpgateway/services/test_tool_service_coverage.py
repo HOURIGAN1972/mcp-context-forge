@@ -42,6 +42,7 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from mcpgateway.utils.services_auth import encode_auth
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
 

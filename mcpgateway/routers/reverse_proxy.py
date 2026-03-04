@@ -33,8 +33,8 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import PermissionChecker
 from mcpgateway.schemas import GatewayCreate, ServerCreate, TransportType
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_auth, require_auth, verify_jwt_token
 from mcpgateway.services.server_service import ServerService
+from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_auth
 
 # Initialize logging
 logging_service = LoggingService()
@@ -656,6 +656,7 @@ async def forward_request_to_session(
             pending_responses.pop(request_id, None)
         raise
 
+
 _REVERSE_PROXY_CONNECT_PERMISSIONS = [
     "servers.create",
     "servers.update",
@@ -679,14 +680,14 @@ def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     )
 
 
-async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optional[str]:
+async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[Optional[str], Optional[str]]:
     """Authenticate and authorize a reverse-proxy WebSocket connection.
 
     Args:
         websocket: Incoming WebSocket connection.
 
     Returns:
-        Authenticated user email when available, otherwise None.
+        Tuple of (user_email, team_id) when available, otherwise (None, None).
 
     Raises:
         HTTPException: If authentication fails or required permissions are missing.
@@ -732,9 +733,9 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optiona
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-        return user_context["email"]
+        return user_context["email"], user_context.get("team_id")
 
-    return None
+    return None, None
 
 
 @router.websocket("/ws")
@@ -760,7 +761,7 @@ async def websocket_endpoint(
         ValueError: If token is missing required subject claim.
     """
     try:
-        user = await _authenticate_reverse_proxy_websocket(websocket)
+        user, team_id = await _authenticate_reverse_proxy_websocket(websocket)
     except HTTPException as e:
         LOGGER.warning(f"Reverse proxy WebSocket authentication failed: {e.detail}")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e.detail))

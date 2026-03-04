@@ -6471,7 +6471,7 @@ async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
 
     with (
         patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
-        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
         patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
     ):
@@ -7012,7 +7012,7 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
     mock_pool.register_pool_session_owner = AsyncMock()
 
     with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
-        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+        with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
             token = tr.user_context_var.set(
                 {
                     "email": "dev@example.com",
@@ -7060,7 +7060,7 @@ async def test_send_with_capture_does_not_register_denied_client_supplied_sessio
 
     with (
         patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
-        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"),
         patch("mcpgateway.services.mcp_session_pool.MCPSessionPool") as mock_session_class,
     ):
         mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
@@ -10513,7 +10513,7 @@ async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
     mock_pool.register_pool_session_owner = AsyncMock()
 
     with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
-        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+        with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
             token = tr.user_context_var.set(
                 {
                     "email": "requester@example.com",
