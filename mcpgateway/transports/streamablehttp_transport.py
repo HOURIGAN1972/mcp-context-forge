@@ -1916,15 +1916,15 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
-                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
+                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
+                    logger.info(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
 
                     # Read request body
                     body_parts = []
@@ -1967,17 +1967,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+                    logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
+                    logger.debug(f"[HTTP_AFFINITY_LOCAL] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
 
                     # Read request body
                     body_parts = []
@@ -2133,11 +2133,11 @@ class SessionManagerWrapper:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
                         # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()
                         await pool.register_pool_session_owner(session_to_register)
-                        logger.debug(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
+                        logger.debug(f"[HTTP_AFFINITY_SDK] Worker {get_worker_id()} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
                     except Exception as e:
                         logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
                         logger.warning(f"Failed to register session ownership: {e}")

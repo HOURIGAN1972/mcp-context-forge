@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
-# flake8: noqa: DAR101, DAR201, DAR401
+# ruff: noqa: E501
 
 # Future
 from __future__ import annotations
@@ -60,10 +60,22 @@ METHOD_NOT_FOUND = -32601
 # Intentionally strict: protects Redis key/channel construction and log lines.
 _MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
+
 # Worker ID for multi-worker session affinity
-# Uses hostname + PID to be unique across Docker containers (each container has PID 1)
-# and across gunicorn workers within the same container
-WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+# Uses hostname + PID to be unique across Docker containers and gunicorn workers
+# IMPORTANT: Must be a function to get current PID after fork (not cached at import time)
+def get_worker_id() -> str:
+    """Get the current worker ID (hostname:pid).
+
+    This must be a function, not a module-level constant, because with
+    gunicorn's preload_app=True, the module is imported in the parent process
+    before forking. If we cache the PID at import time, all workers will
+    have the parent's PID instead of their own.
+
+    Returns:
+        Worker ID string in format "hostname:pid"
+    """
+    return f"{socket.gethostname()}:{os.getpid()}"
 
 
 def _get_cleanup_timeout() -> float:
@@ -638,9 +650,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # the race condition where two workers both start creating sessions
                 owner_key = self._pool_owner_key(mcp_session_id)
                 # Atomic claim with TTL (avoids the SETNX/EXPIRE crash window).
-                was_set = await redis.set(owner_key, WORKER_ID, nx=True, ex=settings.mcpgateway_session_affinity_ttl)
+                worker_id = get_worker_id()
+                was_set = await redis.set(owner_key, worker_id, nx=True, ex=settings.mcpgateway_session_affinity_ttl)
                 if was_set:
-                    logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
+                    logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {worker_id}")
                 else:
                     # Another worker already claimed ownership
                     existing_owner = await redis.get(owner_key)
@@ -805,11 +818,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 mcp_session_id = headers_lower.get("x-mcp-session-id")
                 if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                     owner = await self._get_pool_session_owner(mcp_session_id)
-                    if owner and owner != WORKER_ID:
+                    worker_id = get_worker_id()
+                    if owner and owner != worker_id:
                         # Another worker claimed ownership - should have been forwarded
                         # Release semaphore and raise to trigger forwarding
                         semaphore.release()
-                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
+                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({worker_id})")
                         raise RuntimeError(f"Session owned by another worker: {owner}")
 
             pooled = await asyncio.wait_for(
@@ -1245,7 +1259,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 owner = await redis.get(key)
                 if owner:
                     owner_id = owner.decode() if isinstance(owner, bytes) else owner
-                    if owner_id == WORKER_ID:
+                    if owner_id == get_worker_id():
                         await redis.delete(key)
                         logger.debug(f"Cleaned up pool session owner: {mcp_session_id[:8]}...")
         except Exception as e:
@@ -1335,7 +1349,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 return 0
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
-                outcome = await redis.eval(script, 1, key, WORKER_ID, ttl)
+                outcome = await redis.eval(script, 1, key, get_worker_id(), ttl)
                 logger.debug(f"Owner registration outcome={outcome} for session {mcp_session_id[:8]}...")
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
@@ -1414,16 +1428,17 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Check who owns this session
             owner = await redis.get(self._pool_owner_key(mcp_session_id))
             method = request_data.get("method", "unknown")
+            worker_id = get_worker_id()
             if not owner:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
+                logger.info(f"[AFFINITY] Worker {worker_id} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
                 return None  # No owner registered - execute locally (new session)
 
             owner_id = owner.decode() if isinstance(owner, bytes) else owner
-            if owner_id == WORKER_ID:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
+            if owner_id == worker_id:
+                logger.info(f"[AFFINITY] Worker {worker_id} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
                 return None  # We own it - execute locally
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
+            logger.info(f"[AFFINITY] Worker {worker_id} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 
             # Forward to owner worker via pub/sub
             response_id = str(uuid.uuid4())
@@ -1445,7 +1460,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # Publish request to owner's channel
                 await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
                 self._forwarded_requests += 1
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+                logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
 
                 # Wait for response
                 async with asyncio.timeout(effective_timeout):
@@ -1491,12 +1506,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.debug("Redis not available, RPC listener not started")
                 return
 
-            rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
-            http_channel = f"mcpgw:pool_http:{WORKER_ID}"
-            reverse_proxy_channel = f"mcpgw:reverse_proxy:{WORKER_ID}"
+            worker_id = get_worker_id()
+            rpc_channel = f"mcpgw:pool_rpc:{worker_id}"
+            http_channel = f"mcpgw:pool_http:{worker_id}"
+            reverse_proxy_channel = f"mcpgw:reverse_proxy:{worker_id}"
             pubsub = redis.pubsub()
             await pubsub.subscribe(rpc_channel, http_channel, reverse_proxy_channel)
-            logger.info(f"RPC/HTTP/ReverseProxy listener started for worker {WORKER_ID} on channels: " f"{rpc_channel}, {http_channel}, {reverse_proxy_channel}")
+            logger.info(f"RPC/HTTP/ReverseProxy listener started for worker {worker_id} on channels: " f"{rpc_channel}, {http_channel}, {reverse_proxy_channel}")
 
             try:
                 while not self._closed:
@@ -1530,7 +1546,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                         logger.warning(f"Error processing forwarded request: {e}")
             finally:
                 await pubsub.unsubscribe(rpc_channel, http_channel, reverse_proxy_channel)
-                logger.info(f"RPC/HTTP/ReverseProxy listener stopped for worker {WORKER_ID}")
+                logger.info(f"RPC/HTTP/ReverseProxy listener stopped for worker {get_worker_id()}")
 
         except Exception as e:
             logger.warning(f"RPC/HTTP/ReverseProxy listener failed: {e}")
@@ -1558,7 +1574,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             mcp_session_id = request.get("mcp_session_id", "unknown")
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
+            logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
 
             # Make internal HTTP call to local /rpc endpoint
             # This reuses ALL existing method handling logic without duplication
@@ -1579,7 +1595,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Check HTTP status code first
                 if response.status_code >= 400:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
                     return {"error": {"code": -32603, "message": f"HTTP {response.status_code}: {response.text}"}}
 
                 # Parse response
@@ -1587,9 +1603,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Extract result or error from JSON-RPC response
                 if "error" in response_data:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                    logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
                     return {"error": response_data["error"]}
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+                logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
                 return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
@@ -1633,7 +1649,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
-            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
+            logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
 
             # Add internal forwarding headers to prevent loops
             internal_headers = dict(headers)
@@ -1654,7 +1670,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+                logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Executed locally: {response.status_code}")
 
                 # Serialize response for Redis transport
                 response_data = {
@@ -1733,7 +1749,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
+        logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
 
         try:
             # First-Party
@@ -1758,7 +1774,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 "query_string": query_string,
                 "headers": headers,
                 "body": body.hex() if body else "",  # Hex encode binary body
-                "original_worker": WORKER_ID,
+                "original_worker": get_worker_id(),
                 "timestamp": time.time(),
             }
 

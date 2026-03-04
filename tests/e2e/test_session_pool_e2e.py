@@ -969,13 +969,13 @@ class TestMultiWorkerSessionAffinityE2E:
 
     @pytest.mark.asyncio
     async def test_worker_id_is_process_id(self):
-        """Verify WORKER_ID is set to hostname:pid format."""
+        """Verify get_worker_id() returns hostname:pid format."""
         import socket
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.mcp_session_pool import get_worker_id
 
-        # WORKER_ID format is "hostname:pid"
+        # get_worker_id() format is "hostname:pid"
         expected = f"{socket.gethostname()}:{os.getpid()}"
-        assert WORKER_ID == expected
+        assert get_worker_id() == expected
 
     @pytest.mark.asyncio
     async def test_register_pool_session_owner_disabled_when_affinity_off(self):
@@ -1015,7 +1015,7 @@ class TestMultiWorkerSessionAffinityE2E:
     @pytest.mark.asyncio
     async def test_forward_request_returns_none_when_we_own_session(self):
         """Verify forward_request_to_owner returns None when we own the session."""
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.mcp_session_pool import get_worker_id
 
         pool = MCPSessionPool()
 
@@ -1024,7 +1024,7 @@ class TestMultiWorkerSessionAffinityE2E:
 
             # Create a mock Redis that returns our worker ID
             mock_redis = AsyncMock()
-            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+            mock_redis.get = AsyncMock(return_value=get_worker_id().encode())
 
             with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
@@ -1155,7 +1155,7 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_we_own_session(self, caplog):
         """Verify [AFFINITY] log is emitted when we own the session."""
         import logging
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.mcp_session_pool import get_worker_id
 
         pool = MCPSessionPool()
 
@@ -1164,7 +1164,7 @@ class TestMultiWorkerSessionAffinityE2E:
 
             # Create a mock Redis that returns our worker ID
             mock_redis = AsyncMock()
-            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+            mock_redis.get = AsyncMock(return_value=get_worker_id().encode())
 
             with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
@@ -1185,7 +1185,7 @@ class TestMultiWorkerSessionAffinityE2E:
                         affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
                         assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
                         assert "We own it" in affinity_logs[0].message
-                        assert WORKER_ID in affinity_logs[0].message
+                        assert get_worker_id() in affinity_logs[0].message
                         assert "test-ses" in affinity_logs[0].message  # First 8 chars of session ID
         finally:
             await pool.close_all()
@@ -1232,13 +1232,13 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_forwarding_to_another_worker(self, caplog):
         """Verify [AFFINITY] logs are emitted when forwarding to another worker."""
         import logging
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.mcp_session_pool import get_worker_id
 
         pool = MCPSessionPool()
 
         try:
             mcp_session_id = "test-session-log-forward"
-            other_worker_id = "99999"  # Different from our WORKER_ID
+            other_worker_id = "99999"  # Different from our get_worker_id()
 
             # Create a mock Redis
             mock_redis = AsyncMock()
@@ -1297,7 +1297,7 @@ class TestMultiWorkerSessionAffinityE2E:
     async def test_affinity_logs_when_executing_forwarded_request(self, caplog):
         """Verify [AFFINITY] logs are emitted when executing a forwarded request."""
         import logging
-        from mcpgateway.services.mcp_session_pool import WORKER_ID
+        from mcpgateway.services.mcp_session_pool import get_worker_id
 
         pool = MCPSessionPool()
 
@@ -1319,7 +1319,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
                 assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
                 assert "Received forwarded request" in affinity_logs[0].message
-                assert WORKER_ID in affinity_logs[0].message
+                assert get_worker_id() in affinity_logs[0].message
                 assert "test-ses" in affinity_logs[0].message  # First 8 chars
 
         finally:
