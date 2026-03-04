@@ -5698,13 +5698,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import get_worker_id, MCPSessionPool  # pylint: disable=import-outside-toplevel
 
             if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
                 logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             else:
                 session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | RPC request received, checking affinity")
+                logger.debug(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | RPC request received, checking affinity")
                 try:
                     # First-Party
                     from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
@@ -5716,7 +5716,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     )
                     if forwarded_response is not None:
                         # Request was handled by another worker
-                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded response received")
+                        logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Forwarded response received")
                         if "error" in forwarded_response:
                             raise JSONRPCError(
                                 forwarded_response["error"].get("code", -32603),
@@ -5726,13 +5726,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                         return {"jsonrpc": "2.0", "result": result, "id": req_id}
                 except RuntimeError:
                     # Pool not initialized - execute locally
-                    logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Pool not initialized, executing locally")
+                    logger.debug(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Pool not initialized, executing locally")
         elif is_internally_forwarded and mcp_session_id:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import get_worker_id  # pylint: disable=import-outside-toplevel
 
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-            logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Internally forwarded request, executing locally")
+            logger.debug(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Internally forwarded request, executing locally")
 
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
@@ -5747,12 +5747,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
                 try:
                     # First-Party
-                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_mcp_session_pool()
                     # Claim-or-refresh ownership for this session (does not steal).
                     await pool.register_pool_session_owner(mcp_session_id)
-                    logger.debug(f"[AFFINITY_INIT] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Registered ownership after initialize")
+                    logger.debug(f"[AFFINITY_INIT] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Registered ownership after initialize")
                 except Exception as e:
                     logger.warning(f"[AFFINITY_INIT] Failed to register session ownership: {e}")
         elif method == "tools/list":

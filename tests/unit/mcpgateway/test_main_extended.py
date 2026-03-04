@@ -3782,11 +3782,12 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
         payload = {"jsonrpc": "2.0", "id": "aff-1", "method": "ping", "params": {}}
         request = self._make_request(payload)
-        request.headers = {"mcp-session-id": "not-valid"}
+        # Use a session ID that naturally fails validation (contains invalid characters)
+        request.headers = {"mcp-session-id": "invalid@session!id"}
 
-        with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=False):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["result"] == {}
+        # The invalid session ID will fail validation naturally, so no mock needed
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        assert result["result"] == {}
 
     async def test_handle_rpc_session_affinity_forwarded_response_success_and_error(self, monkeypatch):
         """Cover forwarding path for session affinity (success and error responses)."""
