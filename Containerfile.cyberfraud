@@ -4,8 +4,12 @@ USER root
 # Install missing psycopg2 dependency for postgres support
 RUN microdnf install -y python3-devel gcc postgresql-devel
 RUN /app/.venv/bin/python3 -m ensurepip && \
-    /app/.venv/bin/python3 -m pip install 'psycopg2'
+    /app/.venv/bin/python3 -m pip install --upgrade pip && \
+    /app/.venv/bin/python3 -m pip install 'psycopg2' && \
+    /app/.venv/bin/python3 -m pip install 'jwcrypto'
 RUN microdnf remove -y python3-devel gcc postgresql-devel
+COPY cyberfraud/*  /app/mcpgateway
+RUN echo -e "\nfrom . import cyberfraud_protected_secrets_adapter" >>  /app/mcpgateway/__init__.py
 # update the user permissions
 RUN chown -R 1001:0 /app && \
     chmod -R g=u /app
