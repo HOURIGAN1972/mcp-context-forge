@@ -730,6 +730,41 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[O
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
     if user_context:
+        # Two-layer permission check:
+        # Layer 1: Token scopes.permissions cap (if present)
+        # Layer 2: RBAC role-based permission check
+        
+        # Extract token scopes from JWT payload cached in websocket.state
+        token_scopes: Optional[dict] = None
+        jwt_payload = getattr(websocket.state, "_jwt_verified_payload", None)
+        if jwt_payload and isinstance(jwt_payload, tuple) and len(jwt_payload) == 2:
+            _, payload = jwt_payload
+            if payload and isinstance(payload, dict):
+                token_scopes = payload.get("scopes")
+        
+        # Layer 1: Check token scopes if present
+        if token_scopes and isinstance(token_scopes, dict):
+            scoped_permissions = token_scopes.get("permissions")
+            if scoped_permissions:  # Explicit permissions in token
+                # Check if token has any of the required permissions
+                has_wildcard = "*" in scoped_permissions
+                has_required = any(perm in scoped_permissions for perm in _REVERSE_PROXY_CONNECT_PERMISSIONS)
+                
+                if not (has_wildcard or has_required):
+                    LOGGER.warning(
+                        f"Reverse proxy WebSocket authentication failed: Token scopes missing required permissions. "
+                        f"Token has: {scoped_permissions}, Required: {_REVERSE_PROXY_CONNECT_PERMISSIONS}"
+                    )
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+                
+                # Token scopes check passed, skip RBAC check (token scopes are authoritative)
+                LOGGER.info(
+                    f"Reverse proxy WebSocket authentication successful via token scopes. "
+                    f"User: {user_context['email']}, Permissions: {scoped_permissions}"
+                )
+                return user_context["email"], user_context.get("team_id")
+        
+        # Layer 2: Fall back to RBAC check if no explicit token scopes
         checker = PermissionChecker(user_context)
         if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
