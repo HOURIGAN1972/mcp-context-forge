@@ -694,9 +694,11 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[O
     """
     auth_required = settings.auth_required or settings.mcp_client_auth_enabled
     auth_token = _get_websocket_bearer_token(websocket)
+    LOGGER.info(f"[REVERSE_PROXY] auth_required={auth_required}, auth_token present={bool(auth_token)}")
     user_context: Optional[dict[str, Any]] = None
 
     if auth_token:
+        LOGGER.info(f"[REVERSE_PROXY] Processing auth token...")
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
         try:
             user = await get_current_user(credentials, request=websocket)
@@ -744,20 +746,23 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[O
 
         # Layer 1: Check token scopes if present
         if token_scopes and isinstance(token_scopes, dict):
+            LOGGER.info(f"[REVERSE_PROXY] Token scopes found: {token_scopes}")
             scoped_permissions = token_scopes.get("permissions")
+            LOGGER.info(f"[REVERSE_PROXY] Scoped permissions: {scoped_permissions}")
             if scoped_permissions:  # Explicit permissions in token
                 # Check if token has any of the required permissions
                 has_wildcard = "*" in scoped_permissions
                 has_required = any(perm in scoped_permissions for perm in _REVERSE_PROXY_CONNECT_PERMISSIONS)
+                LOGGER.info(f"[REVERSE_PROXY] has_wildcard={has_wildcard}, has_required={has_required}, required_perms={_REVERSE_PROXY_CONNECT_PERMISSIONS}")
 
                 if not (has_wildcard or has_required):
                     LOGGER.warning(
-                        f"Reverse proxy WebSocket authentication failed: Token scopes missing required permissions. " f"Token has: {scoped_permissions}, Required: {_REVERSE_PROXY_CONNECT_PERMISSIONS}"
+                        f"[REVERSE_PROXY] Reverse proxy WebSocket authentication failed: Token scopes missing required permissions. " f"Token has: {scoped_permissions}, Required: {_REVERSE_PROXY_CONNECT_PERMISSIONS}"
                     )
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
                 # Token scopes check passed, skip RBAC check (token scopes are authoritative)
-                LOGGER.info(f"Reverse proxy WebSocket authentication successful via token scopes. " f"User: {user_context['email']}, Permissions: {scoped_permissions}")
+                LOGGER.info(f"[REVERSE_PROXY] Reverse proxy WebSocket authentication successful via token scopes. " f"User: {user_context['email']}, Permissions: {scoped_permissions}")
                 return user_context["email"], user_context.get("team_id")
 
         # Layer 2: Fall back to RBAC check if no explicit token scopes
@@ -791,6 +796,7 @@ async def websocket_endpoint(
     Raises:
         ValueError: If token is missing required subject claim.
     """
+    LOGGER.debug("Reverse proxy WebSocket connection opened")
     try:
         user, team_id = await _authenticate_reverse_proxy_websocket(websocket)
     except HTTPException as e:

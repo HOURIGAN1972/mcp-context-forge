@@ -3550,13 +3550,15 @@ class ToolService(BaseService):
                                 mcp_result = payload.get("result", {})
                                 logger.info(f"[PROXY_TOOL_CALL] MCP result: {mcp_result}")
 
-                                # Get content and error status
+                                # Get content, structured content, and error status
                                 content = mcp_result.get("content", [])
+                                structured_content = mcp_result.get("structuredContent")
                                 is_error = mcp_result.get("isError", False)
-                                logger.info(f"[PROXY_TOOL_CALL] Content: {content}, isError: {is_error}")
+                                logger.info(f"[PROXY_TOOL_CALL] Content: {content}, structuredContent: {structured_content}, isError: {is_error}")
 
-                                # Return the raw payload as ToolResult - filtering will be done by the common code path
-                                tool_call_result = ToolResult(content=content, is_error=is_error)
+                                # Return the raw payload as ToolResult with structuredContent - filtering will be done by the common code path
+                                # structured_content is optional, so it's safe for STDIO servers that don't return it
+                                tool_call_result = ToolResult(content=content, structured_content=structured_content, is_error=is_error)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
