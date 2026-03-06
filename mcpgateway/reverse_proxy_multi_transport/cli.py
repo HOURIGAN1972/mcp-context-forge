@@ -23,6 +23,12 @@ from typing import List, Optional
 # Third-Party
 import orjson
 
+try:
+    # Third-Party
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+
 # First-Party
 from mcpgateway.reverse_proxy_multi_transport.base import GatewayTransport, McpServerTransport
 from mcpgateway.reverse_proxy_multi_transport.client import ReverseProxyClient
@@ -173,7 +179,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Configuration file
     parser.add_argument(
         "--config",
-        help="Configuration file (JSON format)",
+        help="Configuration file (YAML or JSON)",
     )
 
     # Logging
@@ -195,7 +201,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.config:
         try:
             with open(args.config, "r", encoding="utf-8") as f:
-                config = orjson.loads(f.read())
+                # Determine format by file extension
+                if args.config.endswith((".yaml", ".yml")):
+                    if not yaml:
+                        parser.error("PyYAML package required for YAML configuration file support")
+                    config = yaml.safe_load(f)
+                else:
+                    config = orjson.loads(f.read())
+
+            # Validate config is a dict
+            if not isinstance(config, dict):
+                parser.error("Configuration file must contain a JSON/YAML object at the top level")
 
             # Merge configuration (command line takes precedence)
             for key, value in config.items():
