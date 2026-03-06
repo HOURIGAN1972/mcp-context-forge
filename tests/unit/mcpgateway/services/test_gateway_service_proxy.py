@@ -84,6 +84,19 @@ def mock_db():
     return session
 
 
+@pytest.fixture(autouse=True)
+def mock_forward_request_import(monkeypatch, mock_forward_request):
+    """Automatically patch the forward_request_to_session import in gateway_service."""
+    # Patch the lazy import that happens in _initialize_gateway
+    import mcpgateway.routers.reverse_proxy
+    monkeypatch.setattr(
+        mcpgateway.routers.reverse_proxy,
+        "forward_request_to_session",
+        mock_forward_request
+    )
+    return mock_forward_request
+
+
 @pytest.fixture
 def mock_forward_request():
     """Mock forward_request_func for proxy connections."""
@@ -201,7 +214,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-123",
-            forward_request_func=mock_forward_request,
         )
 
         # Verify result structure for proxy mode
@@ -280,7 +292,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-123",
-            forward_request_func=mock_forward_request,
         )
 
         # Verify update path was taken (flush called to persist changes)
@@ -303,7 +314,6 @@ class TestGatewayServiceProxy:
             authentication={},
             transport="PROXIED",
             gateway_id="test-session-123",
-            forward_request_func=mock_forward_request,
         )
 
         # Verify capabilities were retrieved
@@ -340,7 +350,6 @@ class TestGatewayServiceProxy:
             authentication={},
             transport="SSE",  # Will use SSE since proxy params are missing
             gateway_id=None,  # Missing!
-            forward_request_func=None,  # Missing!
         )
 
         # Verify it used standard SSE connection, not proxy
@@ -710,7 +719,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-auth",
-            forward_request_func=mock_forward_request,
         )
 
         assert isinstance(result, tuple)
@@ -764,7 +772,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-query",
-            forward_request_func=mock_forward_request,
         )
 
         assert isinstance(result, tuple)
@@ -811,7 +818,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-string",
-            forward_request_func=mock_forward_request,
         )
 
         assert isinstance(result, tuple)
@@ -859,7 +865,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-session-dict",
-            forward_request_func=mock_forward_request,
         )
 
         assert isinstance(result, tuple)
@@ -893,7 +898,6 @@ class TestGatewayServiceProxy:
             authentication={},
             transport="PROXIED",
             gateway_id="test-session-123",
-            forward_request_func=mock_forward_request,
             include_resources=False,
         )
 
@@ -911,7 +915,6 @@ class TestGatewayServiceProxy:
             authentication={},
             transport="PROXIED",
             gateway_id="test-session-123",
-            forward_request_func=mock_forward_request,
             include_prompts=False,
         )
 
@@ -994,7 +997,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-no-init",
-            forward_request_func=mock_forward_request,
             initialize_timeout=None,  # Skip initialization
         )
 
@@ -1042,7 +1044,6 @@ class TestGatewayServiceProxy:
             gateway_create,
             created_via="reverse_proxy",
             gateway_id="test-ca-cert",
-            forward_request_func=mock_forward_request,
         )
 
         assert isinstance(result, tuple)

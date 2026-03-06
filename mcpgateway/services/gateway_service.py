@@ -903,7 +903,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 ca_certificate,
                                 auth_query_params=auth_query_params_decrypted,
                                 gateway_id=gateway_id,
-                                forward_request_func=forward_request_func,
                             ),
                             timeout=initialize_timeout,
                         )
@@ -920,7 +919,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         ca_certificate,
                         auth_query_params=auth_query_params_decrypted,
                         gateway_id=gateway_id,
-                        forward_request_func=forward_request_func,
                     )
 
                 if gateway.one_time_auth:
@@ -1473,7 +1471,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         db: Session,
         gateway: GatewayCreate,
         gateway_id: str,
-        forward_request_func: Optional[Any] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
@@ -1487,7 +1484,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db: Database Session
             gateway: Gateway creation schema
             gateway_id: gateway ID for the reverse proxy
-            forward_request_func: Function to forward MCP requests to the session
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
@@ -1513,7 +1509,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             initialize_timeout=None,
             gateway_id=gateway_id,
             created_by=created_by,
-            forward_request_func=forward_request_func,
         )
 
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
@@ -3768,7 +3763,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
         # Proxy-specific parameters
         gateway_id: Optional[str] = None,
-        forward_request_func: Optional[Any] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3791,7 +3785,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 When False (default), auth_code gateways return empty lists immediately (for health checks).
                 When True, attempts to connect even for auth_code gateways (for activation after user authorization).
             gateway_id: gateway ID for reverse proxy (required for reverse proxy mode)
-            forward_request_func: Function to forward MCP requests via WebSocket (required for reverse proxy mode)
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3799,7 +3792,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Raises:
             GatewayConnectionError: If connection or initialization fails
-            ValueError: If reverse proxy mode but gateway_id or forward_request_func is missing
+            ValueError: If reverse proxy mode but gateway_id is missing
 
         Examples:
             >>> service = GatewayService()
@@ -3877,16 +3870,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 authentication = decode_auth(authentication)
 
             # Route to appropriate connection method based on mode
-            # Determine if this is reverse proxy mode by checking if gateway_id and forward_request_func are provided
-            is_reverse_proxied = gateway_id is not None and forward_request_func is not None
+            # Determine if this is reverse proxy mode by checking if gateway_id is provided
+            is_reverse_proxied = gateway_id is not None
             if is_reverse_proxied:
                 # Proxy mode: use WebSocket-based MCP protocol
                 logger.info("calling connect_to_proxy_server")
-                if not gateway_id or not forward_request_func:
-                    raise ValueError("gateway_id and forward_request_func required for proxy mode")
+                if not gateway_id:
+                    raise ValueError("gateway_id required for proxy mode")
+
+                # Import forward_request_func lazily to avoid circular dependency
+                # This import is safe here because we're inside an async function that's only
+                # called after the reverse_proxy module has been fully loaded
+                # First-Party
+                from mcpgateway.routers.reverse_proxy import forward_request_to_session
+
                 capabilities, tools, resources, prompts = await self.connect_to_proxy_server(
                     session_id=gateway_id,
-                    forward_request_func=forward_request_func,
+                    forward_request_func=forward_request_to_session,
                     authentication=authentication,
                     auth_type=auth_type,
                     include_prompts=include_prompts,

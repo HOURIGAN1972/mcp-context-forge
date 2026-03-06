@@ -872,7 +872,6 @@ async def websocket_endpoint(
                                         owner_email=user,
                                         visibility=gateway.visibility,
                                         gateway_id=session_id,
-                                        forward_request_func=forward_request_to_session,
                                         created_by=user,
                                     )
 
