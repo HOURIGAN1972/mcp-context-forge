@@ -698,7 +698,7 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[O
     user_context: Optional[dict[str, Any]] = None
 
     if auth_token:
-        LOGGER.info(f"[REVERSE_PROXY] Processing auth token...")
+        LOGGER.info("[REVERSE_PROXY] Processing auth token...")
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
         try:
             user = await get_current_user(credentials, request=websocket)
@@ -757,7 +757,8 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> tuple[O
 
                 if not (has_wildcard or has_required):
                     LOGGER.warning(
-                        f"[REVERSE_PROXY] Reverse proxy WebSocket authentication failed: Token scopes missing required permissions. " f"Token has: {scoped_permissions}, Required: {_REVERSE_PROXY_CONNECT_PERMISSIONS}"
+                        f"[REVERSE_PROXY] Reverse proxy WebSocket authentication failed: Token scopes missing required permissions. "
+                        f"Token has: {scoped_permissions}, Required: {_REVERSE_PROXY_CONNECT_PERMISSIONS}"
                     )
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 

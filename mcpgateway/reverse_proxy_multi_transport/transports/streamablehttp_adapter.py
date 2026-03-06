@@ -128,7 +128,7 @@ class StreamableHttpAdapter(McpServerTransport):
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        
+
         # Add session headers if available (required after initialization)
         if self._session_id:
             headers["mcp-session-id"] = self._session_id
@@ -142,43 +142,45 @@ class StreamableHttpAdapter(McpServerTransport):
                 headers=headers,
             )
             response.raise_for_status()
-            
+
             # Extract session ID from response headers (first request)
             session_id = response.headers.get("mcp-session-id")
             if session_id and not self._session_id:
                 self._session_id = session_id
                 LOGGER.info(f"Received session ID: {self._session_id}")
             LOGGER.info(f"HTTP POST successful: status={response.status_code}, content_length={len(response.content) if response.content else 0}")
-            
+
             # Streamable HTTP returns responses inline - forward to handlers
             if response.content:
                 response_text = response.text
                 LOGGER.info(f"← HTTP response received: {response_text[:200]}... (total length: {len(response_text)})")
                 LOGGER.info(f"Number of message handlers: {len(self._message_handlers)}")
-                
+
                 # Parse SSE format if present (streamable HTTP may return SSE-formatted responses)
                 # SSE format: "event: message\ndata: {json}\n\n"
                 json_message = response_text
                 if response_text.startswith("event:") or response_text.startswith("data:"):
                     # Extract JSON from SSE format
-                    lines = response_text.strip().split('\n')
+                    lines = response_text.strip().split("\n")
                     for line in lines:
-                        if line.startswith('data:'):
+                        if line.startswith("data:"):
                             json_message = line[5:].strip()  # Remove "data:" prefix
                             LOGGER.info(f"Extracted JSON from SSE format: {json_message[:200]}...")
                             break
-                
+
                 # Extract protocol version from initialize response
                 if not self._protocol_version:
                     try:
+                        # Standard
                         import json
+
                         msg_data = json.loads(json_message)
                         if msg_data.get("result", {}).get("protocolVersion"):
                             self._protocol_version = msg_data["result"]["protocolVersion"]
                             LOGGER.info(f"Negotiated protocol version: {self._protocol_version}")
                     except Exception:
                         pass  # Not an initialize response or parsing failed
-                
+
                 # Notify all message handlers of the response
                 for idx, handler in enumerate(self._message_handlers):
                     try:
@@ -189,7 +191,7 @@ class StreamableHttpAdapter(McpServerTransport):
                         LOGGER.error(f"Handler {idx+1} failed: {handler_error}", exc_info=True)
             else:
                 LOGGER.warning("HTTP response has no content - this may indicate a problem with the MCP server")
-                    
+
         except httpx.HTTPError as e:
             LOGGER.error(f"HTTP send error: {e}")
             raise RuntimeError(f"Failed to send message: {e}") from e
@@ -200,13 +202,13 @@ class StreamableHttpAdapter(McpServerTransport):
 
     async def _receive_stream(self) -> None:
         """Monitor connection for streamable HTTP.
-        
+
         Streamable HTTP protocol handles bidirectional communication through
         the main endpoint with proper Accept headers. Responses come back
         inline with POST requests, not via a separate SSE stream.
         """
         LOGGER.debug("Streamable HTTP uses inline responses, monitoring connection")
-        
+
         # Keep the task alive to maintain connection state
         try:
             while self._connected:

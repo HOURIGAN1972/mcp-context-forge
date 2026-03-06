@@ -90,7 +90,7 @@ class WebSocketAdapter(GatewayTransport):
         # Configure SSL context only for wss:// URLs
         is_secure = ws_url.startswith("wss://")
         ssl_context = None
-        
+
         if is_secure:
             if self.cert is not None:
                 ssl_context = ssl.create_default_context(cadata=self.cert)

@@ -209,7 +209,7 @@ class ReverseProxyClient:
         try:
             LOGGER.debug(f"Handling MCP message: {message[:200]}...")
             data = orjson.loads(message)
-            
+
             result = data.get("result")
             LOGGER.info(f"MCP response result: {result}, type: {type(result)}")
             request_id = data.get("id")
@@ -248,7 +248,7 @@ class ReverseProxyClient:
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
-                LOGGER.debug(f"Received REQUEST from gateway")
+                LOGGER.debug("Received REQUEST from gateway")
                 payload = data.get("payload", {})
                 LOGGER.info(f"Gateway request payload: {payload}")
                 await self.mcp_transport.send(orjson.dumps(payload).decode())
