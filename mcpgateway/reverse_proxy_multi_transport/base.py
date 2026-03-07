@@ -81,6 +81,19 @@ class McpServerTransport(ABC):
             handler: Async function to handle messages.
         """
 
+    def set_authentication(self, auth_headers: dict[str, str], auth_type: str | None = None) -> None:
+        """Set authentication headers for subsequent requests to the MCP server.
+
+        Args:
+            auth_headers: Dictionary of HTTP headers to use for authentication.
+            auth_type: Type of authentication (basic, bearer, authheaders, etc.)
+        
+        Note:
+            This is optional and only used by HTTP-based transports.
+            Stdio-based transports can ignore this as they don't use HTTP headers.
+        """
+        pass  # Default implementation does nothing (for stdio)
+
 
 class GatewayTransport(ABC):
     """Abstract base class for gateway transports.

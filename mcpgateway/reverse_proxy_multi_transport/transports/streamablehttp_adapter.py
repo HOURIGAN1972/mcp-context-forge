@@ -63,6 +63,8 @@ class StreamableHttpAdapter(McpServerTransport):
         # Session management (MCP protocol requirement)
         self._session_id: Optional[str] = None
         self._protocol_version: Optional[str] = None
+        # Authentication headers from gateway
+        self._auth_headers: dict[str, str] = {}
 
     async def start(self) -> None:
         """Start HTTP client connection to MCP server."""
@@ -128,6 +130,11 @@ class StreamableHttpAdapter(McpServerTransport):
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+
+        # Add authentication headers from gateway if available
+        if self._auth_headers:
+            LOGGER.info(f"Using authentication headers from gateway: {list(self._auth_headers.keys())}")
+            headers.update(self._auth_headers)
 
         # Add session headers if available (required after initialization)
         if self._session_id:
@@ -199,6 +206,31 @@ class StreamableHttpAdapter(McpServerTransport):
     def add_message_handler(self, handler: Callable[[str], Awaitable[None]]) -> None:
         """Add a handler for messages from the MCP server."""
         self._message_handlers.append(handler)
+
+    def set_authentication(self, auth_headers: dict[str, str], auth_type: str | None = None) -> None:
+        """Set authentication headers for subsequent requests to the MCP server.
+
+        Args:
+            auth_headers: Dictionary of HTTP headers to use for authentication.
+            auth_type: Type of authentication (basic, bearer, authheaders, etc.)
+        """
+        # Convert basic auth credentials to standard Authorization header
+        if auth_type == "basic" and "username" in auth_headers and "password" in auth_headers:
+            import base64
+            username = auth_headers["username"]
+            password = auth_headers["password"]
+            credentials = f"{username}:{password}"
+            encoded = base64.b64encode(credentials.encode()).decode()
+            self._auth_headers = {"Authorization": f"Basic {encoded}"}
+            LOGGER.info("Converted basic auth credentials to Authorization header")
+        elif auth_type == "bearer" and "token" in auth_headers:
+            # Convert bearer token to Authorization header
+            self._auth_headers = {"Authorization": f"Bearer {auth_headers['token']}"}
+            LOGGER.info("Converted bearer token to Authorization header")
+        else:
+            # For other auth types (authheaders, custom), use headers as-is
+            self._auth_headers = auth_headers
+            LOGGER.info(f"Authentication headers set ({auth_type or 'custom'}): {list(auth_headers.keys())}")
 
     async def _receive_stream(self) -> None:
         """Monitor connection for streamable HTTP.

@@ -887,6 +887,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db_prompts = []
             capabilities = {}
 
+            # Check for existing gateway early (proxy mode supports upsert)
+            # We need to do this BEFORE initialization so we can use existing auth
+            existing_gateway = None
+            if is_reverse_proxied and gateway_id:
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if existing_gateway and existing_gateway.auth_type and existing_gateway.auth_value:
+                    logger.info(f"[PROXY_REGISTRATION] Found existing gateway {gateway_id} with auth_type={existing_gateway.auth_type}")
+                    # Override with existing gateway's authentication for initialization
+                    auth_type = existing_gateway.auth_type
+                    if isinstance(existing_gateway.auth_value, str):
+                        authentication_headers = decode_auth(existing_gateway.auth_value)
+                    elif isinstance(existing_gateway.auth_value, dict):
+                        authentication_headers = existing_gateway.auth_value
+                    else:
+                        authentication_headers = {}
+                    logger.info(f"[PROXY_REGISTRATION] Using existing auth for initialization: {list(authentication_headers.keys()) if authentication_headers else 'none'}")
+
             db_gateway = None
             if transport != "PROXIED" or is_reverse_proxied:
 
@@ -1127,11 +1144,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             )
                         )
 
-                # Check for existing gateway (proxy mode supports upsert)
-                existing_gateway = None
-                if is_reverse_proxied and gateway_id:
-                    existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-
+                # existing_gateway was already checked earlier (before initialization)
+                # to read authentication for the initialization process
                 if existing_gateway:
                     # Update existing proxy gateway
                     logger.info(f"Updating existing proxy gateway for session {gateway_id}")
@@ -1199,9 +1213,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     existing_gateway.capabilities = capabilities
                     existing_gateway.reachable = True  # Mark as reachable/active
                     existing_gateway.last_seen = datetime.now(timezone.utc)
-                    existing_gateway.auth_type = auth_type
-                    existing_gateway.auth_value = auth_value
-                    existing_gateway.oauth_config = oauth_config
+                    
+                    # Preserve existing authentication if new registration doesn't provide any
+                    # This prevents losing auth when reverse proxy agent reconnects
+                    if auth_type is not None and auth_type != "":
+                        existing_gateway.auth_type = auth_type
+                        existing_gateway.auth_value = auth_value
+                        logger.info(f"[PROXY_REGISTRATION] Updating auth for gateway {gateway_id}: auth_type={auth_type}")
+                    else:
+                        logger.info(f"[PROXY_REGISTRATION] Preserving existing auth for gateway {gateway_id}: auth_type={existing_gateway.auth_type}")
+                    
+                    if oauth_config is not None:
+                        existing_gateway.oauth_config = oauth_config
                     existing_gateway.passthrough_headers = gateway.passthrough_headers
                     existing_gateway.tools = updated_tools
                     existing_gateway.resources = updated_resources
@@ -1989,6 +2012,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValidationError: If validation fails
         """
         try:  # pylint: disable=too-many-nested-blocks
+            logger.info(f"[AUTH UPDATE] update_gateway called for gateway_id={gateway_id}, user_email={user_email}")
+            has_auth_value = gateway_update.auth_value is not None
+            logger.info(f"[AUTH UPDATE] Update payload: auth_type={getattr(gateway_update, 'auth_type', 'NOT_SET')}, "
+                       f"has_auth_headers={hasattr(gateway_update, 'auth_headers') and bool(gateway_update.auth_headers)}, "
+                       f"auth_value_provided={has_auth_value}")
+            
             # Acquire row lock and eager-load relationships while locked so
             # concurrent updates are serialized on Postgres.
             gateway = get_for_update(
@@ -2139,16 +2168,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Only update auth_type if explicitly provided in the update
                 if gateway_update.auth_type is not None:
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): Updating auth_type from '{original_auth_type}' to '{gateway_update.auth_type}'")
                     gateway.auth_type = gateway_update.auth_type
 
                     # If auth_type is empty, update the auth_value too
                     if gateway_update.auth_type == "":
+                        logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Clearing auth_value (auth_type is empty)")
                         gateway.auth_value = cast(Any, "")
 
                     # Clear auth_query_params when switching away from query_param auth
                     if original_auth_type == "query_param" and gateway_update.auth_type != "query_param":
                         gateway.auth_query_params = None
                         logger.debug(f"Cleared auth_query_params for gateway {gateway.id} (switched from query_param to {gateway_update.auth_type})")
+                else:
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): auth_type not provided in update, keeping existing '{gateway.auth_type}'")
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -2162,6 +2195,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Support multiple custom headers on update
                 if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): Processing auth_headers update with {len(gateway_update.auth_headers)} headers")
                     existing_auth_raw = getattr(gateway, "auth_value", {}) or {}
                     if isinstance(existing_auth_raw, str):
                         try:
@@ -2180,16 +2214,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             continue
                         value = header.get("value", "")
                         if value == settings.masked_auth_value and key in existing_auth:
+                            logger.debug(f"[AUTH UPDATE] Gateway {gateway.id}: Keeping existing value for header '{key}' (masked)")
                             header_dict[key] = existing_auth[key]
                         else:
+                            logger.debug(f"[AUTH UPDATE] Gateway {gateway.id}: Setting new value for header '{key}'")
                             header_dict[key] = value
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Setting auth_value to dict with {len(header_dict)} headers: {list(header_dict.keys())}")
                     gateway.auth_value = header_dict  # Store as dict for DB JSON field
                 elif settings.masked_auth_value not in (token, password, header_value):
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): Processing auth_value update (not using auth_headers)")
                     # Check if values differ from existing ones or if setting for first time
                     decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
                     current_auth = getattr(gateway, "auth_value", {}) or {}
                     if current_auth != decoded_auth:
+                        logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: auth_value changed, updating to: {list(decoded_auth.keys()) if isinstance(decoded_auth, dict) else type(decoded_auth)}")
                         gateway.auth_value = decoded_auth
+                    else:
+                        logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: auth_value unchanged")
+                else:
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): Skipping auth_value update (masked value detected)")
 
                 # Handle query_param auth updates with service-layer enforcement
                 auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -2267,6 +2310,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Only initialize gateway is transport is not equal to PROXIED
                 # since reconnect from reverse proxy will cause update to tools, resources and prompts.
+                logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Transport is '{gateway.transport}', will {'SKIP' if gateway.transport == 'PROXIED' else 'PERFORM'} initialization")
                 if gateway.transport != "PROXIED":
                     # Try to reinitialize connection if URL actually changed
                     # if url_changed:

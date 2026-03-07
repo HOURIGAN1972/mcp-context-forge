@@ -248,9 +248,25 @@ class ReverseProxyClient:
             msg_type = data.get("type")
 
             if msg_type == MessageType.REQUEST.value:
-                LOGGER.debug("Received REQUEST from gateway")
+                LOGGER.info("=" * 80)
+                LOGGER.info("[REVERSE_PROXY_CLIENT] Received REQUEST from gateway")
                 payload = data.get("payload", {})
-                LOGGER.info(f"Gateway request payload: {payload}")
+                authentication = data.get("authentication")
+                auth_type = data.get("authType")
+                
+                LOGGER.info(f"[REVERSE_PROXY_CLIENT] Message keys: {list(data.keys())}")
+                LOGGER.info(f"[REVERSE_PROXY_CLIENT] Authentication present: {authentication is not None}")
+                
+                if authentication:
+                    LOGGER.info(f"[REVERSE_PROXY_CLIENT] ✓ Gateway provided authentication (type: {auth_type})")
+                    LOGGER.info(f"[REVERSE_PROXY_CLIENT] ✓ Auth headers: {list(authentication.keys())}")
+                    # Store authentication for this request, passing auth_type for proper formatting
+                    self.mcp_transport.set_authentication(authentication, auth_type)
+                else:
+                    LOGGER.warning("[REVERSE_PROXY_CLIENT] ✗ NO authentication in gateway message")
+                
+                LOGGER.info(f"[REVERSE_PROXY_CLIENT] Gateway request payload: {payload}")
+                LOGGER.info("=" * 80)
                 await self.mcp_transport.send(orjson.dumps(payload).decode())
 
             elif msg_type == MessageType.HEARTBEAT.value:

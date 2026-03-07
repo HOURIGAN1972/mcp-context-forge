@@ -579,7 +579,9 @@ async def forward_request_to_session(
         f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"forward_request_to_session method={method} {'(notification)' if is_notification else f'id={request_id}'}"
     )
     if authentication:
-        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Auth type={auth_type}")
+        LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Auth type={auth_type}, headers={list(authentication.keys())}")
+    else:
+        LOGGER.warning(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | NO AUTHENTICATION PROVIDED")
 
     # Check if we own the session or need to forward to owner (only when affinity is enabled)
     if settings.mcpgateway_session_affinity_enabled:
@@ -594,6 +596,16 @@ async def forward_request_to_session(
                 f"NOT owner (owner={owner}) → FORWARDING REQUEST via Redis Pub/Sub to worker {owner}"
             )
             message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
+            
+            # Include authentication details for cross-worker forwarding
+            if authentication:
+                LOGGER.info(f"[REVERSE_PROXY] Adding authentication to cross-worker message: {list(authentication.keys())}")
+                message["authentication"] = authentication
+                if auth_type:
+                    message["authType"] = auth_type
+            else:
+                LOGGER.warning("[REVERSE_PROXY] No authentication to add to cross-worker message")
+            
             return await manager.forward_message_to_owner(session_id, message)
 
         LOGGER.info(
@@ -616,6 +628,15 @@ async def forward_request_to_session(
 
     # Wrap the request in reverse proxy envelope
     message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
+    
+    # Include authentication details if provided so the reverse proxy agent can use them
+    if authentication:
+        LOGGER.info(f"[REVERSE_PROXY] Adding authentication to local message: {list(authentication.keys())}")
+        message["authentication"] = authentication
+        if auth_type:
+            message["authType"] = auth_type
+    else:
+        LOGGER.warning("[REVERSE_PROXY] No authentication to add to local message")
 
     try:
         LOGGER.info(f"[REVERSE_PROXY] 📤 LOCAL SEND 📤 | " f"Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Sending message to LOCAL WebSocket agent (method={method})")
