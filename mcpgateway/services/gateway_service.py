@@ -782,7 +782,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
-            
+
             # For reverse proxy mode, check if gateway with this ID already exists
             if is_reverse_proxied and gateway_id:
                 existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -1906,10 +1906,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         try:  # pylint: disable=too-many-nested-blocks
             logger.info(f"[AUTH UPDATE] update_gateway called for gateway_id={gateway_id}, user_email={user_email}")
             has_auth_value = gateway_update.auth_value is not None
-            logger.info(f"[AUTH UPDATE] Update payload: auth_type={getattr(gateway_update, 'auth_type', 'NOT_SET')}, "
-                       f"has_auth_headers={hasattr(gateway_update, 'auth_headers') and bool(gateway_update.auth_headers)}, "
-                       f"auth_value_provided={has_auth_value}")
-            
+            logger.info(
+                f"[AUTH UPDATE] Update payload: auth_type={getattr(gateway_update, 'auth_type', 'NOT_SET')}, "
+                f"has_auth_headers={hasattr(gateway_update, 'auth_headers') and bool(gateway_update.auth_headers)}, "
+                f"auth_value_provided={has_auth_value}"
+            )
+
             # Acquire row lock and eager-load relationships while locked so
             # concurrent updates are serialized on Postgres.
             gateway = get_for_update(
@@ -2429,14 +2431,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
 
                 gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
-                
+
                 # For reverse_proxy updates, return tuple with tool/resource/prompt IDs
                 if modified_via == "reverse_proxy":
                     tool_ids = [str(t.id) for t in gateway.tools]
                     resource_ids = [str(r.id) for r in gateway.resources]
                     prompt_ids = [str(p.id) for p in gateway.prompts]
                     return gateway_read, tool_ids, resource_ids, prompt_ids
-                
+
                 return gateway_read
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
@@ -5294,7 +5296,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Convert raw dicts to Pydantic models
         tools = [ToolCreate.model_validate(tool) for tool in tools]
-        
+
         # Set request_type to PROXIED for tools from reverse proxy gateways
         for tool in tools:
             tool.request_type = "PROXIED"

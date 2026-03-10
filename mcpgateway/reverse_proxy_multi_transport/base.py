@@ -87,7 +87,7 @@ class McpServerTransport(ABC):
         Args:
             auth_headers: Dictionary of HTTP headers to use for authentication.
             auth_type: Type of authentication (basic, bearer, authheaders, etc.)
-        
+
         Note:
             This is optional and only used by HTTP-based transports.
             Stdio-based transports can ignore this as they don't use HTTP headers.

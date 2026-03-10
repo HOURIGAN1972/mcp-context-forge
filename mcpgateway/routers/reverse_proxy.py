@@ -596,7 +596,7 @@ async def forward_request_to_session(
                 f"NOT owner (owner={owner}) → FORWARDING REQUEST via Redis Pub/Sub to worker {owner}"
             )
             message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
-            
+
             # Include authentication details for cross-worker forwarding
             if authentication:
                 LOGGER.info(f"[REVERSE_PROXY] Adding authentication to cross-worker message: {list(authentication.keys())}")
@@ -605,7 +605,7 @@ async def forward_request_to_session(
                     message["authType"] = auth_type
             else:
                 LOGGER.warning("[REVERSE_PROXY] No authentication to add to cross-worker message")
-            
+
             return await manager.forward_message_to_owner(session_id, message)
 
         LOGGER.info(
@@ -628,7 +628,7 @@ async def forward_request_to_session(
 
     # Wrap the request in reverse proxy envelope
     message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
-    
+
     # Include authentication details if provided so the reverse proxy agent can use them
     if authentication:
         LOGGER.info(f"[REVERSE_PROXY] Adding authentication to local message: {list(authentication.keys())}")
@@ -865,8 +865,8 @@ async def websocket_endpoint(
                         # to avoid transaction conflicts
                         # First-Party
                         from mcpgateway.db import SessionLocal
-                        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
                         from mcpgateway.schemas import GatewayUpdate
+                        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
 
                         try:
                             with SessionLocal() as dbsession:
@@ -908,7 +908,7 @@ async def websocket_endpoint(
                                 except (GatewayDuplicateConflictError, GatewayNameConflictError) as e:
                                     # Gateway already exists (duplicate or name conflict) - update it instead
                                     LOGGER.info(f"Gateway {session_id} already exists (conflict: {type(e).__name__}), updating instead")
-                                    
+
                                     gateway_update = GatewayUpdate(
                                         name=gateway.name,
                                         url=gateway.url,
@@ -917,7 +917,7 @@ async def websocket_endpoint(
                                         transport=gateway.transport,
                                         visibility=gateway.visibility,
                                     )
-                                    
+
                                     # update_gateway with modified_via="reverse_proxy" returns tuple with IDs
                                     result = await gateway_service.update_gateway(
                                         db=dbsession,
@@ -927,7 +927,7 @@ async def websocket_endpoint(
                                         modified_via="reverse_proxy",
                                         user_email=user,
                                     )
-                                    
+
                                     if result:
                                         # Unpack tuple returned by update_gateway for reverse_proxy
                                         gateway_read, tool_ids, resource_ids, prompt_ids = result

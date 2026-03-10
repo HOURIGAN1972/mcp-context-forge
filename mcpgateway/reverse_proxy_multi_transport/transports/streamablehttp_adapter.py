@@ -216,7 +216,9 @@ class StreamableHttpAdapter(McpServerTransport):
         """
         # Convert basic auth credentials to standard Authorization header
         if auth_type == "basic" and "username" in auth_headers and "password" in auth_headers:
+            # Standard
             import base64
+
             username = auth_headers["username"]
             password = auth_headers["password"]
             credentials = f"{username}:{password}"

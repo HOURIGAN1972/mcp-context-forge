@@ -3529,12 +3529,7 @@ class ToolService(BaseService):
                                 metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
                             )
 
-                            result = await forward_request_to_session(
-                                session_id=session_id,
-                                mcp_request=json_rpc_request,
-                                authentication=headers,
-                                auth_type=gateway_auth_type
-                            )
+                            result = await forward_request_to_session(session_id=session_id, mcp_request=json_rpc_request, authentication=headers, auth_type=gateway_auth_type)
                             logger.info(f"[PROXY_TOOL_CALL] Raw result from forward_request_to_session: {result}")
 
                             # Check if this is an error response from cross-worker forwarding
