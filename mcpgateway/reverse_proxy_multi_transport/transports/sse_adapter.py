@@ -311,13 +311,15 @@ class SseAdapter(McpServerTransport):
                 # Notify handlers of connection loss
                 for handler in self._message_handlers:
                     try:
-                        error_msg = orjson.dumps({
-                            "jsonrpc": "2.0",
-                            "error": {
-                                "code": -32000,
-                                "message": f"SSE connection lost: {e}",
-                            },
-                        }).decode()
+                        error_msg = orjson.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "error": {
+                                    "code": -32000,
+                                    "message": f"SSE connection lost: {e}",
+                                },
+                            }
+                        ).decode()
                         await handler(error_msg)
                     except Exception as handler_error:
                         LOGGER.error(f"Error notifying handler of connection loss: {handler_error}")
@@ -340,7 +342,16 @@ class SseAdapter(McpServerTransport):
 
         if event_type == "endpoint":
             # Extract message endpoint URL
-            self._message_endpoint = data
+            # If it's a relative URL, construct full URL from server_url
+            if data.startswith("/"):
+                # Parse base URL to get scheme and host
+                # Standard
+                from urllib.parse import urlparse
+
+                parsed = urlparse(self.server_url)
+                self._message_endpoint = f"{parsed.scheme}://{parsed.netloc}{data}"
+            else:
+                self._message_endpoint = data
             LOGGER.info(f"Received message endpoint: {self._message_endpoint}")
 
         elif event_type == "message":

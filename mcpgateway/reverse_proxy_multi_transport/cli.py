@@ -32,6 +32,7 @@ except ImportError:
 # First-Party
 from mcpgateway.reverse_proxy_multi_transport.base import GatewayTransport, McpServerTransport
 from mcpgateway.reverse_proxy_multi_transport.client import ReverseProxyClient
+from mcpgateway.reverse_proxy_multi_transport.transports.sse_adapter import SseAdapter
 from mcpgateway.reverse_proxy_multi_transport.transports.stdio_adapter import StdioAdapter
 from mcpgateway.reverse_proxy_multi_transport.transports.streamablehttp_adapter import (
     StreamableHttpAdapter,
@@ -56,6 +57,7 @@ DEFAULT_KEEPALIVE_INTERVAL = 30
 def create_mcp_transport(
     local_stdio: Optional[str] = None,
     streamable_http: Optional[str] = None,
+    local_sse: Optional[str] = None,
     cert: Optional[str] = None,
 ) -> McpServerTransport:
     """Create MCP server transport based on configuration.
@@ -63,6 +65,7 @@ def create_mcp_transport(
     Args:
         local_stdio: Stdio command for MCP server.
         streamable_http: Streamable HTTP URL for MCP server (http(s)://.../mcp).
+        local_sse: SSE URL for MCP server (http(s)://.../sse).
         cert: Optional CA certificate.
 
     Returns:
@@ -71,11 +74,11 @@ def create_mcp_transport(
     Raises:
         ValueError: If no transport is specified or multiple are specified.
     """
-    transports = [local_stdio, streamable_http]
+    transports = [local_stdio, streamable_http, local_sse]
     specified = [t for t in transports if t is not None]
 
     if len(specified) == 0:
-        raise ValueError("Must specify one MCP server transport " "(--local-stdio or --streamable-http)")
+        raise ValueError("Must specify one MCP server transport " "(--local-stdio, --streamable-http, or --local-sse)")
     if len(specified) > 1:
         raise ValueError("Can only specify one MCP server transport")
 
@@ -85,6 +88,9 @@ def create_mcp_transport(
     elif streamable_http:
         LOGGER.info(f"Using Streamable HTTP transport: {streamable_http}")
         return StreamableHttpAdapter(streamable_http, cert=cert)
+    elif local_sse:
+        LOGGER.info(f"Using SSE transport: {local_sse}")
+        return SseAdapter(local_sse, cert=cert)
 
     raise ValueError("No valid transport specified")
 
@@ -126,6 +132,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     mcp_group.add_argument(
         "--streamable-http",
         help="MCP server Streamable HTTP URL (e.g., https://server.com/mcp)",
+    )
+    mcp_group.add_argument(
+        "--local-sse",
+        help="MCP server SSE URL (e.g., https://server.com/sse)",
     )
 
     # Gateway options
@@ -263,6 +273,7 @@ async def main(argv: Optional[List[str]] = None) -> None:
     mcp_transport = create_mcp_transport(
         local_stdio=args.local_stdio,
         streamable_http=args.streamable_http,
+        local_sse=args.local_sse,
         cert=args.cert,
     )
 
