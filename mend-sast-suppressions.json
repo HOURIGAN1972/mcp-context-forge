@@ -1,0 +1,10 @@
+{
+  "PSIRT_PRD0015613//cyberfraud-mcp-context-forge": {
+    "finding_ids": [
+      {
+        "id": "38a605b6-1509-4e04-8849-b22e91302b8e",
+        "reason": "<Please provide reason for whitelisting if applicable>"
+      }
+    ]
+  }
+}

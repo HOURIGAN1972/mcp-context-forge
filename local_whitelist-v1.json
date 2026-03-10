@@ -1,0 +1,21 @@
+[
+  {
+    "package": "pip",
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "cve_name": [
+      "PRISMA-2022-0168"
+    ],
+    "cve_links": [],
+    "planned_for_remediation": [
+      "No remediation is currently available"
+    ],
+    "reason_for_not_exploitable": [
+      "According to link, this is not an issue that can be fixed and is just how pip works"
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-40317"
+    ]
+  }
+]

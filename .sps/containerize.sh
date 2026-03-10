@@ -52,8 +52,8 @@ if [ $MULTI_ARCH_BUILD == "1" ]; then
    echo "Building multi architecture image"
    BASE_IMAGE_REPO="${DOCKER_REGISTRY}/${IMAGE_BASE}:${BASE_IMAGE_TAG}"
    sed -i "s%BASE_IMAGE_REPO%${BASE_IMAGE_REPO}%g" Containerfile.cyberfraud
-   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
-   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="${IMAGE_NAME}" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi;
+   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi PLATFORMS='linux/amd64,linux/arm64' && \
+   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="${IMAGE_NAME}" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi PLATFORMS='linux/amd64,linux/arm64';
 else
    echo "Building single architecture image"
    BASE_IMAGE_REPO="${IMAGE_BASE}:${BASE_IMAGE_TAG}"
