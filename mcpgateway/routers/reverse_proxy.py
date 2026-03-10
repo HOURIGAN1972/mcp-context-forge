@@ -865,6 +865,8 @@ async def websocket_endpoint(
                         # to avoid transaction conflicts
                         # First-Party
                         from mcpgateway.db import SessionLocal
+                        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
+                        from mcpgateway.schemas import GatewayUpdate
 
                         try:
                             with SessionLocal() as dbsession:
@@ -885,8 +887,14 @@ async def websocket_endpoint(
                                 # First-Party
                                 from mcpgateway.services import GatewayService
 
+                                gateway_service = GatewayService()
+                                tool_ids = []
+                                resource_ids = []
+                                prompt_ids = []
+
                                 try:
-                                    gateway, tool_ids, resource_ids, prompt_ids = await GatewayService().register_proxy_gateway(
+                                    # Try to register new gateway
+                                    gateway_read, tool_ids, resource_ids, prompt_ids = await gateway_service.register_proxy_gateway(
                                         db=dbsession,
                                         gateway=gateway,
                                         team_id=team_id,
@@ -895,34 +903,60 @@ async def websocket_endpoint(
                                         gateway_id=session_id,
                                         created_by=user,
                                     )
+                                    LOGGER.info(f"Gateway {gateway_read.name} registered successfully with {len(tool_ids)} tools")
 
-                                    LOGGER.info(f"Gateway {gateway.name} registered successfully with {len(tool_ids)} tools")
-                                    server_in = ServerCreate(
-                                        id=gateway.id,
+                                except (GatewayDuplicateConflictError, GatewayNameConflictError) as e:
+                                    # Gateway already exists (duplicate or name conflict) - update it instead
+                                    LOGGER.info(f"Gateway {session_id} already exists (conflict: {type(e).__name__}), updating instead")
+                                    
+                                    gateway_update = GatewayUpdate(
                                         name=gateway.name,
+                                        url=gateway.url,
                                         description=gateway.description,
-                                        associated_tools=tool_ids,
-                                        associated_resources=resource_ids,
-                                        associated_prompts=prompt_ids,
-                                        team_id=gateway.team_id,
+                                        tags=gateway.tags,
+                                        transport=gateway.transport,
                                         visibility=gateway.visibility,
                                     )
-
-                                    server = await ServerService().register_server(
-                                        dbsession,
-                                        server_in,
-                                        team_id=gateway.team_id,
-                                        visibility=gateway.visibility,
-                                        created_via="reverse_proxy",
-                                        created_by=gateway.created_by,
-                                        owner_email=gateway.owner_email,
+                                    
+                                    # update_gateway with modified_via="reverse_proxy" returns tuple with IDs
+                                    result = await gateway_service.update_gateway(
+                                        db=dbsession,
+                                        gateway_id=session_id,
+                                        gateway_update=gateway_update,
+                                        modified_by=user,
+                                        modified_via="reverse_proxy",
+                                        user_email=user,
                                     )
-                                    LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
+                                    
+                                    if result:
+                                        # Unpack tuple returned by update_gateway for reverse_proxy
+                                        gateway_read, tool_ids, resource_ids, prompt_ids = result
+                                        LOGGER.info(f"Gateway {gateway_read.name} updated successfully with {len(tool_ids)} tools")
+                                    else:
+                                        raise Exception("Failed to update gateway")
 
-                                except Exception as e:
-                                    LOGGER.error(f"Failed to register gateway/server: {e}")
-                                    dbsession.rollback()
-                                    raise
+                                # Register or update virtual server
+                                server_in = ServerCreate(
+                                    id=gateway_read.id,
+                                    name=gateway_read.name,
+                                    description=gateway_read.description,
+                                    associated_tools=tool_ids,
+                                    associated_resources=resource_ids,
+                                    associated_prompts=prompt_ids,
+                                    team_id=gateway_read.team_id,
+                                    visibility=gateway_read.visibility,
+                                )
+
+                                server = await ServerService().register_server(
+                                    dbsession,
+                                    server_in,
+                                    team_id=gateway_read.team_id,
+                                    visibility=gateway_read.visibility,
+                                    created_via="reverse_proxy",
+                                    created_by=gateway_read.created_by,
+                                    owner_email=gateway_read.owner_email,
+                                )
+                                LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
 
                             # Send final success acknowledgment
                             await session.send_message({"type": "register_complete", "sessionId": session_id, "status": "success"})

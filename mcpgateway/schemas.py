@@ -307,7 +307,7 @@ class ToolCreate(BaseModel):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP", "PROXIED"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")

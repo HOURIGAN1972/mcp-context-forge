@@ -763,27 +763,32 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             #         gateway_id=existing_gateway.id,
             #     )
             # Check for existing gateway with the same slug and visibility
-            # Skip this check for proxy mode since we support updating existing gateways
             slug_name = slugify(gateway.name)
-            if not is_reverse_proxied:
-                if visibility.lower() == "public":
-                    # Check for existing public gateway with the same slug (row-locked)
-                    existing_gateway = get_for_update(
-                        db,
-                        DbGateway,
-                        where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
-                    )
-                    if existing_gateway:
-                        raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
-                elif visibility.lower() == "team" and team_id:
-                    # Check for existing team gateway with the same slug (row-locked)
-                    existing_gateway = get_for_update(
-                        db,
-                        DbGateway,
-                        where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
-                    )
-                    if existing_gateway:
-                        raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            if visibility.lower() == "public":
+                # Check for existing public gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "public"),
+                )
+                if existing_gateway:
+                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team gateway with the same slug (row-locked)
+                existing_gateway = get_for_update(
+                    db,
+                    DbGateway,
+                    where=and_(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id),
+                )
+                if existing_gateway:
+                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            
+            # For reverse proxy mode, check if gateway with this ID already exists
+            if is_reverse_proxied and gateway_id:
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if existing_gateway:
+                    # Gateway already exists - caller should use update_gateway instead
+                    raise GatewayDuplicateConflictError(duplicate_gateway=existing_gateway)
 
             if gateway.transport == "PROXIED" and (gateway.url is None or gateway.url == ""):
                 app_domain = settings.app_domain
@@ -810,8 +815,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     decoded_auth_value = gateway.auth_value
 
             # Check for duplicate gateway
-            # Skip this check for proxy mode since we support updating existing gateways
-            if not gateway.one_time_auth and not is_reverse_proxied:
+            if not gateway.one_time_auth:
                 duplicate_gateway = self._check_gateway_uniqueness(
                     db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
                 )
@@ -887,26 +891,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db_prompts = []
             capabilities = {}
 
-            # Check for existing gateway early (proxy mode supports upsert)
-            # We need to do this BEFORE initialization so we can use existing auth
-            existing_gateway = None
-            if is_reverse_proxied and gateway_id:
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                if existing_gateway and existing_gateway.auth_type and existing_gateway.auth_value:
-                    logger.info(f"[PROXY_REGISTRATION] Found existing gateway {gateway_id} with auth_type={existing_gateway.auth_type}")
-                    # Override with existing gateway's authentication for initialization
-                    auth_type = existing_gateway.auth_type
-                    if isinstance(existing_gateway.auth_value, str):
-                        authentication_headers = decode_auth(existing_gateway.auth_value)
-                    elif isinstance(existing_gateway.auth_value, dict):
-                        authentication_headers = existing_gateway.auth_value
-                    else:
-                        authentication_headers = {}
-                    logger.info(f"[PROXY_REGISTRATION] Using existing auth for initialization: {list(authentication_headers.keys()) if authentication_headers else 'none'}")
-
             db_gateway = None
             if transport != "PROXIED" or is_reverse_proxied:
-
                 # Initialize gateway capabilities, tools, resources, and prompts
                 if initialize_timeout is not None:
                     try:
@@ -1144,137 +1130,41 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             )
                         )
 
-                # existing_gateway was already checked earlier (before initialization)
-                # to read authentication for the initialization process
-                if existing_gateway:
-                    # Update existing proxy gateway
-                    logger.info(f"Updating existing proxy gateway for session {gateway_id}")
-
-                    # Get existing tools/resources/prompts by original_name for updating
-                    existing_tools_map = {t.original_name: t for t in existing_gateway.tools}
-                    existing_resources_map = {r.uri: r for r in existing_gateway.resources}
-                    existing_prompts_map = {p.original_name: p for p in existing_gateway.prompts}
-
-                    # Update or create tools
-                    updated_tools = []
-                    for new_tool in tools:
-                        if new_tool.original_name in existing_tools_map:
-                            # Update existing tool
-                            existing_tool = existing_tools_map[new_tool.original_name]
-                            existing_tool.url = new_tool.url
-                            existing_tool.description = new_tool.description
-                            existing_tool.input_schema = new_tool.input_schema
-                            existing_tool.annotations = new_tool.annotations
-                            existing_tool.enabled = new_tool.enabled
-                            existing_tool.updated_at = datetime.now(timezone.utc)
-                            updated_tools.append(existing_tool)
-                        else:
-                            # Add new tool
-                            updated_tools.append(new_tool)
-
-                    # Update or create resources
-                    updated_resources = []
-                    for new_resource in db_resources:
-                        if new_resource.uri in existing_resources_map:
-                            # Update existing resource
-                            existing_resource = existing_resources_map[new_resource.uri]
-                            existing_resource.name = new_resource.name
-                            existing_resource.description = new_resource.description
-                            existing_resource.mime_type = new_resource.mime_type
-                            existing_resource.annotations = new_resource.annotations if hasattr(new_resource, "annotations") else None
-                            existing_resource.updated_at = datetime.now(timezone.utc)
-                            updated_resources.append(existing_resource)
-                        else:
-                            # Add new resource
-                            updated_resources.append(new_resource)
-
-                    # Update or create prompts
-                    updated_prompts = []
-                    for new_prompt in db_prompts:
-                        if new_prompt.original_name in existing_prompts_map:
-                            # Update existing prompt
-                            existing_prompt = existing_prompts_map[new_prompt.original_name]
-                            existing_prompt.description = new_prompt.description
-                            existing_prompt.argument_schema = new_prompt.argument_schema
-                            existing_prompt.annotations = new_prompt.annotations if hasattr(new_prompt, "annotations") else None
-                            existing_prompt.updated_at = datetime.now(timezone.utc)
-                            updated_prompts.append(existing_prompt)
-                        else:
-                            # Add new prompt
-                            updated_prompts.append(new_prompt)
-
-                    # Update fields directly on the existing object
-                    existing_gateway.name = gateway.name
-                    existing_gateway.slug = slug_name
-                    existing_gateway.url = normalized_url
-                    existing_gateway.description = gateway.description
-                    existing_gateway.tags = gateway.tags
-                    existing_gateway.transport = gateway.transport
-                    existing_gateway.capabilities = capabilities
-                    existing_gateway.reachable = True  # Mark as reachable/active
-                    existing_gateway.last_seen = datetime.now(timezone.utc)
-                    
-                    # Preserve existing authentication if new registration doesn't provide any
-                    # This prevents losing auth when reverse proxy agent reconnects
-                    if auth_type is not None and auth_type != "":
-                        existing_gateway.auth_type = auth_type
-                        existing_gateway.auth_value = auth_value
-                        logger.info(f"[PROXY_REGISTRATION] Updating auth for gateway {gateway_id}: auth_type={auth_type}")
-                    else:
-                        logger.info(f"[PROXY_REGISTRATION] Preserving existing auth for gateway {gateway_id}: auth_type={existing_gateway.auth_type}")
-                    
-                    if oauth_config is not None:
-                        existing_gateway.oauth_config = oauth_config
-                    existing_gateway.passthrough_headers = gateway.passthrough_headers
-                    existing_gateway.tools = updated_tools
-                    existing_gateway.resources = updated_resources
-                    existing_gateway.prompts = updated_prompts
-                    existing_gateway.visibility = visibility
-                    # Update owner_email and created_by only if they are currently null
-                    # This allows setting them on first reconnection but preserving them afterwards
-                    if existing_gateway.owner_email is None and owner_email is not None:
-                        logger.info(f"Setting owner_email on existing gateway: {owner_email}")
-                        existing_gateway.owner_email = owner_email
-                    if existing_gateway.created_by is None and created_by is not None:
-                        logger.info(f"Setting created_by on existing gateway: {created_by}")
-                        existing_gateway.created_by = created_by
-                    db_gateway = existing_gateway
-                else:
-                    # Create DB model
-                    db_gateway = DbGateway(
-                        id=gateway_id,
-                        name=gateway.name,
-                        slug=slug_name,
-                        url=normalized_url,
-                        description=gateway.description,
-                        tags=gateway.tags or [],
-                        transport=gateway.transport,
-                        capabilities=capabilities,
-                        last_seen=datetime.now(timezone.utc),
-                        auth_type=auth_type,
-                        auth_value=auth_value,
-                        auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
-                        oauth_config=oauth_config,
-                        passthrough_headers=gateway.passthrough_headers,
-                        tools=tools,
-                        resources=db_resources,
-                        prompts=db_prompts,
-                        # Gateway metadata
-                        created_by=created_by,
-                        created_from_ip=created_from_ip,
-                        created_via=created_via or "api",
-                        created_user_agent=created_user_agent,
-                        version=1,
-                        # Team scoping fields
-                        team_id=team_id,
-                        owner_email=owner_email,
-                        visibility=visibility,
-                        ca_certificate=gateway.ca_certificate,
-                        ca_certificate_sig=gateway.ca_certificate_sig,
-                        signing_algorithm=gateway.signing_algorithm,
-                        # Gateway mode configuration
-                        gateway_mode=gateway_mode,
-                    )
+                # Create DB model
+                db_gateway = DbGateway(
+                    id=gateway_id,
+                    name=gateway.name,
+                    slug=slug_name,
+                    url=normalized_url,
+                    description=gateway.description,
+                    tags=gateway.tags or [],
+                    transport=gateway.transport,
+                    capabilities=capabilities,
+                    last_seen=datetime.now(timezone.utc),
+                    auth_type=auth_type,
+                    auth_value=auth_value,
+                    auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
+                    oauth_config=oauth_config,
+                    passthrough_headers=gateway.passthrough_headers,
+                    tools=tools,
+                    resources=db_resources,
+                    prompts=db_prompts,
+                    # Gateway metadata
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_via=created_via or "api",
+                    created_user_agent=created_user_agent,
+                    version=1,
+                    # Team scoping fields
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility=visibility,
+                    ca_certificate=gateway.ca_certificate,
+                    ca_certificate_sig=gateway.ca_certificate_sig,
+                    signing_algorithm=gateway.signing_algorithm,
+                    # Gateway mode configuration
+                    gateway_mode=gateway_mode,
+                )
             else:
                 # Create placeholder DB model for gateway with proxied transport and wait for
                 # reverse proxy to connect and initialise to retrieve tools, prompts and resources
@@ -1986,7 +1876,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
-    ) -> Optional[GatewayRead]:
+    ) -> Union[Optional[GatewayRead], tuple[GatewayRead, List[str], List[str], List[str]]]:
         """Update a gateway.
 
         Args:
@@ -2001,7 +1891,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email: Email of user performing update (for ownership check)
 
         Returns:
-            Updated gateway information
+            Updated gateway information. When modified_via is "reverse_proxy", returns a tuple of
+            (GatewayRead, tool_ids, resource_ids, prompt_ids) to match register_gateway behavior.
+            Otherwise returns Optional[GatewayRead].
 
         Raises:
             GatewayNotFoundError: If gateway not found
@@ -2308,10 +2200,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
                             init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
-                # Only initialize gateway is transport is not equal to PROXIED
-                # since reconnect from reverse proxy will cause update to tools, resources and prompts.
-                logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Transport is '{gateway.transport}', will {'SKIP' if gateway.transport == 'PROXIED' else 'PERFORM'} initialization")
-                if gateway.transport != "PROXIED":
+                # Initialize gateway if:
+                # 1. Transport is not PROXIED, OR
+                # 2. Transport is PROXIED AND modified_via is reverse_proxy (reconnection scenario)
+                should_initialize = gateway.transport != "PROXIED" or (gateway.transport == "PROXIED" and modified_via == "reverse_proxy")
+                logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Transport is '{gateway.transport}', modified_via='{modified_via}', will {'PERFORM' if should_initialize else 'SKIP'} initialization")
+                if should_initialize:
                     # Try to reinitialize connection if URL actually changed
                     # if url_changed:
                     # Initialize empty lists in case initialization fails
@@ -2321,6 +2215,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     try:
                         ca_certificate = getattr(gateway, "ca_certificate", None)
+                        # For PROXIED transport, pass gateway_id to use proxy connection
+                        # (we only reach here if modified_via == "reverse_proxy" due to should_initialize condition)
+                        gateway_id_param = gateway.id if gateway.transport == "PROXIED" else None
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
                             init_url,
                             gateway.auth_value,
@@ -2329,6 +2226,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             gateway.oauth_config,
                             ca_certificate,
                             auth_query_params=auth_query_params_decrypted,
+                            gateway_id=gateway_id_param,
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -2530,7 +2428,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     },
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                
+                # For reverse_proxy updates, return tuple with tool/resource/prompt IDs
+                if modified_via == "reverse_proxy":
+                    tool_ids = [str(t.id) for t in gateway.tools]
+                    resource_ids = [str(r.id) for r in gateway.resources]
+                    prompt_ids = [str(p.id) for p in gateway.prompts]
+                    return gateway_read, tool_ids, resource_ids, prompt_ids
+                
+                return gateway_read
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -5387,6 +5294,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Convert raw dicts to Pydantic models
         tools = [ToolCreate.model_validate(tool) for tool in tools]
+        
+        # Set request_type to PROXIED for tools from reverse proxy gateways
+        for tool in tools:
+            tool.request_type = "PROXIED"
 
         # Convert raw resource dicts to ResourceCreate objects
         resource_objects = []
