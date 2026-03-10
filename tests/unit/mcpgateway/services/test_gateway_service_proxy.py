@@ -249,35 +249,23 @@ class TestGatewayServiceProxy:
 
     @pytest.mark.asyncio
     async def test_register_proxy_gateway_update_existing(self, gateway_service, mock_db, mock_forward_request, monkeypatch):
-        """Test updating an existing proxy gateway."""
+        """Test that registering a proxy gateway with existing ID raises GatewayDuplicateConflictError."""
         # Create existing gateway mock
         existing_gateway = MagicMock(spec=DbGateway)
         existing_gateway.id = "test-session-123"
         existing_gateway.name = "old_name"
+        existing_gateway.slug = "old_name"
+        existing_gateway.enabled = True
+        existing_gateway.visibility = "public"
         existing_gateway.tools = []
         existing_gateway.resources = []
         existing_gateway.prompts = []
 
         mock_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=existing_gateway),  # Existing gateway found (line 1075)
-                _make_execute_result(scalars_list=[]),  # Valid gateway IDs for resources (line 921)
-                _make_execute_result(scalars_list=[]),  # Candidate resources query (line 922)
-                _make_execute_result(scalars_list=[]),  # Valid gateway IDs for prompts (line 1008)
-                _make_execute_result(scalars_list=[]),  # Candidate prompts query (line 1009)
+                _make_execute_result(scalar=None),  # No existing gateway with same slug (line 769/778)
+                _make_execute_result(scalar=existing_gateway),  # Existing gateway found by ID (line 788)
             ]
-        )
-
-        gateway_service._notify_gateway_added = AsyncMock()
-
-        # Mock GatewayRead.model_validate
-        mock_model = Mock()
-        mock_model.masked.return_value = mock_model
-        mock_model.name = "updated_proxy"
-
-        monkeypatch.setattr(
-            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
-            lambda x: mock_model,
         )
 
         gateway_create = GatewayCreate(
@@ -287,20 +275,20 @@ class TestGatewayServiceProxy:
             transport="PROXIED",
         )
 
-        result = await gateway_service.register_gateway(
-            mock_db,
-            gateway_create,
-            created_via="reverse_proxy",
-            gateway_id="test-session-123",
-        )
+        from mcpgateway.services.gateway_service import GatewayDuplicateConflictError
 
-        # Verify update path was taken (flush called to persist changes)
-        # Note: db.add may be called for new tools/resources/prompts even in update mode
-        mock_db.flush.assert_called_once()
+        # Expect GatewayDuplicateConflictError when gateway with same ID already exists
+        with pytest.raises(GatewayDuplicateConflictError) as exc_info:
+            await gateway_service.register_gateway(
+                mock_db,
+                gateway_create,
+                created_via="reverse_proxy",
+                gateway_id="test-session-123",
+            )
 
-        # Verify the gateway update was processed (name attribute should be set)
-        # The actual update happens on the existing_gateway object
-        assert hasattr(existing_gateway, 'name')
+        # Verify the error contains the existing gateway info
+        assert exc_info.value.gateway_id == "test-session-123"
+        assert exc_info.value.enabled is True
 
     # ────────────────────────────────────────────────────────────────────
     # _initialize_gateway with proxy mode
@@ -931,13 +919,16 @@ class TestGatewayServiceProxy:
 
         mock_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),
+                _make_execute_result(scalar=None),  # No existing gateway with same slug
+                _make_execute_result(scalar=None),  # No existing gateway by ID
             ]
         )
 
-        # Mock _initialize_gateway to timeout
+        # Mock _initialize_gateway to timeout - use asyncio.Event to prevent StopIteration
         async def slow_init(*args, **kwargs):
-            await asyncio.sleep(10)  # Sleep longer than timeout
+            # Use an event that never gets set to simulate infinite wait
+            event = asyncio.Event()
+            await event.wait()  # This will wait forever, causing timeout
             return {}, [], [], []
 
         gateway_service._initialize_gateway = slow_init

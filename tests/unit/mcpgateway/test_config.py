@@ -1140,7 +1140,9 @@ def test_ws_relay_feature_default_false():
     assert s.mcpgateway_ws_relay_enabled is False
 
 
-def test_reverse_proxy_feature_default_false():
+def test_reverse_proxy_feature_default_false(monkeypatch):
     """mcpgateway_reverse_proxy_enabled should default to False."""
+    # Clear any environment variable override
+    monkeypatch.delenv("MCPGATEWAY_REVERSE_PROXY_ENABLED", raising=False)
     s = Settings(_env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
