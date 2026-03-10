@@ -1007,7 +1007,7 @@ async def get_current_user(
                 if request and global_context:
                     request.state.plugin_global_context = global_context
 
-                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
 
                 return user

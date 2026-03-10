@@ -615,13 +615,23 @@ async def _check_streamable_permission(
     if not user_email:
         return False
 
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
+
     try:
         async with get_db() as db:
             permission_service = PermissionService(db)
             return await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
-                token_teams=user_context.get("teams"),
+                team_id=team_id,
+                token_teams=token_teams,
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
             )
