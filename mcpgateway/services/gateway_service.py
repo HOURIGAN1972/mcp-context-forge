@@ -2115,7 +2115,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             header_dict[key] = value
                     logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Setting auth_value to dict with {len(header_dict)} headers: {list(header_dict.keys())}")
                     gateway.auth_value = header_dict  # Store as dict for DB JSON field
-                elif settings.masked_auth_value not in (token, password, header_value):
+                elif gateway_update.auth_value is not None and settings.masked_auth_value not in (token, password, header_value):
                     logger.info(f"[AUTH UPDATE] Gateway {gateway.id} ({gateway.transport}): Processing auth_value update (not using auth_headers)")
                     # Check if values differ from existing ones or if setting for first time
                     decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
