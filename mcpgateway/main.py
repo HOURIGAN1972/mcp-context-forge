@@ -1000,6 +1000,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
 
+        # Start reverse proxy health monitoring if enabled
+        if settings.mcpgateway_reverse_proxy_enabled:
+            # First-Party
+            from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+
+            await reverse_proxy_manager.start_health_monitoring()
+            logger.info("Reverse proxy health monitoring started")
+
         logger.info("All services initialized successfully")
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
@@ -1088,6 +1096,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.info("Plugin manager shutdown complete")
             except Exception as e:
                 logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop reverse proxy health monitoring
+        if settings.mcpgateway_reverse_proxy_enabled:
+            try:
+                # First-Party
+                from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+
+                await reverse_proxy_manager.stop_health_monitoring()
+                logger.info("Reverse proxy health monitoring stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping reverse proxy health monitoring: {e}")
 
         # Stop cache invalidation subscriber
         try:

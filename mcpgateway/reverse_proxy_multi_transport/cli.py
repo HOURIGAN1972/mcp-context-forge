@@ -31,7 +31,11 @@ except ImportError:
 
 # First-Party
 from mcpgateway.reverse_proxy_multi_transport.base import GatewayTransport, McpServerTransport
-from mcpgateway.reverse_proxy_multi_transport.client import ReverseProxyClient
+from mcpgateway.reverse_proxy_multi_transport.client import (
+    DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL,
+    DEFAULT_MCP_HEALTH_CHECK_TIMEOUT,
+    ReverseProxyClient,
+)
 from mcpgateway.reverse_proxy_multi_transport.transports.sse_adapter import SseAdapter
 from mcpgateway.reverse_proxy_multi_transport.transports.stdio_adapter import StdioAdapter
 from mcpgateway.reverse_proxy_multi_transport.transports.streamablehttp_adapter import (
@@ -185,6 +189,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default=DEFAULT_KEEPALIVE_INTERVAL,
         help=f"Keepalive interval in seconds (default: {DEFAULT_KEEPALIVE_INTERVAL})",
     )
+    conn_group.add_argument(
+        "--mcp-health-check-timeout",
+        type=float,
+        default=DEFAULT_MCP_HEALTH_CHECK_TIMEOUT,
+        help=f"Timeout for MCP health check calls in seconds (default: {DEFAULT_MCP_HEALTH_CHECK_TIMEOUT})",
+    )
+    conn_group.add_argument(
+        "--mcp-health-check-retry-interval",
+        type=float,
+        default=DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL,
+        help=f"Interval between MCP health check retries when server is down (default: {DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL})",
+    )
 
     # Configuration file
     parser.add_argument(
@@ -294,6 +310,8 @@ async def main(argv: Optional[List[str]] = None) -> None:
         reconnect_delay=args.reconnect_delay,
         max_retries=args.max_retries,
         keepalive_interval=args.keepalive,
+        mcp_health_check_timeout=args.mcp_health_check_timeout,
+        mcp_health_check_retry_interval=args.mcp_health_check_retry_interval,
     )
 
     # Handle shutdown signals

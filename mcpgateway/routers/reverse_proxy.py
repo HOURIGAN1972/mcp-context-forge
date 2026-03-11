@@ -77,8 +77,10 @@ class ReverseProxySession:
         self.server_info: Dict[str, Any] = {}
         self.connected_at = datetime.now(tz=timezone.utc)
         self.last_activity = datetime.now(tz=timezone.utc)
+        self.last_heartbeat = datetime.now(tz=timezone.utc)
         self.message_count = 0
         self.bytes_transferred = 0
+        self.missed_heartbeats = 0
         # Timestamp (monotonic) of the last Redis ownership TTL refresh.
         # Used by ReverseProxyManager.refresh_session_ownership_if_due() to
         # throttle EXPIRE calls so we don't hit Redis on every heartbeat.
@@ -129,6 +131,8 @@ class ReverseProxyManager:
         """Initialize the manager."""
         self.sessions: Dict[str, ReverseProxySession] = {}
         self._lock = asyncio.Lock()
+        self._health_check_task: Optional[asyncio.Task] = None
+        self._session_failure_counts: Dict[str, int] = {}
 
     async def register_session_ownership(self, session_id: str) -> None:
         """Register session ownership in Redis using an unconditional SET EX.
@@ -451,6 +455,157 @@ class ReverseProxyManager:
             LOGGER.error(f"[REVERSE_PROXY_AFFINITY] Worker {get_worker_id()} | Session {session_id[:8]}... | Error executing forwarded message: {e}", exc_info=True)
             await redis.publish(response_channel, orjson.dumps({"error": str(e), "status": "error"}))
 
+    async def start_health_monitoring(self) -> None:
+        """Start the background health monitoring task for reverse proxy sessions.
+
+        Each worker monitors its own local sessions independently (no leader election).
+        """
+        if self._health_check_task is None or self._health_check_task.done():
+            self._health_check_task = asyncio.create_task(self._run_health_checks())
+            LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Started health monitoring task")
+
+    async def stop_health_monitoring(self) -> None:
+        """Stop the background health monitoring task."""
+        if self._health_check_task and not self._health_check_task.done():
+            self._health_check_task.cancel()
+            try:
+                await self._health_check_task
+            except asyncio.CancelledError:
+                pass
+            LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Stopped health monitoring task")
+
+    async def _run_health_checks(self) -> None:
+        """Background task that periodically checks session health.
+
+        Runs independently on each worker, checking only local sessions.
+        No leader election - each worker is responsible for its own sessions.
+        """
+        check_interval = settings.mcpgateway_reverse_proxy_health_check_interval
+        LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Health check loop started (interval={check_interval}s)")
+
+        while True:
+            try:
+                await asyncio.sleep(check_interval)
+
+                # Get snapshot of current sessions
+                async with self._lock:
+                    sessions_to_check = list(self.sessions.values())
+
+                if sessions_to_check:
+                    LOGGER.debug(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Checking {len(sessions_to_check)} local sessions")
+                    await self._check_sessions_health(sessions_to_check)
+
+            except asyncio.CancelledError:
+                LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Health check loop cancelled")
+                break
+            except Exception as e:
+                LOGGER.error(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Error in health check loop: {e}", exc_info=True)
+                # Continue running despite errors
+
+    async def _check_sessions_health(self, sessions: list[ReverseProxySession]) -> None:
+        """Check health of multiple sessions.
+
+        Args:
+            sessions: List of sessions to check
+        """
+        now = datetime.now(tz=timezone.utc)
+        heartbeat_timeout = settings.mcpgateway_reverse_proxy_heartbeat_timeout
+        failure_threshold = settings.mcpgateway_reverse_proxy_failure_threshold
+
+        for session in sessions:
+            try:
+                time_since_heartbeat = (now - session.last_heartbeat).total_seconds()
+
+                if time_since_heartbeat > heartbeat_timeout:
+                    # Heartbeat timeout detected
+                    session.missed_heartbeats += 1
+                    LOGGER.warning(
+                        f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session.session_id[:8]}... | "
+                        f"Heartbeat timeout ({time_since_heartbeat:.1f}s > {heartbeat_timeout}s) | "
+                        f"Missed heartbeats: {session.missed_heartbeats}/{failure_threshold}"
+                    )
+
+                    # Check if threshold exceeded
+                    if failure_threshold > 0 and session.missed_heartbeats >= failure_threshold:
+                        LOGGER.error(
+                            f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session.session_id[:8]}... | "
+                            f"Failure threshold reached ({session.missed_heartbeats}/{failure_threshold}) - marking gateway unreachable"
+                        )
+                        await self._mark_gateway_unreachable(session.session_id)
+                        # Close the WebSocket connection
+                        try:
+                            await session.websocket.close(code=1001, reason="Heartbeat timeout")
+                        except Exception as close_error:
+                            LOGGER.debug(f"[REVERSE_PROXY_HEALTH] Error closing WebSocket for {session.session_id[:8]}...: {close_error}")
+                else:
+                    # Heartbeat is healthy - reset counter if it was previously elevated
+                    if session.missed_heartbeats > 0:
+                        LOGGER.info(
+                            f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session.session_id[:8]}... | "
+                            f"Heartbeat recovered - resetting missed count from {session.missed_heartbeats} to 0"
+                        )
+                        session.missed_heartbeats = 0
+
+            except Exception as e:
+                LOGGER.error(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session.session_id[:8]}... | " f"Error checking session health: {e}", exc_info=True)
+
+    async def _mark_gateway_unreachable(self, session_id: str) -> None:
+        """Mark the gateway associated with this session as unreachable in the database.
+
+        Args:
+            session_id: Session ID (which is also the gateway ID for reverse proxy)
+        """
+        try:
+            # Third-Party
+            from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.db import Gateway, SessionLocal  # pylint: disable=import-outside-toplevel
+
+            with SessionLocal() as db:
+                gateway = db.execute(select(Gateway).where(Gateway.id == session_id)).scalar_one_or_none()
+                if gateway:
+                    if gateway.reachable:
+                        gateway.reachable = False
+                        db.commit()
+                        LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Gateway '{gateway.name}' marked as unreachable in database")
+                    else:
+                        LOGGER.debug(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Gateway '{gateway.name}' already marked unreachable")
+                else:
+                    LOGGER.warning(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Gateway not found in database")
+        except Exception as e:
+            LOGGER.error(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Failed to mark gateway unreachable: {e}", exc_info=True)
+
+    async def _mark_gateway_reachable(self, session_id: str) -> None:
+        """Mark the gateway associated with this session as reachable in the database.
+
+        Args:
+            session_id: Session ID (which is also the gateway ID for reverse proxy)
+        """
+        try:
+            # Third-Party
+            from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.db import Gateway, SessionLocal  # pylint: disable=import-outside-toplevel
+
+            with SessionLocal() as db:
+                gateway = db.execute(select(Gateway).where(Gateway.id == session_id)).scalar_one_or_none()
+                if gateway:
+                    if not gateway.reachable:
+                        gateway.reachable = True
+                        gateway.last_seen = datetime.now(tz=timezone.utc)
+                        db.commit()
+                        LOGGER.info(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Gateway '{gateway.name}' marked as reachable in database")
+                    else:
+                        # Update last_seen even if already reachable
+                        gateway.last_seen = datetime.now(tz=timezone.utc)
+                        db.commit()
+                else:
+                    LOGGER.warning(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Gateway not found in database")
+        except Exception as e:
+            LOGGER.error(f"[REVERSE_PROXY_HEALTH] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Failed to mark gateway reachable: {e}", exc_info=True)
+
     async def add_session(self, session: ReverseProxySession) -> None:
         """Add a new session.
 
@@ -461,6 +616,9 @@ class ReverseProxyManager:
             self.sessions[session.session_id] = session
             count = len(self.sessions)
         LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session.session_id[:8]}... | Added (total local sessions: {count})")
+
+        # Mark gateway as reachable when session is added
+        await self._mark_gateway_reachable(session.session_id)
 
     async def remove_session(self, session_id: str) -> None:
         """Remove a session.
@@ -475,6 +633,8 @@ class ReverseProxyManager:
             count = len(self.sessions)
         if existed:
             LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Removed (total local sessions: {count})")
+            # Mark gateway as unreachable when session is removed
+            await self._mark_gateway_unreachable(session_id)
         else:
             LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | Remove called but session not found locally (may be on another worker)")
 
@@ -973,8 +1133,24 @@ async def websocket_endpoint(
                     break
 
                 elif msg_type == "heartbeat":
+                    # Update heartbeat timestamp and reset missed count
+                    now = datetime.now(tz=timezone.utc)
+                    previous_heartbeat = session.last_heartbeat
+                    time_since_last = (now - previous_heartbeat).total_seconds() if previous_heartbeat else 0
+
+                    session.last_heartbeat = now
+                    previous_missed = session.missed_heartbeats
+                    session.missed_heartbeats = 0
+
+                    # Log heartbeat reception with timing details
+                    LOGGER.info(
+                        f"[HEARTBEAT_RECEIVED] Worker {get_worker_id()} | Session {session_id[:8]}... | "
+                        f"Heartbeat received | Time since last: {time_since_last:.1f}s | "
+                        f"Missed count reset: {previous_missed} → 0"
+                    )
+
                     # Respond to heartbeat and refresh Redis ownership TTL (throttled to TTL/2 interval)
-                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
+                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": now.isoformat()})
                     await manager.refresh_session_ownership_if_due(session_id, session)
 
                 elif msg_type in ("response", "notification"):

@@ -102,7 +102,10 @@ class StreamableHttpAdapter(McpServerTransport):
         LOGGER.info("HTTP connection to MCP server established")
 
     async def stop(self) -> None:
-        """Stop HTTP client connection."""
+        """Stop HTTP client connection.
+
+        Clears session state to ensure clean reconnection.
+        """
         if not self._connected:
             return
 
@@ -119,6 +122,12 @@ class StreamableHttpAdapter(McpServerTransport):
         if self._client:
             await self._client.aclose()
             self._client = None
+
+        # Clear session state to prevent using stale session ID on reconnection
+        self._session_id = None
+        self._protocol_version = None
+
+        LOGGER.info("HTTP connection closed and session state cleared")
 
     async def send(self, message: str) -> None:
         """Send a message to the MCP server via HTTP POST and handle inline response."""
@@ -199,6 +208,15 @@ class StreamableHttpAdapter(McpServerTransport):
             else:
                 LOGGER.warning("HTTP response has no content - this may indicate a problem with the MCP server")
 
+        except httpx.HTTPStatusError as e:
+            # If we get a 404, the session is invalid (server restarted)
+            # Clear session state to force reconnection
+            if e.response.status_code == 404:
+                LOGGER.warning("HTTP POST returned 404 - session invalid, clearing state to force reconnection")
+                self._session_id = None
+                self._protocol_version = None
+            LOGGER.error(f"HTTP send error: {e}")
+            raise RuntimeError(f"Failed to send message: {e}") from e
         except httpx.HTTPError as e:
             LOGGER.error(f"HTTP send error: {e}")
             raise RuntimeError(f"Failed to send message: {e}") from e

@@ -124,6 +124,7 @@ class SseAdapter(McpServerTransport):
         """Stop SSE connection gracefully.
 
         Cancels receive task, closes HTTP client, and cleans up resources.
+        Clears session state to ensure clean reconnection.
         """
         if not self._connected:
             return
@@ -143,7 +144,12 @@ class SseAdapter(McpServerTransport):
             await self._client.aclose()
             self._client = None
 
-        LOGGER.info("SSE connection closed")
+        # Clear session state to prevent using stale session ID on reconnection
+        self._session_id = None
+        self._message_endpoint = None
+        self._protocol_version = None
+
+        LOGGER.info("SSE connection closed and session state cleared")
 
     async def send(self, message: str) -> None:
         """Send a message to the MCP server via HTTP POST.
@@ -198,6 +204,16 @@ class SseAdapter(McpServerTransport):
 
             LOGGER.debug(f"SSE POST successful: status={response.status_code}")
 
+        except httpx.HTTPStatusError as e:
+            # If we get a 404, the session is invalid (server restarted)
+            # Clear session state to force reconnection
+            if e.response.status_code == 404:
+                LOGGER.warning("SSE POST returned 404 - session invalid, clearing state to force reconnection")
+                self._session_id = None
+                self._message_endpoint = None
+                self._protocol_version = None
+            LOGGER.error(f"SSE POST error: {e}")
+            raise RuntimeError(f"Failed to send message: {e}") from e
         except httpx.HTTPError as e:
             LOGGER.error(f"SSE POST error: {e}")
             raise RuntimeError(f"Failed to send message: {e}") from e
@@ -329,7 +345,9 @@ class SseAdapter(McpServerTransport):
         except Exception as e:
             LOGGER.error(f"Unexpected error in SSE stream: {e}", exc_info=True)
         finally:
-            LOGGER.info("SSE stream ended")
+            # Mark as disconnected when stream ends
+            self._connected = False
+            LOGGER.info("SSE stream ended, marked as disconnected")
 
     async def _process_sse_event(self, event_type: str, data: str) -> None:
         """Process a single SSE event.

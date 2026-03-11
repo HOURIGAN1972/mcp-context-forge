@@ -1420,6 +1420,12 @@ class Settings(BaseSettings):
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
     mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
+
+    # Reverse Proxy Health Monitoring
+    mcpgateway_reverse_proxy_heartbeat_timeout: int = Field(default=90, description="Seconds without heartbeat before marking reverse proxy gateway as unreachable")
+    mcpgateway_reverse_proxy_health_check_interval: int = Field(default=30, description="Seconds between reverse proxy session health checks")
+    mcpgateway_reverse_proxy_failure_threshold: int = Field(default=3, description="Consecutive missed heartbeats before marking gateway unreachable (-1 to disable)")
+
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
