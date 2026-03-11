@@ -1025,8 +1025,9 @@ async def websocket_endpoint(
                         # to avoid transaction conflicts
                         # First-Party
                         from mcpgateway.db import SessionLocal
-                        from mcpgateway.schemas import GatewayUpdate
+                        from mcpgateway.schemas import GatewayUpdate, ServerUpdate
                         from mcpgateway.services.gateway_service import GatewayDuplicateConflictError, GatewayNameConflictError
+                        from mcpgateway.services.server_service import ServerNameConflictError
 
                         try:
                             with SessionLocal() as dbsession:
@@ -1107,16 +1108,42 @@ async def websocket_endpoint(
                                     visibility=gateway_read.visibility,
                                 )
 
-                                server = await ServerService().register_server(
-                                    dbsession,
-                                    server_in,
-                                    team_id=gateway_read.team_id,
-                                    visibility=gateway_read.visibility,
-                                    created_via="reverse_proxy",
-                                    created_by=gateway_read.created_by,
-                                    owner_email=gateway_read.owner_email,
-                                )
-                                LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
+                                try:
+                                    # Try to register new server
+                                    server = await ServerService().register_server(
+                                        dbsession,
+                                        server_in,
+                                        team_id=gateway_read.team_id,
+                                        visibility=gateway_read.visibility,
+                                        created_via="reverse_proxy",
+                                        created_by=gateway_read.created_by,
+                                        owner_email=gateway_read.owner_email,
+                                    )
+                                    LOGGER.info(f"Virtual server {server.name} registered successfully with {len(tool_ids)} tools")
+
+                                except ServerNameConflictError as e:
+                                    # Server already exists (name conflict) - update it instead
+                                    LOGGER.info(f"Server {gateway_read.id} already exists (conflict: {type(e).__name__}), updating instead")
+
+                                    server_update = ServerUpdate(
+                                        name=server_in.name,
+                                        description=server_in.description,
+                                        associated_tools=tool_ids,
+                                        associated_resources=resource_ids,
+                                        associated_prompts=prompt_ids,
+                                        team_id=gateway_read.team_id,
+                                        visibility=gateway_read.visibility,
+                                    )
+
+                                    server = await ServerService().update_server(
+                                        db=dbsession,
+                                        server_id=gateway_read.id,
+                                        server_update=server_update,
+                                        user_email=gateway_read.owner_email or user,
+                                        modified_by=gateway_read.created_by,
+                                        modified_via="reverse_proxy",
+                                    )
+                                    LOGGER.info(f"Virtual server {server.name} updated successfully with {len(tool_ids)} tools")
 
                             # Send final success acknowledgment
                             await session.send_message({"type": "register_complete", "sessionId": session_id, "status": "success"})

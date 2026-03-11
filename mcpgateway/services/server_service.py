@@ -533,140 +533,7 @@ class ServerService(BaseService):
             owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
             team_id_to_check = getattr(server_in, "team_id", None) or team_id
 
-            # Check if we should update an existing server (for reverse_proxy operations)
-            # Match by ID, name, and team (owner_email can change)
-            existing_server_to_update = None
-            if created_via == "reverse_proxy":
-                # Log the values we're searching for
-                logger.info("Reverse proxy looking for existing server with:")
-                logger.info(f"  server_in.id: {server_in.id}")
-                logger.info(f"  server_in.name: {server_in.name}")
-                logger.info(f"  team_id_to_check: {team_id_to_check}")
-
-                # Build conditions to find matching server by ID, name, and team (not owner_email)
-                if server_in.id:
-                    conditions = [
-                        DbServer.id == server_in.id,
-                        DbServer.name == server_in.name,
-                        DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
-                    ]
-
-                    existing_server_to_update = get_for_update(db, DbServer, where=and_(*conditions))
-
-                    if existing_server_to_update:
-                        logger.info(f"Found existing server by ID+name+team: {existing_server_to_update.name} (id: {existing_server_to_update.id}, owner: {existing_server_to_update.owner_email})")
-                    else:
-                        logger.info("No existing server found matching ID, name, and team")
-
-                if existing_server_to_update:
-                    logger.info(f"Reverse proxy updating existing server: {existing_server_to_update.name} (id: {existing_server_to_update.id})")
-
-                    # Update basic fields
-                    existing_server_to_update.description = server_in.description
-                    if server_in.icon is not None:
-                        existing_server_to_update.icon = server_in.icon
-                    existing_server_to_update.tags = server_in.tags or []
-                    existing_server_to_update.visibility = visibility or getattr(server_in, "visibility", None) or "public"
-                    existing_server_to_update.oauth_enabled = getattr(server_in, "oauth_enabled", False) or False
-                    existing_server_to_update.oauth_config = getattr(server_in, "oauth_config", None)
-
-                    # Update owner_email and created_by only if they are currently null
-                    # This allows setting them on first reconnection but preserving them afterwards
-                    if existing_server_to_update.owner_email is None and owner_email_to_check is not None:
-                        logger.info(f"Setting owner_email on existing server: {owner_email_to_check}")
-                        existing_server_to_update.owner_email = owner_email_to_check
-                    if existing_server_to_update.created_by is None and created_by is not None:
-                        logger.info(f"Setting created_by on existing server: {created_by}")
-                        existing_server_to_update.created_by = created_by
-
-                    # Update metadata
-                    existing_server_to_update.modified_by = created_by
-                    existing_server_to_update.modified_from_ip = created_from_ip
-                    existing_server_to_update.modified_via = created_via
-                    existing_server_to_update.modified_user_agent = created_user_agent
-                    existing_server_to_update.enabled = True
-                    existing_server_to_update.version += 1
-
-                    # Update associated tools
-                    if server_in.associated_tools:
-                        tool_ids = [tool_id.strip() for tool_id in server_in.associated_tools if tool_id.strip()]
-                        if tool_ids:
-                            tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
-                            existing_server_to_update.tools = list(tools)
-                    else:
-                        existing_server_to_update.tools = []
-
-                    # Update associated resources
-                    if server_in.associated_resources:
-                        resource_ids = [resource_id.strip() for resource_id in server_in.associated_resources if resource_id.strip()]
-                        if resource_ids:
-                            resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
-                            existing_server_to_update.resources = list(resources)
-                    else:
-                        existing_server_to_update.resources = []
-
-                    # Update associated prompts
-                    if server_in.associated_prompts:
-                        prompt_ids = [prompt_id.strip() for prompt_id in server_in.associated_prompts if prompt_id.strip()]
-                        if prompt_ids:
-                            prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
-                            existing_server_to_update.prompts = list(prompts)
-                    else:
-                        existing_server_to_update.prompts = []
-
-                    # Update associated A2A agents
-                    if server_in.associated_a2a_agents:
-                        agent_ids = [agent_id.strip() for agent_id in server_in.associated_a2a_agents if agent_id.strip()]
-                        if agent_ids:
-                            agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(agent_ids))).scalars().all()
-                            existing_server_to_update.a2a_agents = list(agents)
-                    else:
-                        existing_server_to_update.a2a_agents = []
-
-                    # Commit and refresh
-                    db.commit()
-                    db.refresh(existing_server_to_update)
-
-                    # Audit trail for server update
-                    self._audit_trail.log_action(
-                        user_id=created_by or "system",
-                        action="update_server",
-                        resource_type="server",
-                        resource_id=existing_server_to_update.id,
-                        details={
-                            "server_name": existing_server_to_update.name,
-                            "visibility": visibility,
-                            "team_id": team_id,
-                            "associated_tools_count": len(existing_server_to_update.tools),
-                            "associated_resources_count": len(existing_server_to_update.resources),
-                            "associated_prompts_count": len(existing_server_to_update.prompts),
-                            "associated_a2a_agents_count": len(existing_server_to_update.a2a_agents),
-                        },
-                        metadata={
-                            "modified_from_ip": created_from_ip,
-                            "modified_via": created_via,
-                            "modified_user_agent": created_user_agent,
-                        },
-                    )
-
-                    # Structured logging
-                    self._structured_logger.log(
-                        level="INFO",
-                        message="Server updated successfully via reverse_proxy",
-                        event_type="server_updated",
-                        component="server_service",
-                        server_id=existing_server_to_update.id,
-                        server_name=existing_server_to_update.name,
-                        visibility=visibility,
-                        created_by=created_by,
-                        user_email=created_by,
-                    )
-
-                    await self._notify_server_updated(existing_server_to_update)
-                    logger.info(f"Updated server via reverse_proxy: {existing_server_to_update.name}")
-                    return self.convert_server_to_read(existing_server_to_update)
-
-            # For non-reverse_proxy operations, check for name conflicts
+            # Check for name conflicts
             # Build conditions to check for existing server with same name/team/owner
             conditions = [
                 DbServer.name == server_in.name,
@@ -676,12 +543,8 @@ class ServerService(BaseService):
 
             existing_server = get_for_update(db, DbServer, where=and_(*conditions))
             if existing_server:
-                # If server_in has an ID and it matches the existing server, this is idempotent (return existing)
-                if server_in.id and existing_server.id == server_in.id:
-                    logger.info(f"Server with id {server_in.id} already exists, returning existing server (idempotent)")
-                    server_read = self.convert_server_to_read(existing_server, include_metrics=False)
-                    return ServerRead.model_validate(server_read)
-                # Otherwise, it's a name conflict
+                # Always raise ServerNameConflictError for existing servers
+                # This allows the caller (e.g., reverse_proxy) to decide whether to update or fail
                 raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
             # Create the new server record (only if we reach here - no existing server found)
