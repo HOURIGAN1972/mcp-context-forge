@@ -7,9 +7,7 @@
     "cve_name": [
       "PRISMA-2022-0168"
     ],
-    "cve_url": [
-      "https://github.com/pypa/pip/issues/8606|https://github.com/pypa/pip/issues/8606] - twistlock"
-    ],
+    "cve_links": [],
     "planned_for_remediation": [
       "No remediation is currently available"
     ],
