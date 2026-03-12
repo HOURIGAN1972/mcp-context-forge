@@ -103,6 +103,8 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
+    HealthCheckResponse,
+    HealthStatusItem,
     JsonPathModifier,
     PromptCreate,
     PromptExecuteArgs,
@@ -7114,24 +7116,33 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 ####################
 # Healthcheck      #
 ####################
-@app.get("/health")
+@app.get("/health", response_model=HealthCheckResponse)
 def healthcheck():
     """
-    Perform a basic health check to verify database connectivity.
+    Perform health check to verify database and Redis connectivity.
 
     Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
     Returns:
-        A dictionary with the health status and optional error message.
+        HealthCheckResponse: Status of Database and Redis components.
     """
+    status_items = []
+
+    # Check Database (Postgres/SQLite)
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        return {"status": "healthy"}
+        status_items.append(
+            HealthStatusItem(
+                name="Database",
+                statusCode=200,
+                message="[POSTGRES]: Postgres Connection Successful"
+            )
+        )
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -7141,11 +7152,61 @@ def healthcheck():
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = f"Database connection error: {str(e)}"
-        logger.error(error_message)
-        return {"status": "unhealthy", "error": error_message}
+        error_message = "Cannot connect to Postgres"
+        logger.error(f"Database health check failed: {str(e)}")
+        status_items.append(
+            HealthStatusItem(
+                name="Database",
+                statusCode=503,
+                message=error_message
+            )
+        )
     finally:
         db.close()
+
+    # Check Redis
+    if settings.cache_type == "redis" and settings.redis_url:
+        try:
+            # Use synchronous Redis client for health check
+            # Third-Party
+            from redis import Redis  # pylint: disable=import-outside-toplevel
+
+            redis_client = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+            redis_client.ping()
+            status_items.append(
+                HealthStatusItem(
+                    name="Redis",
+                    statusCode=200,
+                    message="ready"
+                )
+            )
+        except Exception as e:
+            logger.error(f"Redis health check failed: {str(e)}")
+            status_items.append(
+                HealthStatusItem(
+                    name="Redis",
+                    statusCode=503,
+                    message="Redis is not enabled"
+                )
+            )
+    else:
+        # Redis not configured
+        status_items.append(
+            HealthStatusItem(
+                name="Redis",
+                statusCode=503,
+                message="Redis is not enabled"
+            )
+        )
+
+    # Determine overall status:
+    # - "healthy" if Database is healthy (200)
+    # - Redis status doesn't affect overall health since it's optional
+    # - "bad" only if Database is unhealthy (503)
+    database_status = next((item for item in status_items if item.name == "Database"), None)
+    overall_status = "healthy" if database_status and database_status.statusCode == 200 else "bad"
+    
+    return HealthCheckResponse(status=overall_status, statusItems=status_items)
 
 
 @app.get("/ready")

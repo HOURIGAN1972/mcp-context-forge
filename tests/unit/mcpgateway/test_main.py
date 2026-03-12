@@ -452,7 +452,19 @@ class TestHealthAndInfrastructure:
         """Test the basic health check endpoint."""
         response = test_client.get("/health")
         assert response.status_code == 200
-        assert response.json()["status"] == "healthy"
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "statusItems" in data
+        assert len(data["statusItems"]) == 2
+        # Check Database status
+        db_item = next((item for item in data["statusItems"] if item["name"] == "Database"), None)
+        assert db_item is not None
+        assert db_item["statusCode"] == 200
+        assert "[POSTGRES]" in db_item["message"] or "Postgres" in db_item["message"]
+        # Check Redis status (should be present even if not enabled)
+        redis_item = next((item for item in data["statusItems"] if item["name"] == "Redis"), None)
+        assert redis_item is not None
+        assert redis_item["statusCode"] in [200, 503]  # 200 if enabled and healthy, 503 if not enabled
 
     def test_ready_check(self, test_client):
         """Test the readiness check endpoint."""
@@ -487,8 +499,14 @@ class TestHealthAndInfrastructure:
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
             response = mcpgateway_main.healthcheck()
-        assert response["status"] == "unhealthy"
+        assert response.status == "bad"
         assert session.invalidate_called is True
+        # Verify statusItems structure
+        assert len(response.statusItems) == 2
+        db_item = next((item for item in response.statusItems if item.name == "Database"), None)
+        assert db_item is not None
+        assert db_item.statusCode == 503
+        assert "Cannot connect" in db_item.message
 
     @pytest.mark.asyncio
     async def test_ready_check_db_error(self):
