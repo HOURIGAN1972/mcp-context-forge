@@ -7655,6 +7655,7 @@ class CacheMetricsSchema(BaseModel):
     keyspace_hits: int = Field(0, description="Successful key lookups")
     keyspace_misses: int = Field(0, description="Failed key lookups")
 
+
 class HealthStatusItem(BaseModel):
     """Individual health status item for a service component."""
 
@@ -7666,9 +7667,8 @@ class HealthStatusItem(BaseModel):
 class HealthCheckResponse(BaseModel):
     """Health check response containing status of all monitored components."""
 
-    status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'bad' otherwise")
+    status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
     statusItems: List[HealthStatusItem] = Field(..., description="List of component health statuses")
-
 
 
 class GunicornMetricsSchema(BaseModel):

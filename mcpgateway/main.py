@@ -7186,7 +7186,7 @@ def healthcheck():
                 HealthStatusItem(
                     name="Redis",
                     statusCode=503,
-                    message="Redis is not enabled"
+                    message="Cannot connect to Redis"
                 )
             )
     else:
@@ -7200,11 +7200,19 @@ def healthcheck():
         )
 
     # Determine overall status:
-    # - "healthy" if Database is healthy (200)
-    # - Redis status doesn't affect overall health since it's optional
-    # - "bad" only if Database is unhealthy (503)
+    # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
     database_status = next((item for item in status_items if item.name == "Database"), None)
-    overall_status = "healthy" if database_status and database_status.statusCode == 200 else "bad"
+    redis_status = next((item for item in status_items if item.name == "Redis"), None)
+    
+    # Check database health
+    database_healthy = database_status and database_status.statusCode == 200
+    
+    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
+    redis_enabled = settings.cache_type == "redis" and settings.redis_url
+    redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
+    
+    overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
     
     return HealthCheckResponse(status=overall_status, statusItems=status_items)
 

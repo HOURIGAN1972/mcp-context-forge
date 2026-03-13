@@ -465,6 +465,47 @@ class TestHealthAndInfrastructure:
         redis_item = next((item for item in data["statusItems"] if item["name"] == "Redis"), None)
         assert redis_item is not None
         assert redis_item["statusCode"] in [200, 503]  # 200 if enabled and healthy, 503 if not enabled
+    def test_health_check_redis_enabled_but_down(self, monkeypatch):
+        """Test health check reports 'bad' when Redis is enabled but down."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+        from mcpgateway.config import settings
+
+        # Mock settings to enable Redis
+        monkeypatch.setattr(settings, "cache_type", "redis")
+        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
+
+        # Mock Redis to fail connection
+        def mock_redis_from_url(*args, **kwargs):
+            class FailingRedis:
+                def ping(self):
+                    raise ConnectionError("Redis connection refused")
+            return FailingRedis()
+
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            # Mock successful database connection
+            mock_session = MagicMock()
+            mock_session_local.return_value = mock_session
+            
+            # Mock Redis import and connection failure
+            with patch("redis.Redis.from_url", side_effect=mock_redis_from_url):
+                response = mcpgateway_main.healthcheck()
+
+        # Verify overall status is "unhealthy" when Redis is enabled but down
+        assert response.status == "unhealthy"
+        assert len(response.statusItems) == 2
+        
+        # Verify Database is healthy
+        db_item = next((item for item in response.statusItems if item.name == "Database"), None)
+        assert db_item is not None
+        assert db_item.statusCode == 200
+        
+        # Verify Redis is unhealthy
+        redis_item = next((item for item in response.statusItems if item.name == "Redis"), None)
+        assert redis_item is not None
+        assert redis_item.statusCode == 503
+        assert "Cannot connect to Redis" in redis_item.message
+
 
     def test_ready_check(self, test_client):
         """Test the readiness check endpoint."""
@@ -499,7 +540,7 @@ class TestHealthAndInfrastructure:
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
             response = mcpgateway_main.healthcheck()
-        assert response.status == "bad"
+        assert response.status == "unhealthy"
         assert session.invalidate_called is True
         # Verify statusItems structure
         assert len(response.statusItems) == 2
