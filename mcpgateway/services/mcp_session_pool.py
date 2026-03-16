@@ -1536,9 +1536,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                     # Execute forwarded WebSocket message for reverse proxy transport
                                     # Lazy import to avoid circular dependency at module load time
                                     # First-Party
-                                    from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
 
-                                    await reverse_proxy_manager.execute_forwarded_message(request, redis)
+                                    reverse_proxy_service = get_reverse_proxy_service()
+                                    await reverse_proxy_service.manager.execute_forwarded_message(request, redis, reverse_proxy_service.pending_responses)
                                     logger.debug(f"Processed forwarded reverse-proxy message, response sent to {response_channel}")
                                 else:
                                     logger.warning(f"Unknown forward type: {forward_type}")

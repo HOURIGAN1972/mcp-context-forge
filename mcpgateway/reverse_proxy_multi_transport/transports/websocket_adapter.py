@@ -129,7 +129,8 @@ class WebSocketAdapter(GatewayTransport):
             except asyncio.CancelledError:
                 pass
 
-        await cast(Any, self._connection).close()
+        if self._connection:
+            await cast(Any, self._connection).close()
         self._connection = None
 
     async def send(self, message: str | bytes) -> None:

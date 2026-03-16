@@ -3289,8 +3289,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # batch will be a sublist of gateways from index i to i + chunk_size
                 batch = gateways[i : i + chunk_size]
 
-                # Each task is a health check for a gateway in the batch, excluding those with auth_type == "one_time_auth"
-                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth"]
+                # Each task is a health check for a gateway in the batch, excluding:
+                # - one_time_auth: No persistent connection to health check
+                # - PROXIED transport: Has dedicated heartbeat-based health monitoring in reverse_proxy_service.py
+                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth" and gw.transport != "PROXIED"]
 
                 # Execute all health checks concurrently
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -3835,7 +3837,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # This import is safe here because we're inside an async function that's only
                 # called after the reverse_proxy module has been fully loaded
                 # First-Party
-                from mcpgateway.routers.reverse_proxy import forward_request_to_session
+                from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service
+
+                reverse_proxy_service = get_reverse_proxy_service()
+                forward_request_to_session = reverse_proxy_service.forward_request_to_session
 
                 capabilities, tools, resources, prompts = await self.connect_to_proxy_server(
                     session_id=gateway_id,

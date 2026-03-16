@@ -87,6 +87,7 @@ class ReverseProxyClient:
         self.retry_count = 0
         self._mcp_server_healthy = True
         self._consecutive_mcp_failures = 0
+        self._registration_successful = False
 
         self._keepalive_task: Optional[asyncio.Task[None]] = None
         self._pending_requests: Dict[Any, asyncio.Future[Any]] = {}
@@ -318,6 +319,24 @@ class ReverseProxyClient:
             elif msg_type == MessageType.HEARTBEAT.value:
                 # Gateway heartbeat is just an acknowledgment, no pong needed
                 LOGGER.debug("Received HEARTBEAT acknowledgment from gateway")
+
+            elif msg_type == "register_ack":
+                # Gateway acknowledged receipt of registration request
+                LOGGER.info(f"Gateway registration acknowledged: {data.get('status', 'unknown')}")
+
+            elif msg_type == "register_complete":
+                # Gateway completed registration (success or error)
+                status = data.get("status", "unknown")
+                if status == "success":
+                    self._registration_successful = True
+                    LOGGER.info(f"Gateway registration completed successfully for session {data.get('sessionId')}")
+                else:
+                    self._registration_successful = False
+                    error_msg = data.get("message", "Unknown error")
+                    LOGGER.error(f"Gateway registration failed for session {data.get('sessionId')}: {error_msg}")
+                    LOGGER.error("Disconnecting due to registration failure...")
+                    # Schedule disconnect to avoid blocking message handler
+                    asyncio.create_task(self.disconnect())
 
             elif msg_type == MessageType.ERROR.value:
                 LOGGER.error(f"Gateway error: {data.get('message', 'Unknown')}")

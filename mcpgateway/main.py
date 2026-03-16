@@ -1003,9 +1003,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Start reverse proxy health monitoring if enabled
         if settings.mcpgateway_reverse_proxy_enabled:
             # First-Party
-            from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
 
-            await reverse_proxy_manager.start_health_monitoring()
+            reverse_proxy_service = get_reverse_proxy_service()
+            await reverse_proxy_service.manager.start_health_monitoring()
             logger.info("Reverse proxy health monitoring started")
 
         logger.info("All services initialized successfully")
@@ -1101,9 +1102,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.mcpgateway_reverse_proxy_enabled:
             try:
                 # First-Party
-                from mcpgateway.routers.reverse_proxy import manager as reverse_proxy_manager  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
 
-                await reverse_proxy_manager.stop_health_monitoring()
+                reverse_proxy_service = get_reverse_proxy_service()
+                await reverse_proxy_service.manager.stop_health_monitoring()
                 logger.info("Reverse proxy health monitoring stopped")
             except Exception as e:
                 logger.debug(f"Error stopping reverse proxy health monitoring: {e}")

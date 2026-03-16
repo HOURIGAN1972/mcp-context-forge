@@ -86,11 +86,11 @@ def mock_db():
 
 @pytest.fixture(autouse=True)
 def mock_forward_request_import(monkeypatch, mock_forward_request):
-    """Automatically patch the forward_request_to_session import in gateway_service."""
-    # Patch the lazy import that happens in _initialize_gateway
-    import mcpgateway.routers.reverse_proxy
+    """Automatically patch the forward_request_to_session method in reverse_proxy_service."""
+    # Patch the service method that gateway_service actually calls
+    from mcpgateway.services.reverse_proxy_service import ReverseProxyService
     monkeypatch.setattr(
-        mcpgateway.routers.reverse_proxy,
+        ReverseProxyService,
         "forward_request_to_session",
         mock_forward_request
     )

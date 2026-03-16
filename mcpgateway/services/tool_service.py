@@ -3514,7 +3514,10 @@ class ToolService(BaseService):
                         try:
                             # Lazy import to avoid circular dependency
                             # First-Party
-                            from mcpgateway.routers.reverse_proxy import extract_session_id_from_url, forward_request_to_session  # pylint: disable=import-outside-toplevel
+                            from mcpgateway.services.reverse_proxy_service import extract_session_id_from_url, get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+                            reverse_proxy_service = get_reverse_proxy_service()
+                            forward_request_to_session = reverse_proxy_service.forward_request_to_session
 
                             session_id = extract_session_id_from_url(server_url)
                             logger.info(f"session_id {session_id}")
