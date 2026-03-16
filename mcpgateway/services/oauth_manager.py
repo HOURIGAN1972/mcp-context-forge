@@ -268,6 +268,7 @@ class OAuthManager:
             try:
                 client = await self._get_client()
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                print("11request to trusteer oauth", response)
                 response.raise_for_status()
 
                 # GitHub returns form-encoded responses, not JSON
@@ -294,6 +295,7 @@ class OAuthManager:
                     raise OAuthError(f"No access_token in response: {token_response}")
 
                 logger.info("""Successfully obtained access token via client credentials""")
+                print("22token from trusteer", token_response["access_token"])
                 return token_response["access_token"]
 
             except httpx.HTTPError as e:
