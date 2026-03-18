@@ -7117,7 +7117,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health", response_model=HealthCheckResponse)
-def healthcheck():
+async def healthcheck():
     """
     Perform health check to verify database and Redis connectivity.
 
@@ -7167,12 +7167,8 @@ def healthcheck():
     # Check Redis
     if settings.cache_type == "redis" and settings.redis_url:
         try:
-            # Use synchronous Redis client for health check
-            # Third-Party
-            from redis import Redis  # pylint: disable=import-outside-toplevel
-
-            redis_client = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
-            redis_client.ping()
+            redis_client = await get_redis_client()
+            await redis_client.ping()
             status_items.append(
                 HealthStatusItem(
                     name="Redis",
