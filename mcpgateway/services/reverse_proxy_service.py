@@ -928,6 +928,7 @@ class ReverseProxyService:
                         associated_prompts=prompt_ids,
                         team_id=gateway_read.team_id,
                         visibility=gateway_read.visibility,
+                        enabled=True,
                     )
 
                     server = await ServerService().update_server(
