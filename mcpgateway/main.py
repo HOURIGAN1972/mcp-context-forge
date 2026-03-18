@@ -149,7 +149,7 @@ from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
+from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
@@ -7165,15 +7165,23 @@ async def healthcheck():
     # Check Redis
     if settings.cache_type == "redis" and settings.redis_url:
         try:
-            redis_client = await get_redis_client()
-            await redis_client.ping()
-            status_items.append(
-                HealthStatusItem(
-                    name="Redis",
-                    statusCode=status.HTTP_200_OK,
-                    message="ready"
+            # is_redis_available() checks if Redis is available and responding to ping.
+            if await is_redis_available():
+                status_items.append(
+                    HealthStatusItem(
+                        name="Redis",
+                        statusCode=status.HTTP_200_OK,
+                        message="ready"
+                    )
                 )
-            )
+            else:
+                status_items.append(
+                    HealthStatusItem(
+                        name="Redis",
+                        statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        message="Cannot connect to Redis"
+                    )
+                )
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
             status_items.append(
