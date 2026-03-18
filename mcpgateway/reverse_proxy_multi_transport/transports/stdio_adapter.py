@@ -48,18 +48,32 @@ class StdioAdapter(McpServerTransport):
         """Start the stdio subprocess."""
         LOGGER.info(f"Starting local MCP server: {self.command}")
 
-        self.process = await asyncio.create_subprocess_exec(
-            *shlex.split(self.command),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=sys.stderr,
-        )
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                *shlex.split(self.command),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=sys.stderr,
+            )
+        except FileNotFoundError as e:
+            raise RuntimeError(f"Command not found: {self.command}") from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to start subprocess '{self.command}': {e}") from e
 
         if not self.process.stdin or not self.process.stdout:
             raise RuntimeError(f"Failed to create subprocess with stdio: {self.command}")
 
         self._stdout_reader_task = asyncio.create_task(self._read_stdout())
         LOGGER.info(f"Local MCP server started (PID: {self.process.pid})")
+        
+        # Give the process a moment to initialize and check if it crashes immediately
+        # Use a longer delay to catch processes that fail during startup
+        await asyncio.sleep(0.5)
+        if self.process.returncode is not None:
+            raise RuntimeError(
+                f"Subprocess terminated immediately after start (exit code: {self.process.returncode}). "
+                f"Command: {self.command}"
+            )
 
     async def stop(self) -> None:
         """Stop the stdio subprocess gracefully."""
@@ -73,23 +87,40 @@ class StdioAdapter(McpServerTransport):
             with suppress(asyncio.CancelledError):
                 await self._stdout_reader_task
 
-        self.process.terminate()
-        with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(self.process.wait(), timeout=5)
-
+        # Check if process is already terminated before trying to terminate it
         if self.process.returncode is None:
-            LOGGER.warning("Force killing subprocess")
-            self.process.kill()
-            await self.process.wait()
+            try:
+                self.process.terminate()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self.process.wait(), timeout=5)
+
+                if self.process.returncode is None:
+                    LOGGER.warning("Force killing subprocess")
+                    self.process.kill()
+                    await self.process.wait()
+            except ProcessLookupError:
+                # Process already terminated, this is fine
+                LOGGER.debug("Process already terminated")
+        else:
+            LOGGER.debug(f"Process already terminated with exit code {self.process.returncode}")
 
     async def send(self, message: str) -> None:
         """Send a message to the subprocess stdin."""
         if not self.process or not self.process.stdin:
             raise RuntimeError("Subprocess not running")
+        
+        # Check if process has terminated
+        if self.process.returncode is not None:
+            raise RuntimeError(f"Subprocess terminated with exit code {self.process.returncode}")
 
         LOGGER.debug(f"→ stdio: {message[:200]}...")
-        self.process.stdin.write((message + "\n").encode())
-        await self.process.stdin.drain()
+        try:
+            self.process.stdin.write((message + "\n").encode())
+            await self.process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Process terminated while we were trying to write
+            returncode = self.process.returncode if self.process else "unknown"
+            raise RuntimeError(f"Subprocess stdin closed (process exit code: {returncode})") from e
 
     def add_message_handler(self, handler: Callable[[str], Awaitable[None]]) -> None:
         """Add a handler for messages from stdout."""

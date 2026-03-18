@@ -24,6 +24,7 @@ from mcpgateway.reverse_proxy_multi_transport.base import (
     McpServerTransport,
     MessageType,
 )
+from mcpgateway.reverse_proxy_multi_transport.transports.streamablehttp_adapter import SessionExpiredError
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -33,9 +34,15 @@ LOGGER = logging_service.get_logger("mcpgateway.reverse_proxy_multi_transport.cl
 # Default configuration
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_MAX_RETRIES = 0
+# Client sends heartbeats at this interval (should be less than gateway's health check interval)
+# Gateway checks every 60s, so 30s keepalive ensures at least 2 heartbeats per check cycle
 DEFAULT_KEEPALIVE_INTERVAL = 30
 DEFAULT_MCP_HEALTH_CHECK_TIMEOUT = 5.0
 DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL = 10.0
+
+
+class StdioSubprocessTerminated(Exception):
+    """Exception raised when stdio subprocess terminates and cannot be recovered."""
 
 
 class ReverseProxyClient:
@@ -88,6 +95,13 @@ class ReverseProxyClient:
         self._mcp_server_healthy = True
         self._consecutive_mcp_failures = 0
         self._registration_successful = False
+
+        # Session expiration recovery: When an MCP server restarts, its session IDs become invalid.
+        # If a request (e.g., tool call) fails with 404, we need to:
+        # 1. Re-register with the gateway to trigger a new initialize sequence
+        # 2. Save the failed request so we can retry it after the new session is established
+        # Without this, the original request would be lost and the gateway would timeout waiting for a response.
+        self._pending_reregistration_request: Optional[Dict[str, Any]] = None
 
         self._keepalive_task: Optional[asyncio.Task[None]] = None
         self._pending_requests: Dict[Any, asyncio.Future[Any]] = {}
@@ -186,20 +200,57 @@ class ReverseProxyClient:
 
                 await self.connect()
 
-                # Wait for disconnection by monitoring gateway connection
+                # Wait for disconnection by monitoring both gateway and MCP connections
                 while self.state == ConnectionState.CONNECTED:
+                    # Check if keepalive task has failed with an exception
+                    if self._keepalive_task and self._keepalive_task.done():
+                        try:
+                            # This will re-raise any exception from the task
+                            self._keepalive_task.result()
+                        except StdioSubprocessTerminated:
+                            LOGGER.error("[RUN_WITH_RECONNECT] Keepalive task failed with StdioSubprocessTerminated, re-raising")
+                            raise
+                        except Exception as e:
+                            LOGGER.error(f"[RUN_WITH_RECONNECT] Keepalive task failed: {e}")
+                            self.state = ConnectionState.DISCONNECTED
+                            break
+
                     # Check if gateway is still connected
                     if not await self.gateway_transport.is_connected():
                         LOGGER.warning("Gateway connection lost, triggering reconnection")
                         self.state = ConnectionState.DISCONNECTED
                         break
+
+                    # Check if MCP transport is still connected (for SSE/HTTP transports)
+                    # This detects when the MCP server restarts and the SSE stream disconnects
+                    # The keepalive loop will handle stopping heartbeats when MCP is unhealthy
+                    # which causes the gateway to mark this gateway as unreachable
+                    mcp_connected = getattr(self.mcp_transport, "_connected", True)
+                    if not mcp_connected:
+                        LOGGER.info("[RUN_WITH_RECONNECT] MCP transport disconnected (server likely restarted)")
+                        LOGGER.info("[RUN_WITH_RECONNECT] Keepalive loop will stop sending heartbeats, gateway will mark as unreachable")
+                        LOGGER.info("[RUN_WITH_RECONNECT] Monitoring for MCP server recovery...")
+                        # Mark MCP server as unhealthy so recovery logic triggers re-registration
+                        if self._mcp_server_healthy:
+                            LOGGER.info("[RUN_WITH_RECONNECT] Marking MCP server as unhealthy to trigger re-registration on recovery")
+                            self._mcp_server_healthy = False
+                            self._consecutive_mcp_failures += 1
+                        # Don't break or disconnect - let the keepalive loop handle health checks
+                        # It will stop sending heartbeats when MCP is unhealthy
+
                     await asyncio.sleep(1)
 
                 if self.state == ConnectionState.SHUTTING_DOWN:
                     break
 
+            except StdioSubprocessTerminated as e:
+                # Re-raise to trigger proxy shutdown
+                LOGGER.error(f"[RUN_WITH_RECONNECT] Caught StdioSubprocessTerminated, re-raising: {e}")
+                LOGGER.error("[RUN_WITH_RECONNECT] About to raise - this should exit the function")
+                raise
             except Exception as e:
                 LOGGER.error(f"Connection error: {e}")
+                LOGGER.error("[RUN_WITH_RECONNECT] After logging connection error, continuing to retry logic")
 
             # Check retry limit
             self.retry_count += 1
@@ -314,7 +365,65 @@ class ReverseProxyClient:
 
                 LOGGER.info(f"[REVERSE_PROXY_CLIENT] Gateway request payload: {payload}")
                 LOGGER.info("=" * 80)
-                await self.mcp_transport.send(orjson.dumps(payload).decode())
+
+                try:
+                    await self.mcp_transport.send(orjson.dumps(payload).decode())
+                except (SessionExpiredError, RuntimeError) as e:
+                    # Session Expiration / Disconnection Recovery Flow:
+                    # When an MCP server restarts, it loses all session state. This can manifest as:
+                    # - SessionExpiredError: Streamable-HTTP gets 404 with stale session ID
+                    # - RuntimeError("Not connected"): SSE transport is disconnected
+                    # - RuntimeError("Failed to send message"): All connection attempts failed
+                    # - RuntimeError("Subprocess not running"): Stdio process terminated
+                    # - RuntimeError("Subprocess terminated..."): Stdio process crashed
+                    # - RuntimeError("Subprocess stdin closed..."): Broken pipe to stdio process
+                    #
+                    # Recovery steps:
+                    # 1. Save the failed request (tool call, etc.) so we don't lose it
+                    # 2. Trigger re-registration with the gateway
+                    # 3. Gateway will send a new initialize request to establish a fresh session
+                    # 4. After successful re-registration, retry the saved request with the new session
+                    #
+                    # If the MCP server is completely stopped (not restarting), we'll send an error
+                    # response after a timeout to prevent the gateway from hanging indefinitely.
+
+                    # Check if this is a connection-related RuntimeError
+                    is_connection_error = isinstance(e, RuntimeError) and (
+                        "Not connected" in str(e) or
+                        "Failed to send message" in str(e) or
+                        "All connection attempts failed" in str(e) or
+                        "Subprocess not running" in str(e) or
+                        "Subprocess terminated" in str(e) or
+                        "Subprocess stdin closed" in str(e)
+                    )
+
+                    if isinstance(e, RuntimeError) and not is_connection_error:
+                        LOGGER.warning(f"[REVERSE_PROXY_CLIENT] Re-raising non-connection RuntimeError: {e}")
+                        raise
+
+                    LOGGER.warning(f"[REVERSE_PROXY_CLIENT] MCP transport unavailable: {e}")
+
+                    # Check if MCP server is healthy - if not, send immediate error response
+                    mcp_healthy = await self._check_mcp_server_health()
+                    if not mcp_healthy:
+                        LOGGER.warning("[REVERSE_PROXY_CLIENT] MCP server is down, sending error response to gateway")
+                        await self._send_error_response(payload, f"MCP server is unavailable: {e}")
+                        return
+
+                    LOGGER.info("[REVERSE_PROXY_CLIENT] MCP server appears healthy, storing request for retry after re-registration...")
+
+                    # Store the full message data for retry after re-registration completes
+                    self._pending_reregistration_request = {
+                        "payload": payload,
+                        "authentication": authentication,
+                        "authType": auth_type,
+                    }
+
+                    LOGGER.info("[REVERSE_PROXY_CLIENT] Triggering re-registration with gateway...")
+                    self._registration_successful = False
+                    await self._register()
+                    LOGGER.info("[REVERSE_PROXY_CLIENT] Re-registration triggered, returning from handler")
+                    return
 
             elif msg_type == MessageType.HEARTBEAT.value:
                 # Gateway heartbeat is just an acknowledgment, no pong needed
@@ -330,6 +439,33 @@ class ReverseProxyClient:
                 if status == "success":
                     self._registration_successful = True
                     LOGGER.info(f"Gateway registration completed successfully for session {data.get('sessionId')}")
+
+                    # Session Expiration Recovery - Part 2: Retry the saved request
+                    # After successful re-registration, the gateway has sent an initialize request and
+                    # a new session has been established with the MCP server. Now we can safely retry
+                    # the request (e.g., tool call) that originally failed with 404.
+                    #
+                    # This ensures the gateway receives a response and doesn't timeout waiting for one.
+                    if self._pending_reregistration_request:
+                        LOGGER.info("[REVERSE_PROXY_CLIENT] Retrying stored request after re-registration...")
+                        pending = self._pending_reregistration_request
+                        self._pending_reregistration_request = None
+
+                        # Restore authentication headers for the retry
+                        if pending.get("authentication"):
+                            self.mcp_transport.set_authentication(pending["authentication"], pending.get("authType"))
+
+                        # Retry the original request with the new session
+                        try:
+                            await self.mcp_transport.send(orjson.dumps(pending["payload"]).decode())
+                            LOGGER.info("[REVERSE_PROXY_CLIENT] Successfully retried request after re-registration")
+                        except Exception as retry_error:
+                            LOGGER.error(f"[REVERSE_PROXY_CLIENT] Failed to retry request after re-registration: {retry_error}")
+                            # Send error response back to gateway so it doesn't hang waiting
+                            await self._send_error_response(
+                                pending["payload"],
+                                f"MCP server unavailable after re-registration: {retry_error}"
+                            )
                 else:
                     self._registration_successful = False
                     error_msg = data.get("message", "Unknown error")
@@ -348,33 +484,42 @@ class ReverseProxyClient:
             LOGGER.error(f"Error handling gateway message: {e}")
 
     async def _check_mcp_server_health(self) -> bool:
-        """Check MCP server health by calling tools/list.
+        """Check MCP server health using transport-specific connectivity checks.
 
-        If the MCP transport is not connected, attempts to restart it first.
-        This allows detection of MCP server recovery after downtime.
+        For HTTP-based transports: performs a simple HTTP connectivity check without authentication.
+        For stdio transports: checks if the process is still running.
+
+        This avoids authentication failures when the reverse proxy doesn't have credentials
+        (credentials are stored in ContextForge and forwarded per-request).
 
         Returns:
-            True if MCP server is healthy, False otherwise.
+            True if MCP server is reachable, False otherwise.
         """
-        request_id = None
         try:
             # Check if MCP transport is connected
             is_connected = getattr(self.mcp_transport, "_connected", True)
             LOGGER.info(f"[MCP_HEALTH] Starting health check | is_connected={is_connected}")
 
-            # If not connected, try to restart the transport
+            # If not connected, try to connect to see if server is back online
             if not is_connected:
-                LOGGER.info("[MCP_HEALTH] MCP transport not connected, attempting restart")
+                LOGGER.info("[MCP_HEALTH] MCP transport not connected, attempting to connect to check if server is available")
                 try:
                     await self.mcp_transport.stop()
                     await self.mcp_transport.start()
-                    LOGGER.info("[MCP_HEALTH] MCP transport restarted successfully")
-                    # Re-check connection status after restart
+                    # Give SSE stream a moment to establish
+                    await asyncio.sleep(0.5)
+                    # Re-check connection status after start attempt
                     is_connected = getattr(self.mcp_transport, "_connected", False)
-                    LOGGER.info(f"[MCP_HEALTH] After restart: is_connected={is_connected}")
+                    LOGGER.info(f"[MCP_HEALTH] After connection attempt: is_connected={is_connected}")
+                    if not is_connected:
+                        LOGGER.info("[MCP_HEALTH] Failed to connect - server is down")
+                        return False
                 except Exception as e:
-                    LOGGER.warning(f"[MCP_HEALTH] Failed to restart MCP transport: {e}")
+                    LOGGER.warning(f"[MCP_HEALTH] Failed to connect to MCP server: {e}")
                     return False
+
+            # Get transport type for health check logic
+            transport_type = type(self.mcp_transport).__name__
 
             # Check if MCP transport is ready (has message endpoint for SSE/HTTP transports)
             has_endpoint_attr = hasattr(self.mcp_transport, "_message_endpoint")
@@ -382,47 +527,104 @@ class ReverseProxyClient:
             LOGGER.info(f"[MCP_HEALTH] Endpoint check | has_attr={has_endpoint_attr}, value={endpoint_value}")
 
             if has_endpoint_attr and not endpoint_value:
-                LOGGER.info("[MCP_HEALTH] MCP transport not ready yet (waiting for endpoint), skipping health check")
+                LOGGER.info("[MCP_HEALTH] MCP transport not ready yet (waiting for endpoint)")
                 return False
 
-            # Create tools/list request
-            request_id = f"health_check_{asyncio.get_event_loop().time()}"
-            health_check_request = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "tools/list",
-            }
+            # For HTTP-based transports, check if session is initialized
+            has_session_id = hasattr(self.mcp_transport, "_session_id")
+            session_id_value = getattr(self.mcp_transport, "_session_id", None) if has_session_id else None
 
-            # Create future to wait for response
-            future: asyncio.Future[Dict[str, Any]] = asyncio.Future()
-            self._pending_requests[request_id] = future
+            # Perform transport-specific health check
 
-            # Send health check request to MCP server
-            LOGGER.info(f"[MCP_HEALTH] Sending tools/list health check to MCP server | request_id={request_id}")
-            await self.mcp_transport.send(orjson.dumps(health_check_request).decode())
+            if transport_type == "StdioAdapter":
+                # For stdio: check if process is still running
+                process = getattr(self.mcp_transport, "process", None)
+                if process and process.returncode is None:
+                    LOGGER.info("[MCP_HEALTH] Stdio process is running ✓")
+                    return True
+                else:
+                    # Stdio subprocess has terminated - no recovery possible
+                    returncode = process.returncode if process else "N/A"
+                    LOGGER.error(f"[MCP_HEALTH] Stdio subprocess terminated (returncode={returncode}) | " f"Session {self.session_id[:8]}... | " f"No automatic recovery possible for stdio transport")
+                    LOGGER.error("[MCP_HEALTH] Raising exception to trigger proxy shutdown | " "Process supervisor will restart with fresh subprocess")
 
-            # Wait for response with timeout
-            try:
-                _ = await asyncio.wait_for(future, timeout=self.mcp_health_check_timeout)
-                LOGGER.info("[MCP_HEALTH] MCP server responded successfully ✓")
-                return True
-            except asyncio.TimeoutError:
-                LOGGER.warning(f"[MCP_HEALTH] MCP server health check timed out after {self.mcp_health_check_timeout}s")
-                return False
+                    # Raise exception to trigger clean shutdown
+                    LOGGER.error("[MCP_HEALTH] About to raise StdioSubprocessTerminated exception")
+                    raise StdioSubprocessTerminated(f"Stdio subprocess terminated with returncode={returncode}")
 
+            elif transport_type in ("SseAdapter", "StreamableHttpAdapter"):
+                # For SSE transports: verify the SSE stream is actually established and stable
+                # The _connected flag is set immediately in start(), but the SSE stream connects
+                # asynchronously. We need to check if the receive task is running and healthy.
+                if transport_type == "SseAdapter":
+                    receive_task = getattr(self.mcp_transport, "_receive_task", None)
+
+                    # Check if receive task exists and is running (not done/failed)
+                    if receive_task and not receive_task.done():
+                        # SSE stream is actively running and connected
+                        # Healthy once endpoint is available, even without session ID
+                        # The gateway will send initialize to establish the session
+                        if is_connected and endpoint_value:
+                            if session_id_value:
+                                LOGGER.info("[MCP_HEALTH] SSE stream active with session ID - healthy ✓")
+                            else:
+                                LOGGER.info("[MCP_HEALTH] SSE stream active with endpoint (no session yet - gateway will initialize) ✓")
+                            return True
+                        else:
+                            LOGGER.info("[MCP_HEALTH] SSE stream active but no endpoint yet - waiting for endpoint event")
+                            return False
+                    else:
+                        # No receive task or it's done (failed/cancelled)
+                        LOGGER.warning("[MCP_HEALTH] SSE receive task not running - server unreachable")
+                        return False
+
+                # For HTTP-based transports (including StreamableHttpAdapter): perform HTTP connectivity check
+                # to verify the server is actually reachable, not just configured
+                client = getattr(self.mcp_transport, "_client", None)
+                server_url = getattr(self.mcp_transport, "server_url", None)
+
+                if not client or not server_url:
+                    LOGGER.warning("[MCP_HEALTH] HTTP transport not properly initialized")
+                    return False
+
+                try:
+                    # Simple HEAD or GET request to check if server is reachable
+                    # Use a short timeout for health checks
+                    LOGGER.info(f"[MCP_HEALTH] Checking HTTP connectivity to {server_url}")
+                    response = await client.head(server_url, timeout=self.mcp_health_check_timeout)
+
+                    # Accept any response (including 401/403 auth errors) as "healthy"
+                    # because it means the server is reachable
+                    if response.status_code < 500:
+                        LOGGER.info(f"[MCP_HEALTH] HTTP server is reachable (status: {response.status_code}) ✓")
+                        return True
+                    else:
+                        LOGGER.warning(f"[MCP_HEALTH] HTTP server returned error: {response.status_code}")
+                        return False
+
+                except Exception as e:
+                    LOGGER.warning(f"[MCP_HEALTH] HTTP connectivity check failed: {e}")
+                    return False
+            else:
+                # Unknown transport type - assume healthy if connected
+                LOGGER.info(f"[MCP_HEALTH] Unknown transport type {transport_type}, assuming healthy if connected")
+                return is_connected
+
+        except StdioSubprocessTerminated as e:
+            # Re-raise this exception to trigger proxy shutdown
+            LOGGER.error(f"[MCP_HEALTH] Caught StdioSubprocessTerminated in health check, re-raising: {e}")
+            raise
         except Exception as e:
-            LOGGER.error(f"[MCP_HEALTH] MCP server health check failed: {e}", exc_info=True)
+            LOGGER.warning(f"[MCP_HEALTH] MCP server health check failed: {e}")
             return False
-        finally:
-            # Clean up pending request if it wasn't resolved
-            if request_id is not None:
-                self._pending_requests.pop(request_id, None)
 
     async def _keepalive_loop(self) -> None:
         """Send periodic heartbeat messages, conditional on MCP server health.
 
-        This implements the MCP-based heartbeat strategy:
-        1. Check MCP server health by calling tools/list
+        This implements the transport-aware heartbeat strategy:
+        1. Check MCP server health using transport-specific checks:
+           - HTTP transports: HTTP HEAD request to verify server connectivity
+           - Stdio transports: verify subprocess is still running (process.returncode is None)
         2. Only send heartbeat to gateway if MCP server is healthy
         3. If MCP server is unhealthy, skip heartbeat (gateway will detect timeout)
         4. Continue checking MCP server health and reconnect when it recovers
@@ -446,22 +648,33 @@ class ReverseProxyClient:
             if mcp_healthy:
                 # MCP server is healthy - send heartbeat to gateway
                 if not self._mcp_server_healthy:
-                    # MCP server recovered
+                    # MCP server recovered - always trigger re-registration to establish new session
                     LOGGER.info(
-                        f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"MCP server recovered after {self._consecutive_mcp_failures} failures | " f"Resuming heartbeats to gateway"
+                        f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | "
+                        f"MCP server recovered after {self._consecutive_mcp_failures} failures | "
+                        f"Triggering re-registration to establish new session"
                     )
                     self._mcp_server_healthy = True
                     self._consecutive_mcp_failures = 0
 
-                    # Reconnect to gateway if we were disconnected
+                    # Always re-register when MCP recovers to trigger new initialization
                     if not await self.gateway_transport.is_connected():
-                        LOGGER.info(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Reconnecting to gateway after MCP server recovery")
+                        LOGGER.info(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Gateway disconnected, reconnecting before re-registration")
                         try:
                             await self.gateway_transport.connect()
-                            await self._register()
                         except Exception as e:
                             LOGGER.error(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Failed to reconnect to gateway: {e}")
                             continue
+
+                    # Re-register to trigger new MCP initialization sequence
+                    try:
+                        LOGGER.info(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Sending re-registration to gateway")
+                        self._registration_successful = False
+                        await self._register()
+                        LOGGER.info(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Re-registration sent, gateway will initialize MCP server")
+                    except Exception as e:
+                        LOGGER.error(f"[HEARTBEAT_RECOVERY] Session {self.session_id[:8]}... | " f"Failed to re-register with gateway: {e}")
+                        continue
 
                 # Send heartbeat
                 heartbeat = {
@@ -507,5 +720,39 @@ class ReverseProxyClient:
 
         LOGGER.info(f"[HEARTBEAT_LOOP] Session {self.session_id[:8]}... | " f"Keepalive loop ended | Total heartbeats sent: {heartbeat_count} | " f"Final state: {self.state.value}")
 
+    async def _send_error_response(self, request_payload: Dict[str, Any], error_message: str) -> None:
+        """Send an error response back to the gateway for a failed request.
 
-# Made with Bob
+        Args:
+            request_payload: The original request payload that failed
+            error_message: Description of the error
+        """
+        try:
+            request_id = request_payload.get("id")
+            if not request_id:
+                LOGGER.warning("[SEND_ERROR] Cannot send error response - no request ID in payload")
+                return
+
+            # Create JSON-RPC error response
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32603,  # Internal error
+                    "message": error_message,
+                }
+            }
+
+            # Wrap in gateway envelope
+            envelope = {
+                "type": MessageType.RESPONSE.value,
+                "sessionId": self.session_id,
+                "payload": error_response,
+            }
+
+            LOGGER.info(f"[SEND_ERROR] Sending error response to gateway for request {request_id}")
+            await self.gateway_transport.send(orjson.dumps(envelope).decode())
+
+        except Exception as e:
+            LOGGER.error(f"[SEND_ERROR] Failed to send error response to gateway: {e}")
+

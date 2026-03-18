@@ -2664,7 +2664,7 @@ class SessionManagerWrapper:
             if message["type"] == "http.response.start":
                 # Log response status for debugging
                 status = message.get("status", 0)
-                logger.info(f"[DEBUG_400] SDK returning response | Status: {status} | Session: {mcp_session_id}")
+                logger.info(f"SDK returning response | Status: {status} | Session: {mcp_session_id}")
 
                 if settings.mcpgateway_session_affinity_enabled:
                     # Look for mcp-session-id in response headers
@@ -2683,9 +2683,9 @@ class SessionManagerWrapper:
                 if body:
                     try:
                         body_str = body.decode("utf-8") if isinstance(body, bytes) else str(body)
-                        logger.info(f"[DEBUG_400] SDK response body | Body: {body_str[:500]}")
+                        logger.info(f"SDK response body | Body: {body_str[:500]}")
                     except Exception:
-                        logger.info(f"[DEBUG_400] SDK response body | Body (binary): {len(body)} bytes")
+                        logger.info(f"SDK response body | Body (binary): {len(body)} bytes")
             await send(message)
 
         # Propagate middleware-resolved context via ASGI scope so that MCP
@@ -2701,7 +2701,7 @@ class SessionManagerWrapper:
         try:
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
             await self.session_manager.handle_request(scope, receive, send_with_capture)
-            logger.info(f"[DEBUG_400] SDK handle_request completed successfully | Session: {mcp_session_id}")
+            logger.info(f"SDK handle_request completed successfully | Session: {mcp_session_id}")
             logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
 
             # Register ownership for the session we just handled
@@ -2756,7 +2756,7 @@ class SessionManagerWrapper:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
-            logger.error(f"[DEBUG_400] SDK handle_request raised exception | Path: {path} | Method: {method} | Session: {mcp_session_id} | Error type: {type(e).__name__} | Error: {e}")
+            logger.error(f"SDK handle_request raised exception | Path: {path} | Method: {method} | Session: {mcp_session_id} | Error type: {type(e).__name__} | Error: {e}")
             logger.error("[STATEFUL] Streamable HTTP request failed | Session: %s | Error: %s", mcp_session_id, e)
             logger.exception("Error handling streamable HTTP request: %s", e)
             raise

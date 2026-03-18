@@ -35,6 +35,7 @@ from mcpgateway.reverse_proxy_multi_transport.client import (
     DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL,
     DEFAULT_MCP_HEALTH_CHECK_TIMEOUT,
     ReverseProxyClient,
+    StdioSubprocessTerminated,
 )
 from mcpgateway.reverse_proxy_multi_transport.transports.sse_adapter import SseAdapter
 from mcpgateway.reverse_proxy_multi_transport.transports.stdio_adapter import StdioAdapter
@@ -60,7 +61,7 @@ DEFAULT_KEEPALIVE_INTERVAL = 30
 
 def create_mcp_transport(
     local_stdio: Optional[str] = None,
-    streamable_http: Optional[str] = None,
+    local_streamable_http: Optional[str] = None,
     local_sse: Optional[str] = None,
     cert: Optional[str] = None,
 ) -> McpServerTransport:
@@ -68,7 +69,7 @@ def create_mcp_transport(
 
     Args:
         local_stdio: Stdio command for MCP server.
-        streamable_http: Streamable HTTP URL for MCP server (http(s)://.../mcp).
+        local_streamable_http: Streamable HTTP URL for MCP server (http(s)://.../mcp).
         local_sse: SSE URL for MCP server (http(s)://.../sse).
         cert: Optional CA certificate.
 
@@ -78,20 +79,20 @@ def create_mcp_transport(
     Raises:
         ValueError: If no transport is specified or multiple are specified.
     """
-    transports = [local_stdio, streamable_http, local_sse]
+    transports = [local_stdio, local_streamable_http, local_sse]
     specified = [t for t in transports if t is not None]
 
     if len(specified) == 0:
-        raise ValueError("Must specify one MCP server transport " "(--local-stdio, --streamable-http, or --local-sse)")
+        raise ValueError("Must specify one MCP server transport " "(--local-stdio, --local-streamable-http, or --local-sse)")
     if len(specified) > 1:
         raise ValueError("Can only specify one MCP server transport")
 
     if local_stdio:
         LOGGER.info(f"Using stdio transport: {local_stdio}")
         return StdioAdapter(local_stdio)
-    elif streamable_http:
-        LOGGER.info(f"Using Streamable HTTP transport: {streamable_http}")
-        return StreamableHttpAdapter(streamable_http, cert=cert)
+    elif local_streamable_http:
+        LOGGER.info(f"Using Streamable HTTP transport: {local_streamable_http}")
+        return StreamableHttpAdapter(local_streamable_http, cert=cert)
     elif local_sse:
         LOGGER.info(f"Using SSE transport: {local_sse}")
         return SseAdapter(local_sse, cert=cert)
@@ -134,7 +135,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="MCP server command to run via stdio",
     )
     mcp_group.add_argument(
-        "--streamable-http",
+        "--local-streamable-http",
         help="MCP server Streamable HTTP URL (e.g., https://server.com/mcp)",
     )
     mcp_group.add_argument(
@@ -277,18 +278,33 @@ async def main(argv: Optional[List[str]] = None) -> None:
     """Main entry point for reverse proxy."""
     args = parse_args(argv)
 
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        stream=sys.stderr,
-    )
+    # Configure logging using LoggingService to respect JSON format settings
+    # This ensures the reverse proxy CLI uses the same logging format as the main gateway
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    
+    # Set log level from args
+    log_level = getattr(logging, args.log_level)
+    root_logger.setLevel(log_level)
+    
+    # Use JSON formatter if LOG_FORMAT=json, otherwise use text formatter
+    log_format = os.getenv("LOG_FORMAT", "text").lower()
+    if log_format == "json":
+        from mcpgateway.services.logging_service import json_formatter
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setFormatter(json_formatter)
+    else:
+        from mcpgateway.services.logging_service import text_formatter
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setFormatter(text_formatter)
+    
+    console_handler.setLevel(log_level)
+    root_logger.addHandler(console_handler)
 
     # Create transports
     mcp_transport = create_mcp_transport(
         local_stdio=args.local_stdio,
-        streamable_http=args.streamable_http,
+        local_streamable_http=args.local_streamable_http,
         local_sse=args.local_sse,
         cert=args.cert,
     )
@@ -332,7 +348,19 @@ async def main(argv: Optional[List[str]] = None) -> None:
     client_task = asyncio.create_task(client.run_with_reconnect())
 
     try:
-        await shutdown_event.wait()
+        # Wait for either shutdown signal or client task to complete
+        done, pending = await asyncio.wait([asyncio.create_task(shutdown_event.wait()), client_task], return_when=asyncio.FIRST_COMPLETED)
+
+        # Check if client_task completed with an exception
+        if client_task in done:
+            try:
+                client_task.result()  # This will re-raise any exception
+            except StdioSubprocessTerminated as e:
+                LOGGER.error(f"Client task failed with StdioSubprocessTerminated: {e}")
+                raise  # Re-raise to trigger clean exit
+            except Exception as e:
+                LOGGER.error(f"Client task failed with unexpected exception: {e}", exc_info=True)
+                raise
     finally:
         await client.disconnect()
         client_task.cancel()
@@ -345,11 +373,20 @@ def run() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nShutdown complete", file=sys.stderr)
+        LOGGER.info("Shutdown complete")
         sys.exit(0)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        # Check if this is a StdioSubprocessTerminated exception
+        # First-Party
+        from mcpgateway.reverse_proxy_multi_transport.client import StdioSubprocessTerminated
+
+        if isinstance(e, StdioSubprocessTerminated):
+            LOGGER.error(f"Stdio subprocess terminated: {e}")
+            LOGGER.info("Exiting so process supervisor can restart with fresh subprocess")
+            sys.exit(1)
+        else:
+            LOGGER.error(f"Error: {e}", exc_info=True)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

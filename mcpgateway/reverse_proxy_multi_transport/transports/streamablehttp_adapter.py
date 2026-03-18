@@ -25,6 +25,11 @@ import httpx
 from mcpgateway.reverse_proxy_multi_transport.base import McpServerTransport
 from mcpgateway.services.logging_service import LoggingService
 
+
+class SessionExpiredError(Exception):
+    """Raised when MCP server session has expired and re-registration is needed."""
+
+
 # Initialize logging
 logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.reverse_proxy_multi_transport.streamablehttp_adapter")
@@ -60,6 +65,8 @@ class StreamableHttpAdapter(McpServerTransport):
         self._receive_task: Optional[asyncio.Task[None]] = None
         # Streamable HTTP uses the main endpoint for communication
         self._endpoint_url = self.server_url
+        # Message endpoint (for consistency with SSE adapter health checks)
+        self._message_endpoint: Optional[str] = None
         # Session management (MCP protocol requirement)
         self._session_id: Optional[str] = None
         self._protocol_version: Optional[str] = None
@@ -96,6 +103,9 @@ class StreamableHttpAdapter(McpServerTransport):
 
         self._connected = True
 
+        # Set message endpoint (streamable HTTP knows endpoint immediately)
+        self._message_endpoint = self._endpoint_url
+
         # Start receiving messages via SSE streaming
         self._receive_task = asyncio.create_task(self._receive_stream())
 
@@ -125,12 +135,21 @@ class StreamableHttpAdapter(McpServerTransport):
 
         # Clear session state to prevent using stale session ID on reconnection
         self._session_id = None
+        self._message_endpoint = None
         self._protocol_version = None
 
         LOGGER.info("HTTP connection closed and session state cleared")
 
     async def send(self, message: str) -> None:
-        """Send a message to the MCP server via HTTP POST and handle inline response."""
+        """Send a message to the MCP server via HTTP POST and handle inline response.
+
+        Args:
+            message: JSON-RPC message to send to the MCP server.
+
+        Raises:
+            RuntimeError: If not connected to MCP server or HTTP request fails.
+            SessionExpiredError: If MCP server session has expired (404) and re-registration is needed.
+        """
         if not self._connected or not self._client:
             raise RuntimeError("Not connected to MCP server")
 
@@ -145,11 +164,31 @@ class StreamableHttpAdapter(McpServerTransport):
             LOGGER.info(f"Using authentication headers from gateway: {list(self._auth_headers.keys())}")
             headers.update(self._auth_headers)
 
-        # Add session headers if available (required after initialization)
-        if self._session_id:
+        # IMPORTANT: Only add session headers AFTER we have received them from the server
+        # The first request (initialize) should NOT include session headers - let the server create the session
+        # Subsequent requests must include BOTH session ID and protocol version
+        if self._session_id and self._protocol_version:
             headers["mcp-session-id"] = self._session_id
-        if self._protocol_version:
             headers["mcp-protocol-version"] = self._protocol_version
+            LOGGER.debug(f"Including session headers: session_id={self._session_id}, protocol={self._protocol_version}")
+        else:
+            # No session - check if this is an initialize request
+            # Standard
+            import json
+
+            try:
+                msg_data = json.loads(message)
+                is_initialize = msg_data.get("method") == "initialize"
+            except Exception:
+                is_initialize = False
+
+            if not is_initialize:
+                # Non-initialize request without a session - this should not happen
+                # The gateway should have re-initialized before sending other requests
+                LOGGER.error("Attempted to send non-initialize request without a valid session")
+                raise RuntimeError("No valid session - gateway must send initialize request first")
+
+            LOGGER.info("Initialize request - no session headers, server will create session and return headers")
 
         try:
             response = await self._client.post(
@@ -209,12 +248,91 @@ class StreamableHttpAdapter(McpServerTransport):
                 LOGGER.warning("HTTP response has no content - this may indicate a problem with the MCP server")
 
         except httpx.HTTPStatusError as e:
-            # If we get a 404, the session is invalid (server restarted)
-            # Clear session state to force reconnection
-            if e.response.status_code == 404:
-                LOGGER.warning("HTTP POST returned 404 - session invalid, clearing state to force reconnection")
-                self._session_id = None
-                self._protocol_version = None
+            # If we get a 404, the session is invalid (server restarted or session expired)
+            # Only retry if this is an initialize request - other requests need gateway to re-initialize
+            if e.response.status_code == 404 and (self._session_id or self._protocol_version):
+                # Standard
+                import json
+
+                try:
+                    msg_data = json.loads(message)
+                    is_initialize = msg_data.get("method") == "initialize"
+                except Exception:
+                    is_initialize = False
+
+                if is_initialize:
+                    # Initialize requests can be retried without session headers
+                    LOGGER.warning("Initialize request returned 404 - retrying without session headers")
+                    self._session_id = None
+                    self._protocol_version = None
+
+                    try:
+                        LOGGER.info("Retrying initialize request without session headers")
+                        retry_headers = {
+                            "Content-Type": "application/json",
+                            "Accept": "application/json, text/event-stream",
+                        }
+                        if self._auth_headers:
+                            retry_headers.update(self._auth_headers)
+
+                        response = await self._client.post(
+                            self._endpoint_url,
+                            content=message,
+                            headers=retry_headers,
+                        )
+                        response.raise_for_status()
+
+                        # Extract session ID from response headers
+                        session_id = response.headers.get("mcp-session-id")
+                        if session_id:
+                            self._session_id = session_id
+                            LOGGER.info(f"Received new session ID after retry: {self._session_id}")
+
+                        LOGGER.info(f"Initialize retry successful: status={response.status_code}")
+
+                        # Process the response
+                        if response.content:
+                            response_text = response.text
+                            LOGGER.info(f"← HTTP response received: {response_text[:200]}...")
+
+                            # Parse SSE format if present
+                            json_message = response_text
+                            if response_text.startswith("event:") or response_text.startswith("data:"):
+                                lines = response_text.strip().split("\n")
+                                for line in lines:
+                                    if line.startswith("data:"):
+                                        json_message = line[5:].strip()
+                                        break
+
+                            # Extract protocol version from initialize response
+                            if not self._protocol_version:
+                                try:
+                                    msg_data = json.loads(json_message)
+                                    if msg_data.get("result", {}).get("protocolVersion"):
+                                        self._protocol_version = msg_data["result"]["protocolVersion"]
+                                        LOGGER.info(f"Negotiated protocol version: {self._protocol_version}")
+                                except Exception:
+                                    pass
+
+                            # Notify handlers
+                            for handler in self._message_handlers:
+                                try:
+                                    await handler(json_message)
+                                except Exception as handler_error:
+                                    LOGGER.error(f"Handler failed: {handler_error}", exc_info=True)
+
+                        return  # Success, exit the method
+
+                    except Exception as retry_error:
+                        LOGGER.error(f"Initialize retry after 404 failed: {retry_error}")
+                        raise RuntimeError(f"Failed to send initialize after retry: {retry_error}") from retry_error
+                else:
+                    # For non-initialize requests, clear session state and raise special exception to trigger re-registration
+                    LOGGER.warning("Non-initialize request returned 404 - clearing session state and triggering re-registration")
+                    self._session_id = None
+                    self._protocol_version = None
+                    raise SessionExpiredError("MCP server session expired (404), re-registration required") from e
+
             LOGGER.error(f"HTTP send error: {e}")
             raise RuntimeError(f"Failed to send message: {e}") from e
         except httpx.HTTPError as e:

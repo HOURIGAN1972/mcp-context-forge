@@ -266,7 +266,7 @@ async def websocket_endpoint(
                 elif msg_type in ("response", "notification"):
                     # Handle MCP response/notification from the proxied server
                     payload = message.get("payload")
-                    request_id = payload["id"] if payload else None
+                    request_id = payload.get("id") if payload else None
                     LOGGER.info(f"[REVERSE_PROXY] Worker {get_worker_id()} | Session {session_id[:8]}... | " f"Received {msg_type} from agent (request_id={request_id})")
                     if request_id and request_id in service.pending_responses:
                         future = service.pending_responses.pop(request_id)
@@ -475,5 +475,3 @@ async def sse_endpoint(
         },
     )
 
-
-# Made with Bob

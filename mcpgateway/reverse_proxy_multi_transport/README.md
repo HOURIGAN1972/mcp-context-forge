@@ -67,7 +67,7 @@ python -m mcpgateway.reverse_proxy.cli \
 
 ```bash
 python -m mcpgateway.reverse_proxy_multi_transport.cli \
-  --streamable-http http://mcp-server.local:8000/mcp \
+  --local-streamable-http http://mcp-server.local:8000/mcp \
   --gateway https://gateway.example.com \
   --token $TOKEN
 ```
@@ -92,6 +92,7 @@ The reverse proxy client actively monitors the health of the local MCP server be
 **MCP-Based Heartbeat Strategy:**
 1. Before each heartbeat interval (default: 30s), the client sends a `tools/list` request to the MCP server
 2. If the MCP server responds within the timeout (default: 5s), the client sends a heartbeat to the gateway
+3. Client heartbeat interval (30s) is set to be less than gateway health check interval (60s) to ensure at least 2 heartbeats per check cycle
 3. If the MCP server fails to respond, the client **skips the heartbeat** (gateway will detect timeout)
 4. During MCP server outages, the client continues probing with a shorter retry interval (default: 10s)
 5. When the MCP server recovers, the client automatically reconnects to the gateway
@@ -198,7 +199,7 @@ The gateway tracks reverse proxy session health through heartbeat monitoring:
 
 **Server-Side (Gateway):**
 - `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT`: Max time without heartbeat before marking stale (default: 90s)
-- `MCPGATEWAY_REVERSE_PROXY_HEALTH_CHECK_INTERVAL`: How often to check session health (default: 30s)
+- `MCPGATEWAY_REVERSE_PROXY_HEALTH_CHECK_INTERVAL`: How often to check session health (default: 60s)
 - `MCPGATEWAY_REVERSE_PROXY_FAILURE_THRESHOLD`: Consecutive failures before marking unreachable (default: 3)
 
 ## Key Features

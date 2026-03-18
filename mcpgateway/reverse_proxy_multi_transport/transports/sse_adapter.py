@@ -372,6 +372,17 @@ class SseAdapter(McpServerTransport):
                 self._message_endpoint = data
             LOGGER.info(f"Received message endpoint: {self._message_endpoint}")
 
+            # Extract session ID from endpoint URL query parameter if present
+            # FastMCP SSE servers include session_id in the endpoint URL
+            # Standard
+            from urllib.parse import parse_qs, urlparse
+
+            parsed_endpoint = urlparse(self._message_endpoint)
+            query_params = parse_qs(parsed_endpoint.query)
+            if "session_id" in query_params and query_params["session_id"]:
+                self._session_id = query_params["session_id"][0]
+                LOGGER.info(f"Extracted session ID from endpoint URL: {self._session_id}")
+
         elif event_type == "message":
             # Forward JSON-RPC message to handlers
             try:
