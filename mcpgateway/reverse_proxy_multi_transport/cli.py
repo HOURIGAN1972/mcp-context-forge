@@ -282,22 +282,26 @@ async def main(argv: Optional[List[str]] = None) -> None:
     # This ensures the reverse proxy CLI uses the same logging format as the main gateway
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    
+
     # Set log level from args
     log_level = getattr(logging, args.log_level)
     root_logger.setLevel(log_level)
-    
+
     # Use JSON formatter if LOG_FORMAT=json, otherwise use text formatter
     log_format = os.getenv("LOG_FORMAT", "text").lower()
     if log_format == "json":
+        # First-Party
         from mcpgateway.services.logging_service import json_formatter
+
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setFormatter(json_formatter)
     else:
+        # First-Party
         from mcpgateway.services.logging_service import text_formatter
+
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setFormatter(text_formatter)
-    
+
     console_handler.setLevel(log_level)
     root_logger.addHandler(console_handler)
 

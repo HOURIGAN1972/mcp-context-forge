@@ -35,7 +35,7 @@ from starlette.requests import Request
 
 class HeaderLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware to log all incoming HTTP request headers."""
-    
+
     async def dispatch(self, request: Request, call_next):
         logger.info("=" * 80)
         logger.info("INCOMING REQUEST HEADERS:")
@@ -47,7 +47,7 @@ class HeaderLoggingMiddleware(BaseHTTPMiddleware):
             else:
                 logger.info(f"  {header_name}: {header_value}")
         logger.info("=" * 80)
-        
+
         response = await call_next(request)
         return response
 
@@ -122,5 +122,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Made with Bob

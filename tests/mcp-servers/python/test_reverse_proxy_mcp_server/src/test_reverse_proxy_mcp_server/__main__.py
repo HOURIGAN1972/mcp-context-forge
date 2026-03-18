@@ -12,4 +12,3 @@ from test_reverse_proxy_mcp_server.server import main
 if __name__ == "__main__":
     main()
 
-# Made with Bob

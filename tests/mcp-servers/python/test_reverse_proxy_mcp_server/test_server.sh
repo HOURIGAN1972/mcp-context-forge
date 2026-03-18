@@ -72,4 +72,3 @@ echo ""
 
 echo "=== All tests completed ==="
 
-# Made with Bob

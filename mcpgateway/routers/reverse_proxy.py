@@ -474,4 +474,3 @@ async def sse_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
-

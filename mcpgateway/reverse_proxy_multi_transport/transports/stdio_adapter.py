@@ -65,15 +65,12 @@ class StdioAdapter(McpServerTransport):
 
         self._stdout_reader_task = asyncio.create_task(self._read_stdout())
         LOGGER.info(f"Local MCP server started (PID: {self.process.pid})")
-        
+
         # Give the process a moment to initialize and check if it crashes immediately
         # Use a longer delay to catch processes that fail during startup
         await asyncio.sleep(0.5)
         if self.process.returncode is not None:
-            raise RuntimeError(
-                f"Subprocess terminated immediately after start (exit code: {self.process.returncode}). "
-                f"Command: {self.command}"
-            )
+            raise RuntimeError(f"Subprocess terminated immediately after start (exit code: {self.process.returncode}). " f"Command: {self.command}")
 
     async def stop(self) -> None:
         """Stop the stdio subprocess gracefully."""
@@ -108,7 +105,7 @@ class StdioAdapter(McpServerTransport):
         """Send a message to the subprocess stdin."""
         if not self.process or not self.process.stdin:
             raise RuntimeError("Subprocess not running")
-        
+
         # Check if process has terminated
         if self.process.returncode is not None:
             raise RuntimeError(f"Subprocess terminated with exit code {self.process.returncode}")

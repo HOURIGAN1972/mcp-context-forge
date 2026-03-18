@@ -389,12 +389,12 @@ class ReverseProxyClient:
 
                     # Check if this is a connection-related RuntimeError
                     is_connection_error = isinstance(e, RuntimeError) and (
-                        "Not connected" in str(e) or
-                        "Failed to send message" in str(e) or
-                        "All connection attempts failed" in str(e) or
-                        "Subprocess not running" in str(e) or
-                        "Subprocess terminated" in str(e) or
-                        "Subprocess stdin closed" in str(e)
+                        "Not connected" in str(e)
+                        or "Failed to send message" in str(e)
+                        or "All connection attempts failed" in str(e)
+                        or "Subprocess not running" in str(e)
+                        or "Subprocess terminated" in str(e)
+                        or "Subprocess stdin closed" in str(e)
                     )
 
                     if isinstance(e, RuntimeError) and not is_connection_error:
@@ -462,10 +462,7 @@ class ReverseProxyClient:
                         except Exception as retry_error:
                             LOGGER.error(f"[REVERSE_PROXY_CLIENT] Failed to retry request after re-registration: {retry_error}")
                             # Send error response back to gateway so it doesn't hang waiting
-                            await self._send_error_response(
-                                pending["payload"],
-                                f"MCP server unavailable after re-registration: {retry_error}"
-                            )
+                            await self._send_error_response(pending["payload"], f"MCP server unavailable after re-registration: {retry_error}")
                 else:
                     self._registration_successful = False
                     error_msg = data.get("message", "Unknown error")
@@ -740,7 +737,7 @@ class ReverseProxyClient:
                 "error": {
                     "code": -32603,  # Internal error
                     "message": error_message,
-                }
+                },
             }
 
             # Wrap in gateway envelope
@@ -755,4 +752,3 @@ class ReverseProxyClient:
 
         except Exception as e:
             LOGGER.error(f"[SEND_ERROR] Failed to send error response to gateway: {e}")
-
