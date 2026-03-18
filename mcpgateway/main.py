@@ -7116,7 +7116,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 ####################
 # Healthcheck      #
 ####################
-@app.get("/health", response_model=HealthCheckResponse)
+@app.get("/health", response_model=HealthCheckResponse, status_code=status.HTTP_200_OK)
 async def healthcheck():
     """
     Perform health check to verify database and Redis connectivity.
@@ -7130,7 +7130,6 @@ async def healthcheck():
     """
     status_items = []
 
-    # Check Database (Postgres/SQLite)
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
@@ -7139,7 +7138,7 @@ async def healthcheck():
         status_items.append(
             HealthStatusItem(
                 name="Database",
-                statusCode=200,
+                statusCode=status.HTTP_200_OK,
                 message="[POSTGRES]: Postgres Connection Successful"
             )
         )
@@ -7152,13 +7151,12 @@ async def healthcheck():
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = "Cannot connect to Postgres"
         logger.error(f"Database health check failed: {str(e)}")
         status_items.append(
             HealthStatusItem(
                 name="Database",
-                statusCode=503,
-                message=error_message
+                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message="Cannot connect to Postgres"
             )
         )
     finally:
@@ -7172,7 +7170,7 @@ async def healthcheck():
             status_items.append(
                 HealthStatusItem(
                     name="Redis",
-                    statusCode=200,
+                    statusCode=status.HTTP_200_OK,
                     message="ready"
                 )
             )
@@ -7181,7 +7179,7 @@ async def healthcheck():
             status_items.append(
                 HealthStatusItem(
                     name="Redis",
-                    statusCode=503,
+                    statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
                     message="Cannot connect to Redis"
                 )
             )
@@ -7190,7 +7188,7 @@ async def healthcheck():
         status_items.append(
             HealthStatusItem(
                 name="Redis",
-                statusCode=503,
+                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
                 message="Redis is not enabled"
             )
         )

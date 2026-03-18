@@ -5323,7 +5323,7 @@ class TestRemainingCoverageGaps:
         assert sess.invalidated is True
         assert sess.closed is True
 
-    def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
+    async def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
         import mcpgateway.main as main_mod
 
         class FakeSession:  # noqa: D401 - test helper
@@ -5348,7 +5348,7 @@ class TestRemainingCoverageGaps:
         sess = FakeSession()
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: sess)
 
-        result = main_mod.healthcheck()
+        result = await main_mod.healthcheck()
         assert result.status == "unhealthy"
         # Verify database status item shows the error
         db_item = next((item for item in result.statusItems if item.name == "Database"), None)

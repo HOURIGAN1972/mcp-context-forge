@@ -465,7 +465,7 @@ class TestHealthAndInfrastructure:
         redis_item = next((item for item in data["statusItems"] if item["name"] == "Redis"), None)
         assert redis_item is not None
         assert redis_item["statusCode"] in [200, 503]  # 200 if enabled and healthy, 503 if not enabled
-    def test_health_check_redis_enabled_but_down(self, monkeypatch):
+    async def test_health_check_redis_enabled_but_down(self, monkeypatch):
         """Test health check reports 'bad' when Redis is enabled but down."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
@@ -475,10 +475,10 @@ class TestHealthAndInfrastructure:
         monkeypatch.setattr(settings, "cache_type", "redis")
         monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
 
-        # Mock Redis to fail connection
-        def mock_redis_from_url(*args, **kwargs):
+        # Mock Redis client to fail
+        async def mock_get_redis_client():
             class FailingRedis:
-                def ping(self):
+                async def ping(self):
                     raise ConnectionError("Redis connection refused")
             return FailingRedis()
 
@@ -487,9 +487,9 @@ class TestHealthAndInfrastructure:
             mock_session = MagicMock()
             mock_session_local.return_value = mock_session
             
-            # Mock Redis import and connection failure
-            with patch("redis.Redis.from_url", side_effect=mock_redis_from_url):
-                response = mcpgateway_main.healthcheck()
+            # Mock Redis client to fail
+            with patch("mcpgateway.main.get_redis_client", side_effect=mock_get_redis_client):
+                response = await mcpgateway_main.healthcheck()
 
         # Verify overall status is "unhealthy" when Redis is enabled but down
         assert response.status == "unhealthy"
@@ -513,7 +513,7 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    def test_health_check_db_error(self):
+    async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
@@ -539,7 +539,7 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = mcpgateway_main.healthcheck()
+            response = await mcpgateway_main.healthcheck()
         assert response.status == "unhealthy"
         assert session.invalidate_called is True
         # Verify statusItems structure
