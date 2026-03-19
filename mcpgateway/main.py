@@ -105,6 +105,8 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
+    HealthCheckResponse,
+    HealthStatusItem,
     JsonPathModifier,
     MetricsResponse,
     PromptCreate,
@@ -150,7 +152,7 @@ from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
+from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
@@ -7187,24 +7189,32 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 ####################
 # Healthcheck      #
 ####################
-@app.get("/health")
-def healthcheck():
+@app.get("/health", response_model=HealthCheckResponse, status_code=status.HTTP_200_OK)
+async def healthcheck():
     """
-    Perform a basic health check to verify database connectivity.
+    Perform health check to verify database and Redis connectivity.
 
     Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
     Returns:
-        A dictionary with the health status and optional error message.
+        HealthCheckResponse: Status of Database and Redis components.
     """
+    status_items = []
+
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        return {"status": "healthy"}
+        status_items.append(
+            HealthStatusItem(
+                name="Database",
+                statusCode=status.HTTP_200_OK,
+                message="[POSTGRES]: Postgres Connection Successful"
+            )
+        )
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -7214,11 +7224,72 @@ def healthcheck():
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = f"Database connection error: {str(e)}"
-        logger.error(error_message)
-        return {"status": "unhealthy", "error": error_message}
+        logger.error(f"Database health check failed: {str(e)}")
+        status_items.append(
+            HealthStatusItem(
+                name="Database",
+                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message="Cannot connect to Postgres"
+            )
+        )
     finally:
         db.close()
+
+    # Check Redis
+    if settings.cache_type == "redis" and settings.redis_url:
+        try:
+            # is_redis_available() checks if Redis is available and responding to ping.
+            if await is_redis_available():
+                status_items.append(
+                    HealthStatusItem(
+                        name="Redis",
+                        statusCode=status.HTTP_200_OK,
+                        message="ready"
+                    )
+                )
+            else:
+                status_items.append(
+                    HealthStatusItem(
+                        name="Redis",
+                        statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        message="Cannot connect to Redis"
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Redis health check failed: {str(e)}")
+            status_items.append(
+                HealthStatusItem(
+                    name="Redis",
+                    statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    message="Cannot connect to Redis"
+                )
+            )
+    else:
+        # Redis not configured
+        status_items.append(
+            HealthStatusItem(
+                name="Redis",
+                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+                message="Redis is not enabled"
+            )
+        )
+
+    # Determine overall status:
+    # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
+    database_status = next((item for item in status_items if item.name == "Database"), None)
+    redis_status = next((item for item in status_items if item.name == "Redis"), None)
+    
+    # Check database health
+    database_healthy = database_status and database_status.statusCode == 200
+    
+    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
+    redis_enabled = settings.cache_type == "redis" and settings.redis_url
+    redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
+    
+    overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
+    
+    return HealthCheckResponse(status=overall_status, statusItems=status_items)
 
 
 @app.get("/ready")
