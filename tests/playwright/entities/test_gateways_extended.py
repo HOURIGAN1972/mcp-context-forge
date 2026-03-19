@@ -51,7 +51,7 @@ class TestGatewayTestModal:
 
         # Get the URL from the first row before opening modal
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_test_modal(0)
 
@@ -198,6 +198,57 @@ class TestGatewayTestModal:
 
         gateways_page.close_test_modal()
 
+    def test_test_modal_result_hidden_on_open(self, gateways_page: GatewaysPage):
+        """Regression: result container must be hidden when test modal first opens."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+        _skip_if_no_gateways(gateways_page)
+
+        gateways_page.open_test_modal(0)
+
+        expect(gateways_page.test_modal_result).to_be_hidden()
+
+        gateways_page.close_test_modal()
+
+    def test_test_modal_result_cleared_on_reopen(self, gateways_page: GatewaysPage):
+        """Regression: opening test modal for a different gateway must not show stale results.
+
+        This verifies the fix for the bug where closing a test modal and opening
+        it for another gateway would display the previous gateway's test response.
+        """
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+
+        count = gateways_page.get_gateway_count()
+        if count < 2:
+            pytest.skip("Need at least 2 gateways to test stale result clearing")
+
+        # Open test modal for first gateway and inject fake result content
+        gateways_page.open_test_modal(0)
+        gateways_page.page.evaluate(
+            """() => {
+                const resultDiv = document.getElementById('gateway-test-result');
+                const responseDiv = document.getElementById('gateway-test-response-json');
+                if (resultDiv) resultDiv.classList.remove('hidden');
+                if (responseDiv) responseDiv.textContent = 'STALE_GATEWAY_RESULT_MARKER';
+            }"""
+        )
+        gateways_page.close_test_modal()
+
+        # Open test modal for second gateway
+        gateways_page.open_test_modal(1)
+
+        # Result container should be hidden (no stale results visible)
+        expect(gateways_page.test_modal_result).to_be_hidden()
+
+        # Also verify the response text is cleared
+        response_text = gateways_page.test_modal_response_json.text_content().strip()
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
+            "Gateway test result should not contain stale data from previous gateway"
+        )
+
+        gateways_page.close_test_modal()
+
 
 # ---------------------------------------------------------------------------
 # View Gateway Modal
@@ -217,7 +268,7 @@ class TestGatewayViewModal:
 
         # Get first gateway name from table
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_view_modal(0)
 
@@ -251,7 +302,7 @@ class TestGatewayViewModal:
 
         # Get URL from table
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_view_modal(0)
 
@@ -353,14 +404,14 @@ class TestGatewayViewModal:
 
         # View first gateway
         first_row = gateways_page.get_gateway_row(0)
-        first_name = first_row.locator("td").nth(2).text_content().strip()
+        first_name = first_row.locator("td").nth(3).text_content().strip()
         gateways_page.open_view_modal(0)
         expect(gateways_page.view_modal_details).to_contain_text(first_name)
         gateways_page.close_view_modal()
 
         # View second gateway
         second_row = gateways_page.get_gateway_row(1)
-        second_name = second_row.locator("td").nth(2).text_content().strip()
+        second_name = second_row.locator("td").nth(3).text_content().strip()
         gateways_page.open_view_modal(1)
         expect(gateways_page.view_modal_details).to_contain_text(second_name)
         gateways_page.close_view_modal()
@@ -383,7 +434,7 @@ class TestGatewayEditModal:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_edit_modal(0)
 
@@ -400,7 +451,7 @@ class TestGatewayEditModal:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         gateways_page.open_edit_modal(0)
         expect(gateways_page.edit_modal_url_input).to_have_value(gateway_url)
@@ -554,7 +605,7 @@ class TestGatewayEditModal:
 
         # Get original name
         first_row = gateways_page.get_gateway_row(0)
-        original_name = first_row.locator("td").nth(2).text_content().strip()
+        original_name = first_row.locator("td").nth(3).text_content().strip()
 
         gateways_page.open_edit_modal(0)
 
@@ -571,7 +622,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
 
         first_row = gateways_page.get_gateway_row(0)
-        current_name = first_row.locator("td").nth(2).text_content().strip()
+        current_name = first_row.locator("td").nth(3).text_content().strip()
         assert current_name == original_name, f"Name should be unchanged after Cancel: expected '{original_name}', got '{current_name}'"
 
     def test_edit_modal_visibility_radios_reflect_current(self, gateways_page: GatewaysPage):
@@ -582,7 +633,7 @@ class TestGatewayEditModal:
 
         # Get current visibility from table
         first_row = gateways_page.get_gateway_row(0)
-        visibility_text = first_row.locator("td").nth(9).text_content().strip().lower()
+        visibility_text = first_row.locator("td").nth(10).text_content().strip().lower()
 
         gateways_page.open_edit_modal(0)
 
@@ -1081,7 +1132,7 @@ class TestGatewayEditEndToEnd:
 
         # Track the gateway name so we can find it after reload
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         new_tags = f"edited,test-tag-{uuid.uuid4().hex[:6]}"
 
@@ -1119,7 +1170,7 @@ class TestGatewayEditEndToEnd:
 
         # Check tags in the matched row
         gateway_row = gateways_page.get_gateway_row_by_name(gateway_name).first
-        tags_cell = gateway_row.locator("td").nth(4)
+        tags_cell = gateway_row.locator("td").nth(5)
         tags_text = tags_cell.text_content().strip().lower()
         assert "edited" in tags_text, f"Expected 'edited' in tags for '{gateway_name}', got '{tags_text}'"
         gateways_page.clear_search()
@@ -1242,7 +1293,7 @@ class TestGatewaySearchEdgeCases:
 
         # Get first gateway name
         first_row = gateways_page.get_gateway_row(0)
-        full_name = first_row.locator("td").nth(2).text_content().strip()
+        full_name = first_row.locator("td").nth(3).text_content().strip()
 
         if len(full_name) < 3:
             pytest.skip("Gateway name too short for partial match test")
@@ -1264,7 +1315,7 @@ class TestGatewaySearchEdgeCases:
 
         # Get URL from first gateway
         first_row = gateways_page.get_gateway_row(0)
-        gateway_url = first_row.locator("td").nth(3).text_content().strip()
+        gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
         # Search by URL (or partial URL)
         search_term = gateway_url.split("//")[-1].split("/")[0]  # hostname
@@ -1291,7 +1342,7 @@ class TestGatewayTableDisplay:
         gateways_page.wait_for_gateways_table_loaded()
 
         table = gateways_page.gateways_table
-        expected_columns = ["Actions", "S. No.", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
+        expected_columns = ["Actions", "S. No.", "Gateway ID", "Name", "URL", "Tags", "Status", "Last Seen", "Owner", "Team", "Visibility"]
 
         for col in expected_columns:
             expect(table.locator(f'th:has-text("{col}")')).to_be_visible()
@@ -1313,7 +1364,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        owner = first_row.locator("td").nth(7).text_content().strip()
+        # Owner column index shifted +1 after Gateway ID insertion (Actions=0, S.No.=1, GatewayID=2, Name=3, URL=4, Tags=5, Status=6, LastSeen=7, Owner=8)
+        owner = first_row.locator("td").nth(9).text_content().strip()
         # Owner should be an email or "None"
         assert "@" in owner or owner == "None", f"Unexpected owner value: '{owner}'"
 
@@ -1324,7 +1376,7 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        team = first_row.locator("td").nth(8).text_content().strip()
+        team = first_row.locator("td").nth(9).text_content().strip()
         # Team should be a name or "None"
         assert len(team) > 0, "Team cell should not be empty"
 
@@ -1335,7 +1387,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        last_seen = first_row.locator("td").nth(6).text_content().strip()
+        # LastSeen column index shifted +1 after Gateway ID insertion
+        last_seen = first_row.locator("td").nth(8).text_content().strip()
         # Should contain a date-like pattern or "N/A"
         assert len(last_seen) > 0, "Last seen cell should not be empty"
 
@@ -1346,7 +1399,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        status_cell = first_row.locator("td").nth(5)
+        # Column order: Actions(0), S.No.(1), GatewayID(2), Name(3), URL(4), Tags(5), Status(6)
+        status_cell = first_row.locator("td").nth(6)
         status_text = status_cell.text_content().strip()
         assert status_text in ("Active", "Inactive"), f"Unexpected status: '{status_text}'"
 
@@ -1357,7 +1411,7 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        visibility_cell = first_row.locator("td").nth(9)
+        visibility_cell = first_row.locator("td").nth(10)
         vis_text = visibility_cell.text_content().strip()
         assert any(v in vis_text for v in ["Public", "Team", "Private"]), f"Unexpected visibility: '{vis_text}'"
 
