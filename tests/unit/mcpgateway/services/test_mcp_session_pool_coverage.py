@@ -1495,9 +1495,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data, status_code=200):
+            is_success = True
+            def __init__(self, data):
                 self._data = data
-                self.status_code = status_code
             def json(self):
                 return self._data
 
@@ -1533,9 +1533,9 @@ class TestExecuteForwardedRequest:
         pool = MCPSessionPool()
 
         class DummyResponse:
-            def __init__(self, data, status_code=200):
+            is_success = True
+            def __init__(self, data):
                 self._data = data
-                self.status_code = status_code
             def json(self):
                 return self._data
 

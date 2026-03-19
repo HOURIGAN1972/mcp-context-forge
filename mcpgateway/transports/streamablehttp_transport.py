@@ -62,6 +62,7 @@ from starlette.types import Receive, Scope, Send
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
@@ -614,6 +615,15 @@ async def _check_streamable_permission(
     user_email = user_context.get("email")
     if not user_email:
         return False
+    
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
 
     # Extract team_id from token teams for RBAC role lookup.
     # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
@@ -627,7 +637,7 @@ async def _check_streamable_permission(
     try:
         async with get_db() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_permission(
+            granted = await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
                 team_id=team_id,
@@ -635,6 +645,9 @@ async def _check_streamable_permission(
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
             )
+            if not granted:
+                logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
+            return granted
     except Exception as exc:
         logger.warning("Streamable HTTP RBAC check failed for %s / %s: %s", user_email, permission, exc)
         return False
@@ -655,7 +668,10 @@ def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> b
         return True
     if "*" in scoped:
         return True
-    return permission in scoped
+    allowed = permission in scoped
+    if not allowed:
+        logger.warning("Streamable HTTP token scope denied: user=%s, required=%s", user_context.get("email"), permission)
+    return allowed
 
 
 def set_shared_session_registry(session_registry: Any) -> None:
@@ -995,14 +1011,18 @@ async def call_tool(name: str, arguments: dict) -> Union[
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "tools.execute"):
-            raise PermissionError("Insufficient permissions. Required: tools.execute")
+            raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
+        # Session tokens have no explicit team_id; check across all team-scoped roles.
+        # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
+        _is_session_token = user_context.get("token_use") == "session"
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
+            check_any_team=_is_session_token,
         )
         if not has_execute_permission:
-            raise PermissionError("Insufficient permissions. Required: tools.execute")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -1370,7 +1390,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
-    canonical ``{email, teams, is_admin, is_authenticated}`` dict that MCP
+    canonical ``{email, teams, is_admin, is_authenticated, token_use}`` dict that MCP
     handlers expect.  This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
@@ -1379,7 +1399,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
-        Canonical user context dict with keys email, teams, is_admin, is_authenticated.
+        Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
     email = payload.get("sub") or payload.get("email")
     is_admin = payload.get("is_admin", False)
@@ -1411,6 +1431,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "teams": final_teams,
         "is_admin": is_admin,
         "is_authenticated": True,
+        "token_use": token_use,
     }
     # Extract scoped permissions from JWT for per-method enforcement
     scopes = payload.get("scopes") or {}
@@ -1450,7 +1471,7 @@ async def list_tools() -> List[types.Tool]:
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError("Insufficient permissions. Required: tools.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1571,7 +1592,7 @@ async def list_prompts() -> List[types.Prompt]:
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError("Insufficient permissions. Required: prompts.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1645,7 +1666,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     # Token scope cap: deny early if scoped permissions exclude prompts.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "prompts.read"):
-            raise PermissionError("Insufficient permissions. Required: prompts.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1728,7 +1749,7 @@ async def list_resources() -> List[types.Resource]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1842,7 +1863,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1981,7 +2002,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
     # Token scope cap: deny early if scoped permissions exclude resources.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "resources.read"):
-            raise PermissionError("Insufficient permissions. Required: resources.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
@@ -2011,6 +2032,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
                     db,
                     user_email=user_email,
                     token_teams=token_teams,
+                    server_id=server_id,
                 )
                 return [template.model_dump(by_alias=True) for template in resource_templates]
             except Exception as e:
@@ -2055,14 +2077,14 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
     if _should_enforce_streamable_rbac(user_context):
         # Layer 1: Token scope cap
         if not _check_scoped_permission(user_context, "admin.system_config"):
-            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+            raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
         has_admin_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",
         )
         if not has_admin_permission:
-            raise PermissionError("Insufficient permissions. Required: admin.system_config")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     try:
         # Convert MCP logging level to our LogLevel enum
@@ -2119,7 +2141,7 @@ async def complete(
     # Token scope cap: deny early if scoped permissions exclude tools.read
     if _should_enforce_streamable_rbac(user_context):
         if not _check_scoped_permission(user_context, "tools.read"):
-            raise PermissionError("Insufficient permissions. Required: tools.read")
+            raise PermissionError(_ACCESS_DENIED_MSG)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2356,13 +2378,15 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
+            _is_session = user_context.get("token_use") == "session" if user_context else False
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
+                check_any_team=_is_session,
             )
             if not has_server_access:
                 response = ORJSONResponse(
-                    {"detail": "Insufficient permissions. Required: servers.use"},
+                    {"detail": _ACCESS_DENIED_MSG},
                     status_code=HTTP_403_FORBIDDEN,
                 )
                 await response(scope, receive, send)
@@ -3042,6 +3066,7 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             # Extract scoped permissions from JWT for per-method enforcement
             jwt_scopes = user_payload.get("scopes") or {}

@@ -355,10 +355,15 @@ function toggleViewPublic(checkboxId, containerIds, teamId) {
             if (!url) return;
 
             if (includePublic) {
-                // Remove team_id param to show team + public items
-                url = url.replace(/&team_id=[^&]*/, "");
+                // Keep team_id to maintain team scope, add include_public to also show public items
+                if (!url.includes("team_id=")) {
+                    url += `&team_id=${encodeURIComponent(teamId)}`;
+                }
+                url = url.replace(/&include_public=[^&]*/, "");
+                url += "&include_public=true";
             } else {
-                // Add team_id param back to filter to team-only
+                // Remove include_public param and ensure team_id is set
+                url = url.replace(/&include_public=[^&]*/, "");
                 if (!url.includes("team_id=")) {
                     url += `&team_id=${encodeURIComponent(teamId)}`;
                 }
@@ -671,6 +676,60 @@ function decodeHtml(html) {
 }
 
 /**
+ * Create a copy-to-clipboard button for an ID value.
+ * Returns a <button> element that copies the given id string to the clipboard.
+ * @param {string|number} id - The ID value to copy
+ * @returns {HTMLButtonElement}
+ */
+function makeCopyIdButton(id) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Copy ID to clipboard";
+    btn.className =
+        "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+    btn.textContent = "📋 Copy";
+    btn.addEventListener("click", () => {
+        const idStr = String(id);
+        const onSuccess = () => {
+            btn.textContent = "✅ Copied!";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        const onFailure = () => {
+            btn.textContent = "❌ Failed";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        if (
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === "function"
+        ) {
+            navigator.clipboard
+                .writeText(idStr)
+                .then(onSuccess)
+                .catch(onFailure);
+        } else {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = idStr;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+                onSuccess();
+            } catch (_e) {
+                onFailure();
+            }
+        }
+    });
+    return btn;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -802,7 +861,26 @@ function _navigateAdmin(fragment, searchParams) {
         adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : window.ROOT_PATH || window.location.origin;
-    const qs = searchParams ? searchParams.toString() : "";
+
+    // Preserve namespaced pagination state (*_page, *_size, *_inactive, *_q, *_tags)
+    // from the current URL so that editing an item on page 3 returns to page 3.
+    if (!searchParams) {
+        searchParams = new URLSearchParams();
+    }
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    currentUrlParams.forEach((value, key) => {
+        const isPaginationParam =
+            key.endsWith("_page") ||
+            key.endsWith("_size") ||
+            (key.endsWith("_inactive") && key !== "include_inactive") ||
+            key.endsWith("_q") ||
+            key.endsWith("_tags");
+        if (isPaginationParam && !searchParams.has(key)) {
+            searchParams.set(key, value);
+        }
+    });
+
+    const qs = searchParams.toString();
     const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
 
     // When the target URL is identical to the current URL (same path, query,
@@ -3831,11 +3909,31 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    if (
+                        Array.isArray(tool.auth.authHeaders) &&
+                        tool.auth.authHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "edit-auth-headers-container",
+                            tool.auth.authHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("edit-auth-headers-container");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value =
                             tool.auth.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        if (
+                            Array.isArray(tool.auth.authHeaders) &&
+                            tool.auth.authHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                tool.auth.authHeaders[0].value ?? "";
+                        }
                         authHeaderValueField.value = "*****"; // masked
                     }
                 }
@@ -3894,6 +3992,18 @@ async function viewAgent(agentId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy button
+            const agentIdP = document.createElement("p");
+            const agentIdStrong = document.createElement("strong");
+            agentIdStrong.textContent = "Agent ID: ";
+            agentIdP.appendChild(agentIdStrong);
+            const agentIdSpan = document.createElement("span");
+            agentIdSpan.className = "font-mono text-sm";
+            agentIdSpan.textContent = agent.id;
+            agentIdP.appendChild(agentIdSpan);
+            agentIdP.appendChild(makeCopyIdButton(agent.id));
+            container.appendChild(agentIdP);
 
             const fields = [
                 { label: "Name", value: agent.name },
@@ -4808,6 +4918,18 @@ async function viewResource(resourceId) {
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
 
+            // ID field with copy button
+            const resourceIdP = document.createElement("p");
+            const resourceIdStrong = document.createElement("strong");
+            resourceIdStrong.textContent = "Resource ID: ";
+            resourceIdP.appendChild(resourceIdStrong);
+            const resourceIdSpan = document.createElement("span");
+            resourceIdSpan.className = "font-mono text-sm";
+            resourceIdSpan.textContent = resource.id;
+            resourceIdP.appendChild(resourceIdSpan);
+            resourceIdP.appendChild(makeCopyIdButton(resource.id));
+            container.appendChild(resourceIdP);
+
             // Add each piece of information safely
             const fields = [
                 { label: "URI", value: resource.uri },
@@ -5421,6 +5543,11 @@ async function viewPrompt(promptName) {
             };
 
             setText(".prompt-id", prompt.id || "N/A");
+            // Inject copy button next to prompt ID
+            const promptIdEl = promptDetailsDiv.querySelector(".prompt-id");
+            if (promptIdEl && prompt.id) {
+                promptIdEl.appendChild(makeCopyIdButton(prompt.id));
+            }
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
@@ -5477,11 +5604,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5718,7 +5846,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -5780,6 +5908,18 @@ async function viewGateway(gatewayId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy-to-clipboard button
+            const idP = document.createElement("p");
+            const idStrong = document.createElement("strong");
+            idStrong.textContent = "Gateway ID: ";
+            idP.appendChild(idStrong);
+            const idSpan = document.createElement("span");
+            idSpan.className = "font-mono text-sm";
+            idSpan.textContent = gateway.id;
+            idP.appendChild(idSpan);
+            idP.appendChild(makeCopyIdButton(gateway.id));
+            container.appendChild(idP);
 
             const fields = [
                 { label: "Name", value: gateway.name },
@@ -6199,18 +6339,13 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
-                            ? gateway.authHeadersUnmasked
-                            : gateway.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(gateway.authHeaders) &&
+                        gateway.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            unmaskedHeaders,
+                            gateway.authHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -6221,12 +6356,12 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(gateway.authHeaders) &&
+                            gateway.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                gateway.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
@@ -6404,8 +6539,19 @@ async function viewServer(serverId) {
                 "block text-gray-900 dark:text-gray-100 mb-3";
             basicInfoDiv.appendChild(basicInfoTitle);
 
+            // Server ID field with copy button
+            const serverIdP = document.createElement("p");
+            const serverIdStrong = document.createElement("strong");
+            serverIdStrong.textContent = "Server ID: ";
+            serverIdP.appendChild(serverIdStrong);
+            const serverIdSpan = document.createElement("span");
+            serverIdSpan.className = "font-mono text-sm";
+            serverIdSpan.textContent = server.id;
+            serverIdP.appendChild(serverIdSpan);
+            serverIdP.appendChild(makeCopyIdButton(server.id));
+            basicInfoDiv.appendChild(serverIdP);
+
             const fields = [
-                { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
                 { label: "Visibility", value: server.visibility || "private" },
@@ -6529,7 +6675,7 @@ async function viewServer(serverId) {
                     toolsList.appendChild(toolItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedTools.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6540,6 +6686,32 @@ async function viewServer(serverId) {
                     moreBadge.title = "Total tools associated";
                     const remaining = server.associatedTools.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    // Expand inline to show full list when clicked
+                    moreBadge.addEventListener("click", () => {
+                        toolsList.innerHTML = "";
+                        (server.associatedTools || []).forEach((toolId) => {
+                            const toolItem = document.createElement("div");
+                            toolItem.className = "flex items-center space-x-2";
+
+                            const toolBadge = document.createElement("span");
+                            toolBadge.className =
+                                "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
+                            toolBadge.textContent =
+                                window.toolMapping && window.toolMapping[toolId]
+                                    ? window.toolMapping[toolId]
+                                    : toolId;
+
+                            const toolIdSpan = document.createElement("span");
+                            toolIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            toolIdSpan.textContent = `(${toolId})`;
+
+                            toolItem.appendChild(toolBadge);
+                            toolItem.appendChild(toolIdSpan);
+                            toolsList.appendChild(toolItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     toolsList.appendChild(moreItem);
@@ -6595,7 +6767,7 @@ async function viewServer(serverId) {
                     resourcesList.appendChild(resourceItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedResources.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6607,6 +6779,38 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedResources.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        resourcesList.innerHTML = "";
+                        (server.associatedResources || []).forEach(
+                            (resourceId) => {
+                                const resourceItem =
+                                    document.createElement("div");
+                                resourceItem.className =
+                                    "flex items-center space-x-2";
+
+                                const resourceBadge =
+                                    document.createElement("span");
+                                resourceBadge.className =
+                                    "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
+                                resourceBadge.textContent =
+                                    window.resourceMapping &&
+                                    window.resourceMapping[resourceId]
+                                        ? window.resourceMapping[resourceId]
+                                        : `Resource ${resourceId}`;
+
+                                const resourceIdSpan =
+                                    document.createElement("span");
+                                resourceIdSpan.className =
+                                    "text-xs text-gray-500 dark:text-gray-400";
+                                resourceIdSpan.textContent = `(${resourceId})`;
+
+                                resourceItem.appendChild(resourceBadge);
+                                resourceItem.appendChild(resourceIdSpan);
+                                resourcesList.appendChild(resourceItem);
+                            },
+                        );
+                    });
 
                     moreItem.appendChild(moreBadge);
                     resourcesList.appendChild(moreItem);
@@ -6661,7 +6865,7 @@ async function viewServer(serverId) {
                     promptsList.appendChild(promptItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedPrompts.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6673,6 +6877,33 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedPrompts.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        promptsList.innerHTML = "";
+                        (server.associatedPrompts || []).forEach((promptId) => {
+                            const promptItem = document.createElement("div");
+                            promptItem.className =
+                                "flex items-center space-x-2";
+
+                            const promptBadge = document.createElement("span");
+                            promptBadge.className =
+                                "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full dark:bg-purple-900 dark:text-purple-200";
+                            promptBadge.textContent =
+                                window.promptMapping &&
+                                window.promptMapping[promptId]
+                                    ? window.promptMapping[promptId]
+                                    : `Prompt ${promptId}`;
+
+                            const promptIdSpan = document.createElement("span");
+                            promptIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            promptIdSpan.textContent = `(${promptId})`;
+
+                            promptItem.appendChild(promptBadge);
+                            promptItem.appendChild(promptIdSpan);
+                            promptsList.appendChild(promptItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     promptsList.appendChild(moreItem);
@@ -7006,29 +7237,29 @@ async function editServer(serverId) {
         );
 
         if (oauthEnabledCheckbox) {
-            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
+            oauthEnabledCheckbox.checked = server.oauthEnabled || false;
         }
 
-        // Show/hide OAuth config section based on oauth_enabled state
+        // Show/hide OAuth config section based on oauthEnabled state
         if (oauthConfigSection) {
-            if (server.oauth_enabled) {
+            if (server.oauthEnabled) {
                 oauthConfigSection.classList.remove("hidden");
             } else {
                 oauthConfigSection.classList.add("hidden");
             }
         }
 
-        // Populate OAuth config fields if oauth_config exists
-        if (server.oauth_config) {
+        // Populate OAuth config fields if oauthConfig exists
+        if (server.oauthConfig) {
             // Extract authorization server (may be in authorization_servers array or authorization_server string)
             let authServer = "";
             if (
-                server.oauth_config.authorization_servers &&
-                server.oauth_config.authorization_servers.length > 0
+                server.oauthConfig.authorization_servers &&
+                server.oauthConfig.authorization_servers.length > 0
             ) {
-                authServer = server.oauth_config.authorization_servers[0];
-            } else if (server.oauth_config.authorization_server) {
-                authServer = server.oauth_config.authorization_server;
+                authServer = server.oauthConfig.authorization_servers[0];
+            } else if (server.oauthConfig.authorization_server) {
+                authServer = server.oauthConfig.authorization_server;
             }
             if (oauthAuthServerField) {
                 oauthAuthServerField.value = authServer;
@@ -7036,8 +7267,8 @@ async function editServer(serverId) {
 
             // Extract scopes (may be scopes_supported array or scopes array)
             const scopes =
-                server.oauth_config.scopes_supported ||
-                server.oauth_config.scopes ||
+                server.oauthConfig.scopes_supported ||
+                server.oauthConfig.scopes ||
                 [];
             if (oauthScopesField) {
                 oauthScopesField.value = Array.isArray(scopes)
@@ -7048,7 +7279,7 @@ async function editServer(serverId) {
             // Extract token endpoint
             if (oauthTokenEndpointField) {
                 oauthTokenEndpointField.value =
-                    server.oauth_config.token_endpoint || "";
+                    server.oauthConfig.token_endpoint || "";
             }
         } else {
             // Clear OAuth config fields when no config exists
@@ -8713,6 +8944,7 @@ function showTab(tabName) {
                             {
                                 method: "GET",
                                 credentials: "same-origin",
+                                cache: "no-store",
                                 headers: {
                                     Accept: "text/html",
                                 },
@@ -10782,7 +11014,7 @@ function initGatewaySelect(
 
             try {
                 // Fetch all gateway IDs from the server.
-                // Respect View Public checkbox: omit team_id when checked.
+                // Respect View Public checkbox: keep team_id, add include_public when checked.
                 // Use the correct checkbox for the active modal context.
                 const selectedTeamId = getCurrentTeamId();
                 const vpCbId = selectId.includes("Edit")
@@ -10790,8 +11022,11 @@ function initGatewaySelect(
                     : "add-server-view-public";
                 const vpCb = document.getElementById(vpCbId);
                 const params = new URLSearchParams();
-                if (selectedTeamId && (!vpCb || !vpCb.checked)) {
+                if (selectedTeamId) {
                     params.set("team_id", selectedTeamId);
+                }
+                if (vpCb && vpCb.checked) {
+                    params.set("include_public", "true");
                 }
                 const queryString = params.toString();
                 const response = await fetch(
@@ -11096,16 +11331,18 @@ function reloadAssociatedItems() {
         ? "edit-server-prompts"
         : "associatedPrompts";
 
-    // Respect View Public checkbox: include team_id only when unchecked
+    // Respect View Public checkbox: always include team_id, add include_public when checked
     const vpCheckboxId = useEditContainers
         ? "edit-server-view-public"
         : "add-server-view-public";
     const vpCheckbox = document.getElementById(vpCheckboxId);
-    const urlTeamId = new URL(window.location.href).searchParams.get("team_id");
-    const teamIdSuffix =
-        urlTeamId && (!vpCheckbox || !vpCheckbox.checked)
-            ? `&team_id=${encodeURIComponent(urlTeamId)}`
-            : "";
+    const urlTeamId = getCurrentTeamId();
+    let teamIdSuffix = urlTeamId
+        ? `&team_id=${encodeURIComponent(urlTeamId)}`
+        : "";
+    if (vpCheckbox && vpCheckbox.checked) {
+        teamIdSuffix += "&include_public=true";
+    }
 
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
@@ -11973,6 +12210,16 @@ async function testTool(toolId) {
 
                 container.appendChild(fieldDiv);
             }
+        }
+
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
         }
 
         openModal("tool-test-modal");
@@ -14261,6 +14508,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -14593,6 +14856,16 @@ async function testGateway(gatewayURL) {
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
 
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
+
         // Open the modal
         openModal("gateway-test-modal");
 
@@ -14916,7 +15189,27 @@ async function viewTool(toolId) {
           <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
       `;
+        } else if (
+            tool.auth?.authHeaders &&
+            Array.isArray(tool.auth.authHeaders) &&
+            tool.auth.authHeaders.length > 0
+        ) {
+            // Multi-header format
+            const headerRows = tool.auth.authHeaders
+                .map(
+                    (header) =>
+                        `<div class="mt-1"><span class="font-medium">${escapeHtml(header.key)}:</span> ********</div>`,
+                )
+                .join("");
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          ${headerRows}
+        </div>
+      `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+            // Legacy single-header format (backward compatibility)
             authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
@@ -15009,6 +15302,10 @@ async function viewTool(toolId) {
           <div class="grid grid-cols-2 gap-6 mb-6">
             <!-- Left Column -->
             <div class="space-y-3">
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tool ID:</span>
+                <div class="mt-1 tool-id text-sm font-mono"></div>
+              </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
                 <div class="mt-1 tool-display-name font-medium"></div>
@@ -15173,6 +15470,12 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(".tool-id", tool.id);
+            // Inject copy button next to tool ID
+            const toolIdEl = toolDetailsDiv.querySelector(".tool-id");
+            if (toolIdEl && tool.id) {
+                toolIdEl.appendChild(makeCopyIdButton(tool.id));
+            }
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
@@ -15465,7 +15768,7 @@ async function handleGatewayFormSubmit(e) {
             formData.set("oauth_grant_type", "");
         }
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
 
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
@@ -15552,7 +15855,7 @@ async function handleResourceFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15622,7 +15925,7 @@ async function handlePromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15692,6 +15995,7 @@ async function handleEditPromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15754,7 +16058,7 @@ async function handleServerFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15931,7 +16235,7 @@ async function handleA2AFormSubmit(e) {
 
         // ✅ Ensure visibility is captured from checked radio button
         // formData.set("visibility", visibility);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16033,7 +16337,7 @@ async function handleToolFormSubmit(event) {
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -16103,6 +16407,7 @@ async function handleEditToolFormSubmit(event) {
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -16198,6 +16503,7 @@ async function handleEditGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16297,6 +16603,7 @@ async function handleEditA2AAgentFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16351,6 +16658,7 @@ async function handleEditServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Merge persistent selection store into FormData so off-screen selections are included
         [
@@ -16460,6 +16768,7 @@ async function handleEditResFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -16611,9 +16920,20 @@ function setupFormValidation() {
 
     forms.forEach((form) => {
         // Add validation to name fields
-        const nameFields = form.querySelectorAll(
-            'input[name*="name"], input[name*="Name"]',
-        );
+        // Target only the actual technical name inputs (avoid matching displayName)
+        const nameFields = Array.from(
+            form.querySelectorAll(
+                'input[name="name"], input[name="customName"], input[name="custom_name"]',
+            ),
+        ).filter((f) => {
+            // Exclude hidden inputs and any display-name-like fields so
+            // display names remain optional and aren't validated here.
+            if (!f) return false;
+            if (f.type && f.type.toLowerCase() === "hidden") return false;
+            if (/display/i.test(f.name || "")) return false;
+            return true;
+        });
+
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
                 const parentNode = this.parentNode;
@@ -17764,10 +18084,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
+            // Get text from searchable cells (exclude Actions, S.No., and Tool ID columns)
+            // Tools columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), RequestType(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Status(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0), S.No.(1), ToolID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -17894,10 +18214,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and ID columns)
-            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
+            // Get text from searchable cells (exclude Actions, S.No., and Agent ID columns)
+            // A2A Agents columns: Actions(0), S.No.(1), AgentID(2), Name(3), Description(4), Endpoint(5), Tags(6), Type(7), Status(8), Reachability(9), Owner(10), Team(11), Visibility(12)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude Actions(0), S.No.(1), AgentID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -18321,38 +18641,8 @@ function clearSearch(entityType) {
             if (tagInput) {
                 tagInput.value = "";
             }
-            // Keep rows visible even if HTMX reload is delayed/missed.
-            if (
-                entityType === "catalog" &&
-                typeof filterServerTable === "function"
-            ) {
-                filterServerTable("");
-            } else if (
-                entityType === "tools" &&
-                typeof filterToolsTable === "function"
-            ) {
-                filterToolsTable("");
-            } else if (
-                entityType === "resources" &&
-                typeof filterResourcesTable === "function"
-            ) {
-                filterResourcesTable("");
-            } else if (
-                entityType === "prompts" &&
-                typeof filterPromptsTable === "function"
-            ) {
-                filterPromptsTable("");
-            } else if (
-                entityType === "gateways" &&
-                typeof filterGatewaysTable === "function"
-            ) {
-                filterGatewaysTable("");
-            } else if (
-                entityType === "a2a-agents" &&
-                typeof filterA2AAgentsTable === "function"
-            ) {
-                filterA2AAgentsTable("");
-            }
+            // Trigger server-side reload to show all results (fixes #3128)
+            // Removed client-side DOM filtering as it only filters visible page
             loadSearchablePanel(entityType);
             return;
         }
@@ -21441,11 +21731,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
@@ -25226,9 +25520,9 @@ function initializePluginFunctions() {
     function updateBadgeHighlighting(type, value) {
         // Define selectors for each type
         const selectors = {
-            hook: "[onclick^='filterByHook']",
-            tag: "[onclick^='filterByTag']",
-            author: "[onclick^='filterByAuthor']",
+            hook: "[data-filter-hook]",
+            tag: "[data-filter-tag]",
+            author: "[data-filter-author]",
         };
 
         const selector = selectors[type];
@@ -25241,12 +25535,16 @@ function initializePluginFunctions() {
 
         badges.forEach((badge) => {
             // Check if this is the "All" badge (empty value)
-            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+            const isAllBadge =
+                badge.dataset.filterHook === "" ||
+                badge.dataset.filterTag === "" ||
+                badge.dataset.filterAuthor === "";
 
             // Check if this badge matches the selected value
-            const badgeValue = badge
-                .getAttribute("onclick")
-                .match(/'([^']*)'/)?.[1];
+            const badgeValue =
+                badge.dataset.filterHook ??
+                badge.dataset.filterTag ??
+                badge.dataset.filterAuthor;
             const isSelected =
                 value === ""
                     ? isAllBadge
@@ -25434,6 +25732,44 @@ function initializePluginFunctions() {
             modal.classList.add("hidden");
         }
     };
+
+    // Single listener on the filter section — catches input/change from all child controls
+    const filtersSection = document.getElementById("plugin-filters");
+    if (filtersSection) {
+        filtersSection.addEventListener("input", () => window.filterPlugins());
+        filtersSection.addEventListener("change", () => window.filterPlugins());
+    }
+
+    // Single delegated click/keydown listener for badges, View Details, and modal close.
+    // Returns true if an action was dispatched, false otherwise.
+    function dispatchPluginAction(target) {
+        const hookEl = target.closest("[data-filter-hook]");
+        const tagEl = target.closest("[data-filter-tag]");
+        const authorEl = target.closest("[data-filter-author]");
+        const detailEl = target.closest("[data-show-plugin]");
+        const closeEl = target.closest("[data-close-plugin-modal]");
+
+        if (hookEl) window.filterByHook(hookEl.dataset.filterHook);
+        else if (tagEl) window.filterByTag(tagEl.dataset.filterTag);
+        else if (authorEl) window.filterByAuthor(authorEl.dataset.filterAuthor);
+        else if (detailEl) {
+            window.showPluginDetails(detailEl.dataset.showPlugin);
+        } else if (closeEl) window.closePluginDetails();
+        else return false;
+        return true;
+    }
+
+    const pluginsPanel = document.getElementById("plugins-panel");
+    if (pluginsPanel) {
+        pluginsPanel.addEventListener("click", (e) =>
+            dispatchPluginAction(e.target),
+        );
+        pluginsPanel.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            if (!dispatchPluginAction(e.target)) return;
+            e.preventDefault();
+        });
+    }
 }
 
 // Initialize plugin functions if plugins panel exists
@@ -27731,15 +28067,16 @@ async function serverSideToolSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
             }
 
             console.log(
@@ -27815,12 +28152,15 @@ async function serverSideToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
@@ -28056,15 +28396,16 @@ async function serverSidePromptSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
             }
 
             console.log(
@@ -28139,12 +28480,15 @@ async function serverSidePromptSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -28300,15 +28644,16 @@ async function serverSideResourceSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "add-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
             }
 
             console.log(
@@ -28379,12 +28724,15 @@ async function serverSideResourceSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const addViewPublicCb = document.getElementById(
             "add-server-view-public",
         );
-        if (selectedTeamId && (!addViewPublicCb || !addViewPublicCb.checked)) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
@@ -28555,15 +28903,16 @@ async function serverSideEditToolSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
             }
 
             const response = await fetch(toolsUrl);
@@ -28682,15 +29031,15 @@ async function serverSideEditToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
@@ -28889,15 +29238,16 @@ async function serverSideEditPromptsSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
             }
 
             console.log(
@@ -29004,15 +29354,15 @@ async function serverSideEditPromptsSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -29213,15 +29563,16 @@ async function serverSideEditResourcesSearch(searchTerm) {
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
 
-            // Respect View Public checkbox state: include team_id only when unchecked
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
             const viewPublicCb = document.getElementById(
                 "edit-server-view-public",
             );
-            const urlTeamId = new URL(window.location.href).searchParams.get(
-                "team_id",
-            );
-            if (urlTeamId && (!viewPublicCb || !viewPublicCb.checked)) {
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
                 resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
             }
 
             console.log(
@@ -29325,15 +29676,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
-        // Respect View Public checkbox state: include team_id only when unchecked
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
         const editViewPublicCb = document.getElementById(
             "edit-server-view-public",
         );
-        if (
-            selectedTeamId &&
-            (!editViewPublicCb || !editViewPublicCb.checked)
-        ) {
+        if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
