@@ -948,7 +948,6 @@ class TestGatewayServiceProxy:
                 gateway_create,
                 created_via="reverse_proxy",
                 gateway_id="test-timeout",
-                forward_request_func=AsyncMock(),
                 initialize_timeout=0.1,  # Very short timeout
             )
 

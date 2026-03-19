@@ -693,7 +693,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         initialize_timeout: Optional[float] = None,
         # Proxy-specific parameters
         gateway_id: Optional[str] = None,
-        forward_request_func: Optional[Any] = None,
     ) -> Union[GatewayRead, tuple[GatewayRead, List[str], List[str], List[str]]]:
         """Register a new gateway (standard or proxied).
 
@@ -930,74 +929,74 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth_value = None
                     oauth_config = None
 
-            # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
-            # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
-            # receives the plain dict directly (see assignment above).
-            tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
+                # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
+                # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
+                # receives the plain dict directly (see assignment above).
+                tool_auth_value = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
 
-            tools = [
-                DbTool(
-                    original_name=tool.name,
-                    custom_name=tool.name,
-                    custom_name_slug=slugify(tool.name),
-                    display_name=generate_display_name(tool.name),
-                    url=normalized_url,
-                    original_description=tool.description,
-                    description=tool.description,
-                    integration_type="MCP",  # Gateway-discovered tools are MCP type
-                    request_type="PROXIED" if is_reverse_proxied else tool.request_type,
-                    headers=tool.headers,
-                    input_schema=tool.input_schema,
-                    output_schema=tool.output_schema,
-                    annotations=tool.annotations,
-                    jsonpath_filter=tool.jsonpath_filter,
-                    auth_type=auth_type,
-                    auth_value=tool_auth_value,
-                    enabled=True,
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated tools
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for tool in tools
-            ]
+                tools = [
+                    DbTool(
+                        original_name=tool.name,
+                        custom_name=tool.name,
+                        custom_name_slug=slugify(tool.name),
+                        display_name=generate_display_name(tool.name),
+                        url=normalized_url,
+                        original_description=tool.description,
+                        description=tool.description,
+                        integration_type="MCP",  # Gateway-discovered tools are MCP type
+                        request_type="PROXIED" if is_reverse_proxied else tool.request_type,
+                        headers=tool.headers,
+                        input_schema=tool.input_schema,
+                        output_schema=tool.output_schema,
+                        annotations=tool.annotations,
+                        jsonpath_filter=tool.jsonpath_filter,
+                        auth_type=auth_type,
+                        auth_value=tool_auth_value,
+                        enabled=True,
+                        # Federation metadata
+                        created_by=created_by or "system",
+                        created_from_ip=created_from_ip,
+                        created_via="federation",  # These are federated tools
+                        created_user_agent=created_user_agent,
+                        federation_source=gateway.name,
+                        version=1,
+                        # Inherit team assignment from gateway
+                        team_id=team_id,
+                        owner_email=owner_email,
+                        visibility=visibility,
+                    )
+                    for tool in tools
+                ]
 
-            # Create resource DB models with upsert logic for ORPHANED resources only
-            # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
-            # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
-            # gateway deletions (e.g., issue #2341 crash scenarios).
-            # We only update orphaned resources - resources belonging to active gateways are not touched.
-            resource_uris = [r.uri for r in resources]
-            effective_owner = owner_email or created_by
+                # Create resource DB models with upsert logic for ORPHANED resources only
+                # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
+                # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
+                # gateway deletions (e.g., issue #2341 crash scenarios).
+                # We only update orphaned resources - resources belonging to active gateways are not touched.
+                resource_uris = [r.uri for r in resources]
+                effective_owner = owner_email or created_by
 
-            # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
-            # We query all resources matching our URIs, then filter to orphaned ones in Python
-            # to handle per-resource team/owner overrides correctly
-            orphaned_resources_map: Dict[tuple, DbResource] = {}
-            if resource_uris:
-                try:
-                    # Get valid gateway IDs to identify orphaned resources
-                    valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
-                    candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
-                    for res in candidate_resources:
-                        # Only consider orphaned resources (no gateway or gateway doesn't exist)
-                        is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
-                        if is_orphaned:
-                            key = (res.team_id, res.owner_email, res.uri)
-                            orphaned_resources_map[key] = res
-                    if orphaned_resources_map:
-                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
-                except Exception as e:
-                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
-                    # This is conservative - we won't accidentally reassign resources from active gateways
-                    logger.debug(f"Orphan resource detection skipped: {e}")
+                # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
+                # We query all resources matching our URIs, then filter to orphaned ones in Python
+                # to handle per-resource team/owner overrides correctly
+                orphaned_resources_map: Dict[tuple, DbResource] = {}
+                if resource_uris:
+                    try:
+                        # Get valid gateway IDs to identify orphaned resources
+                        valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                        candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+                        for res in candidate_resources:
+                            # Only consider orphaned resources (no gateway or gateway doesn't exist)
+                            is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
+                            if is_orphaned:
+                                key = (res.team_id, res.owner_email, res.uri)
+                                orphaned_resources_map[key] = res
+                        if orphaned_resources_map:
+                            logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
+                    except Exception as e:
+                        # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
+                        # This is conservative - we won't accidentally reassign resources from active gateways
+                        logger.debug(f"Orphan resource detection skipped: {e}")
 
                 db_resources = []
                 for r in resources:
@@ -1084,24 +1083,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     except Exception as e:
                         # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
                         logger.debug(f"Orphan prompt detection skipped: {e}")
-            # Build lookup map: (team_id, owner_email, name) -> orphaned DbPrompt
-            orphaned_prompts_map: Dict[tuple, DbPrompt] = {}
-            if prompt_names:
-                try:
-                    # Get valid gateway IDs to identify orphaned prompts
-                    valid_gateway_ids_for_prompts = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
-                    candidate_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
-                    for pmt in candidate_prompts:
-                        # Only consider orphaned prompts (no gateway or gateway doesn't exist)
-                        is_orphaned = pmt.gateway_id is None or pmt.gateway_id not in valid_gateway_ids_for_prompts
-                        if is_orphaned:
-                            key = (pmt.team_id, pmt.owner_email, pmt.name)
-                            orphaned_prompts_map[key] = pmt
-                    if orphaned_prompts_map:
-                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {SecurityValidator.sanitize_log_message(gateway.name)}")
-                except Exception as e:
-                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
-                    logger.debug(f"Orphan prompt detection skipped: {e}")
 
                 db_prompts = []
                 for prompt in prompts:
@@ -1152,50 +1133,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 visibility=visibility,
                             )
                         )
-                # Check if there's an orphaned prompt with matching unique key
-                lookup_key = (p_team_id, p_owner_email, prompt.name)
-                if lookup_key in orphaned_prompts_map:
-                    # Update orphaned prompt - reassign to new gateway
-                    existing = orphaned_prompts_map[lookup_key]
-                    existing.original_name = prompt.name
-                    existing.custom_name = prompt.name
-                    existing.display_name = prompt.name
-                    existing.description = prompt.description
-                    existing.template = prompt.template if hasattr(prompt, "template") else ""
-                    existing.argument_schema = self._build_prompt_argument_schema(prompt)
-                    existing.federation_source = gateway.name
-                    existing.modified_by = created_by
-                    existing.modified_from_ip = created_from_ip
-                    existing.modified_via = "federation"
-                    existing.modified_user_agent = created_user_agent
-                    existing.updated_at = datetime.now(timezone.utc)
-                    existing.visibility = visibility
-                    # Note: gateway_id will be set when gateway is created (relationship)
-                    db_prompts.append(existing)
-                else:
-                    # Create new prompt
-                    db_prompts.append(
-                        DbPrompt(
-                            name=prompt.name,
-                            original_name=prompt.name,
-                            custom_name=prompt.name,
-                            display_name=prompt.name,
-                            description=prompt.description,
-                            template=prompt.template if hasattr(prompt, "template") else "",
-                            argument_schema=self._build_prompt_argument_schema(prompt),
-                            # Federation metadata
-                            created_by=created_by or "system",
-                            created_from_ip=created_from_ip,
-                            created_via="federation",  # These are federated prompts
-                            created_user_agent=created_user_agent,
-                            federation_source=gateway.name,
-                            version=1,
-                            # Inherit team assignment from gateway
-                            team_id=team_id,
-                            owner_email=owner_email,
-                            visibility=visibility,
-                        )
-                    )
 
                 # Create DB model
                 db_gateway = DbGateway(
@@ -1329,7 +1266,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
             # Return appropriate response based on mode
-            gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
+            gateway_read = self.convert_gateway_to_read(db_gateway)
 
             if is_reverse_proxied:
                 # For proxy mode, return gateway with tool/resource/prompt IDs
@@ -1338,7 +1275,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompt_ids = [str(p.id) for p in db_gateway.prompts]
                 return gateway_read, tool_ids, resource_ids, prompt_ids
             # For standard mode, return just the gateway
-            return self.convert_gateway_to_read(db_gateway)
+            return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]

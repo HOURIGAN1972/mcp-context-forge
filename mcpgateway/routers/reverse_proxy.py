@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker
+from mcpgateway.middleware.rbac import PermissionChecker
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.reverse_proxy_service import (
     get_reverse_proxy_service,

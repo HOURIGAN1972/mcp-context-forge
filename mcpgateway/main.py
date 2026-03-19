@@ -7242,13 +7242,7 @@ async def healthcheck():
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status_items.append(
-            HealthStatusItem(
-                name="Database",
-                statusCode=status.HTTP_200_OK,
-                message="[POSTGRES]: Postgres Connection Successful"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="[POSTGRES]: Postgres Connection Successful"))
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -7259,13 +7253,7 @@ async def healthcheck():
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         logger.error(f"Database health check failed: {str(e)}")
-        status_items.append(
-            HealthStatusItem(
-                name="Database",
-                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                message="Cannot connect to Postgres"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Postgres"))
     finally:
         db.close()
 
@@ -7274,55 +7262,31 @@ async def healthcheck():
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
             if await is_redis_available():
-                status_items.append(
-                    HealthStatusItem(
-                        name="Redis",
-                        statusCode=status.HTTP_200_OK,
-                        message="ready"
-                    )
-                )
+                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_200_OK, message="ready"))
             else:
-                status_items.append(
-                    HealthStatusItem(
-                        name="Redis",
-                        statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        message="Cannot connect to Redis"
-                    )
-                )
+                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
-            status_items.append(
-                HealthStatusItem(
-                    name="Redis",
-                    statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    message="Cannot connect to Redis"
-                )
-            )
+            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
     else:
         # Redis not configured
-        status_items.append(
-            HealthStatusItem(
-                name="Redis",
-                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                message="Redis is not enabled"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Redis is not enabled"))
 
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
     # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
     database_status = next((item for item in status_items if item.name == "Database"), None)
     redis_status = next((item for item in status_items if item.name == "Redis"), None)
-    
+
     # Check database health
     database_healthy = database_status and database_status.statusCode == 200
-    
+
     # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
     redis_enabled = settings.cache_type == "redis" and settings.redis_url
     redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
-    
+
     overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
-    
+
     return HealthCheckResponse(status=overall_status, statusItems=status_items)
 
 

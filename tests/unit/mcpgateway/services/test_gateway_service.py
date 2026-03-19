@@ -390,11 +390,17 @@ class TestGatewayService:
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
                 _make_execute_result(scalars_list=[]),  # tool lookup
+                _make_execute_result(scalars_list=[]),  # orphaned resources check (valid gateway IDs)
+                _make_execute_result(scalars_list=[]),  # orphaned resources lookup
+                _make_execute_result(scalars_list=[]),  # orphaned prompts check (valid gateway IDs)
+                _make_execute_result(scalars_list=[]),  # orphaned prompts lookup
             ]
         )
         test_db.add = Mock()
-        test_db.commit = Mock()
+        test_db.flush = Mock()  # Implementation uses flush() not commit()
         test_db.refresh = Mock()
+        # Mock query for _check_gateway_uniqueness
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         # Mock tools returned from gateway
         # First-Party

@@ -615,7 +615,7 @@ async def _check_streamable_permission(
     user_email = user_context.get("email")
     if not user_email:
         return False
-    
+
     # Extract team_id from token teams for RBAC role lookup.
     # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
     token_teams = user_context.get("teams")
