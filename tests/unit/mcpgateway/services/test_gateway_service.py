@@ -6748,3 +6748,199 @@ async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_servic
     with patch("mcpgateway.services.gateway_service.settings", mock_settings):
         with pytest.raises(GatewayError, match="disabled"):
             await gateway_service.update_gateway(db, "gw-flag-test", update_data)
+
+
+
+# --------------------------------------------------------------------------- #
+# Reverse Proxy Gateway Registration Tests                                   #
+# --------------------------------------------------------------------------- #
+
+
+class TestReverseProxyGatewayRegistration:
+    """Test reverse proxy gateway registration methods."""
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_calls_register_gateway_with_correct_params(self, gateway_service):
+        """Test that register_proxy_gateway correctly delegates to register_gateway."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="proxy-gateway",
+            url="http://proxy.example.com",
+            description="Proxy Gateway",
+            transport="PROXIED",
+        )
+        
+        # Mock register_gateway to return expected tuple
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.id = "gateway-123"
+        mock_gateway_read.name = "proxy-gateway"
+        
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(return_value=(mock_gateway_read, ["tool-1"], ["res-1"], ["prompt-1"]))):
+            result = await gateway_service.register_proxy_gateway(
+                db=mock_db,
+                gateway=gateway_create,
+                gateway_id="session-456",
+                team_id="team-789",
+                owner_email="user@example.com",
+                visibility="team",
+                created_by="user@example.com"
+            )
+            
+            # Verify register_gateway was called with correct parameters
+            gateway_service.register_gateway.assert_called_once()
+            call_kwargs = gateway_service.register_gateway.call_args[1]
+            
+            assert call_kwargs["db"] is mock_db
+            assert call_kwargs["gateway"] is gateway_create
+            assert call_kwargs["created_via"] == "reverse_proxy"
+            assert call_kwargs["team_id"] == "team-789"
+            assert call_kwargs["owner_email"] == "user@example.com"
+            assert call_kwargs["visibility"] == "team"
+            assert call_kwargs["gateway_id"] == "session-456"
+            assert call_kwargs["created_by"] == "user@example.com"
+            assert call_kwargs["initialize_timeout"] is None
+            
+            # Verify return value is passed through
+            assert result == (mock_gateway_read, ["tool-1"], ["res-1"], ["prompt-1"])
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_with_minimal_params(self, gateway_service):
+        """Test register_proxy_gateway with only required parameters."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="minimal-proxy",
+            url="http://minimal.example.com",
+            transport="PROXIED",
+        )
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.id = "gateway-minimal"
+        
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(return_value=(mock_gateway_read, [], [], []))):
+            result = await gateway_service.register_proxy_gateway(
+                db=mock_db,
+                gateway=gateway_create,
+                gateway_id="session-minimal"
+            )
+            
+            # Verify register_gateway was called
+            gateway_service.register_gateway.assert_called_once()
+            call_kwargs = gateway_service.register_gateway.call_args[1]
+            
+            assert call_kwargs["created_via"] == "reverse_proxy"
+            assert call_kwargs["gateway_id"] == "session-minimal"
+            assert call_kwargs["initialize_timeout"] is None
+            assert call_kwargs["team_id"] is None
+            assert call_kwargs["owner_email"] is None
+            assert call_kwargs["visibility"] is None
+            assert call_kwargs["created_by"] is None
+
+    @pytest.mark.asyncio
+    async def test_register_proxy_gateway_propagates_exceptions(self, gateway_service):
+        """Test that register_proxy_gateway propagates exceptions from register_gateway."""
+        mock_db = MagicMock()
+        gateway_create = GatewayCreate(
+            name="conflict-gateway",
+            url="http://conflict.example.com",
+            transport="PROXIED",
+        )
+        
+        # Mock register_gateway to raise GatewayNameConflictError
+        with patch.object(gateway_service, 'register_gateway', new=AsyncMock(side_effect=GatewayNameConflictError("conflict-gateway"))):
+            with pytest.raises(GatewayNameConflictError) as exc_info:
+                await gateway_service.register_proxy_gateway(
+                    db=mock_db,
+                    gateway=gateway_create,
+                    gateway_id="session-conflict"
+                )
+            
+            assert "conflict-gateway" in str(exc_info.value)
+
+    def test_gateway_name_conflict_error_with_team_visibility(self):
+        """Test GatewayNameConflictError message formatting for team visibility."""
+        error = GatewayNameConflictError(
+            name="team-gateway",
+            enabled=True,
+            gateway_id=123,
+            visibility="team"
+        )
+        
+        assert error.name == "team-gateway"
+        assert error.enabled is True
+        assert error.gateway_id == 123
+        assert "Team-level" in str(error)
+        assert "team-gateway" in str(error)
+        assert "inactive" not in str(error)
+
+    def test_gateway_name_conflict_error_with_public_visibility_inactive(self):
+        """Test GatewayNameConflictError message formatting for inactive public gateway."""
+        error = GatewayNameConflictError(
+            name="public-gateway",
+            enabled=False,
+            gateway_id=456,
+            visibility="public"
+        )
+        
+        assert error.name == "public-gateway"
+        assert error.enabled is False
+        assert error.gateway_id == 456
+        assert "Public" in str(error)
+        assert "inactive" in str(error)
+        assert "ID: 456" in str(error)
+
+    def test_gateway_duplicate_conflict_error_public_scope(self):
+        """Test GatewayDuplicateConflictError message formatting for public scope."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://api.example.com"
+        mock_gateway.id = "abc-123"
+        mock_gateway.enabled = True
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.name = "Public API Gateway"
+        
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+        
+        assert error.url == "https://api.example.com"
+        assert error.gateway_id == "abc-123"
+        assert error.enabled is True
+        assert error.visibility == "public"
+        assert error.name == "Public API Gateway"
+        assert "Public scope" in str(error)
+        assert "active" in str(error)
+        assert "Public API Gateway" in str(error)
+
+    def test_gateway_duplicate_conflict_error_team_scope_inactive(self):
+        """Test GatewayDuplicateConflictError message formatting for team scope (inactive)."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://team-api.example.com"
+        mock_gateway.id = "def-456"
+        mock_gateway.enabled = False
+        mock_gateway.visibility = "team"
+        mock_gateway.team_id = "engineering"
+        mock_gateway.name = "Team API Gateway"
+        
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+        
+        assert error.visibility == "team"
+        assert error.team_id == "engineering"
+        assert error.enabled is False
+        assert "your Team" in str(error)
+        assert "inactive" in str(error)
+        assert "re-enable" in str(error)
+
+    def test_gateway_duplicate_conflict_error_private_scope(self):
+        """Test GatewayDuplicateConflictError message formatting for private scope."""
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.url = "https://private-api.example.com"
+        mock_gateway.id = "ghi-789"
+        mock_gateway.enabled = True
+        mock_gateway.visibility = "private"
+        mock_gateway.team_id = None
+        mock_gateway.name = "Private API Gateway"
+        
+        error = GatewayDuplicateConflictError(duplicate_gateway=mock_gateway)
+        
+        assert error.visibility == "private"
+        assert '"private" scope' in str(error)
+        assert "active" in str(error)
+        assert "Private API Gateway" in str(error)
