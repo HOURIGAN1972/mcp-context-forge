@@ -2681,7 +2681,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     resources_to_add = []
                     prompts_to_add = []
 
-                    # Try to initialize if activating
+                    # Try to initialize and sync tools/resources/prompts ONLY when activating
+                    # This prevents deletion of tools when deactivating a gateway
                     try:
                         # Handle query_param auth - decrypt and apply to URL
                         init_url = gateway.url
@@ -2698,8 +2699,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             if auth_query_params_decrypted:
                                 init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
+                        # For PROXIED gateways, pass gateway_id to enable proxy connection
+                        gateway_id_param = gateway.id if gateway.transport == "PROXIED" else None
+
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted, oauth_auto_fetch_tool_flag=True
+                            init_url,
+                            gateway.auth_value,
+                            gateway.transport,
+                            gateway.auth_type,
+                            gateway.oauth_config,
+                            auth_query_params=auth_query_params_decrypted,
+                            oauth_auto_fetch_tool_flag=True,
+                            gateway_id=gateway_id_param,
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -4733,6 +4744,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
+            # For PROXIED gateways, pass gateway_id to enable proxy connection
+            gateway_id_param = gateway_id if gateway_transport == "PROXIED" else None
+
             _capabilities, tools, resources, prompts = await self._initialize_gateway(
                 url=gateway_url,
                 authentication=gateway_auth_value,
@@ -4744,6 +4758,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 include_resources=include_resources,
                 include_prompts=include_prompts,
                 auth_query_params=auth_query_params_decrypted,
+                gateway_id=gateway_id_param,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
