@@ -1100,6 +1100,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing.display_name = prompt.name
                         existing.description = prompt.description
                         existing.template = prompt.template if hasattr(prompt, "template") else ""
+                        existing.argument_schema = self._build_prompt_argument_schema(prompt)
                         existing.federation_source = gateway.name
                         existing.modified_by = created_by
                         existing.modified_from_ip = created_from_ip
@@ -1119,7 +1120,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 display_name=prompt.name,
                                 description=prompt.description,
                                 template=prompt.template if hasattr(prompt, "template") else "",
-                                argument_schema={},  # Use argument_schema instead of arguments
+                                argument_schema=self._build_prompt_argument_schema(prompt),
                                 # Federation metadata
                                 created_by=created_by or "system",
                                 created_from_ip=created_from_ip,
