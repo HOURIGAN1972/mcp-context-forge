@@ -10154,7 +10154,7 @@ def healthcheck(response: Response = None):
     if settings.cache_type == "redis" and settings.redis_url:
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
-            if await is_redis_available():
+            if await is_redis_available():  # noqa: PLE1142
                 status_items.append(
                     HealthStatusItem(
                         name="Redis",
