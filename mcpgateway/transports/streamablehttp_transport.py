@@ -2624,6 +2624,11 @@ class SessionManagerWrapper:
                     # Copy auth header if present
                     if "authorization" in headers:
                         rpc_headers["authorization"] = headers["authorization"]
+                    # Forward passthrough headers for upstream MCP servers (see #3640).
+                    # First-Party
+                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                     response = await client.post(
                         f"{internal_loopback_base_url()}/rpc",
@@ -2785,6 +2790,11 @@ class SessionManagerWrapper:
                             }
                             if "authorization" in headers:
                                 rpc_headers["authorization"] = headers["authorization"]
+                            # Forward passthrough headers for upstream MCP servers (see #3640).
+                            # First-Party
+                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                             response = await client.post(
                                 f"{internal_loopback_base_url()}/rpc",
@@ -3016,10 +3026,11 @@ class _StreamableHttpAuthHandler:
     async def authenticate(self) -> bool:
         """Perform authentication check in middleware context (ASGI scope).
 
-        Authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
+        Authenticates requests targeting MCP transport paths: ``/mcp``, ``/mcp/``,
+        ``/mcp/sse``, and ``/mcp/message`` (including ``/servers/{id}/...`` prefixed variants).
 
         Behavior:
-        - If the path does not end with "/mcp", authentication is skipped.
+        - If the path is not an MCP transport path, authentication is skipped.
         - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
         - If mcp_require_auth=False (permissive mode):
           - Requests without auth are allowed but get public-only access (token_teams=[]).
@@ -3034,7 +3045,11 @@ class _StreamableHttpAuthHandler:
             False if authentication fails and a 401 response is sent.
         """
         path = self.scope.get("path", "")
-        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+        # Normalize trailing slash for consistent matching
+        normalized = path.rstrip("/")
+        # Check if this is an MCP-related path that requires authentication
+        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message")
+        if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
