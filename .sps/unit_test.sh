@@ -9,8 +9,10 @@ echo "############# Python Version #################"
 python3 -V
 dnf install -y  postgresql-devel
 
+echo "############# Installing UV as a pre-requisite ########"
+curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "############# Running Install ################"
- make venv install install-dev
+make venv install install-dev
 echo "############# Running Linting ##################"
 make ruff autoflake isort black
 echo "############# Running Install dependencies ################"
