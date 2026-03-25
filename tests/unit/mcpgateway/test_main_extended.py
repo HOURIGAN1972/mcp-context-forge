@@ -9467,7 +9467,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
-
+        
         # Mock Redis availability check to return True (healthy)
         async def mock_is_redis_available():
             return True
@@ -9517,7 +9517,7 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
-
+        
     async def test_healthcheck_redis_exception_handling(self, monkeypatch):
         """Test that Redis health check exceptions are caught and logged."""
         # First-Party
