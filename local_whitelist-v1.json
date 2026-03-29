@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "package": "pip",
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "cve_name": [
+      "PRISMA-2022-0168"
+    ],
+    "cve_url": [
+      "https://github.com/pypa/pip/issues/8606|https://github.com/pypa/pip/issues/8606] - twistlock"
+    ],
+    "planned_for_remediation": [
+      "{{Not exploitable. Readonly filesystem so pip commands do not operate filesystem}}"
+    ],
+    "reason_for_not_exploitable": [
+      "{{resolved once ubi minimal address on future image.}}"
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-149516"
+    ]
+  }
+]
