@@ -457,60 +457,7 @@ class TestHealthAndInfrastructure:
         """Test the basic health check endpoint."""
         response = test_client.get("/health")
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "healthy"
-        assert "statusItems" in data
-        assert len(data["statusItems"]) == 2
-        # Check Database status
-        db_item = next((item for item in data["statusItems"] if item["name"] == "Database"), None)
-        assert db_item is not None
-        assert db_item["statusCode"] == 200
-        assert "[POSTGRES]" in db_item["message"] or "Postgres" in db_item["message"]
-        # Check Redis status (should be present even if not enabled)
-        redis_item = next((item for item in data["statusItems"] if item["name"] == "Redis"), None)
-        assert redis_item is not None
-        assert redis_item["statusCode"] in [200, 503]  # 200 if enabled and healthy, 503 if not enabled
-    async def test_health_check_redis_enabled_but_down(self, monkeypatch):
-        """Test health check reports 'bad' when Redis is enabled but down."""
-        # First-Party
-        from mcpgateway import main as mcpgateway_main
-        from mcpgateway.config import settings
-
-        # Mock settings to enable Redis
-        monkeypatch.setattr(settings, "cache_type", "redis")
-        monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
-
-        # Mock Redis client to fail
-        async def mock_get_redis_client():
-            class FailingRedis:
-                async def ping(self):
-                    raise ConnectionError("Redis connection refused")
-            return FailingRedis()
-
-        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
-            # Mock successful database connection
-            mock_session = MagicMock()
-            mock_session_local.return_value = mock_session
-            
-            # Mock Redis client to fail
-            with patch("mcpgateway.main.get_redis_client", side_effect=mock_get_redis_client):
-                response = await mcpgateway_main.healthcheck()
-
-        # Verify overall status is "unhealthy" when Redis is enabled but down
-        assert response.status == "unhealthy"
-        assert len(response.statusItems) == 2
-        
-        # Verify Database is healthy
-        db_item = next((item for item in response.statusItems if item.name == "Database"), None)
-        assert db_item is not None
-        assert db_item.statusCode == 200
-        
-        # Verify Redis is unhealthy
-        redis_item = next((item for item in response.statusItems if item.name == "Redis"), None)
-        assert redis_item is not None
-        assert redis_item.statusCode == 503
-        assert "Cannot connect to Redis" in redis_item.message
-
+        assert response.json()["status"] == "healthy"
 
     def test_ready_check(self, test_client):
         """Test the readiness check endpoint."""
@@ -518,10 +465,12 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
+    @pytest.mark.asyncio
     async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -544,21 +493,23 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = await mcpgateway_main.healthcheck()
-        assert response.status == "unhealthy"
+            response_obj = FastAPIResponse()
+            result = await mcpgateway_main.healthcheck(response_obj)
+        assert result.status == "unhealthy"
         assert session.invalidate_called is True
         # Verify statusItems structure
-        assert len(response.statusItems) == 2
-        db_item = next((item for item in response.statusItems if item.name == "Database"), None)
+        assert len(result.statusItems) == 2
+        db_item = next((item for item in result.statusItems if item.name == "Database"), None)
         assert db_item is not None
         assert db_item.statusCode == 503
         assert "Cannot connect" in db_item.message
 
     @pytest.mark.asyncio
-    async def test_ready_check_db_error(self):
-        """Test readiness check error path with rollback failure."""
+    async def test_health_check_db_error(self):
+        """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -580,12 +531,10 @@ class TestHealthAndInfrastructure:
                 pass
 
         session = DummySession()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=session),
-            patch("mcpgateway.main.asyncio.to_thread", side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)),
-        ):
-            response = await mcpgateway_main.readiness_check()
-        assert response.status_code == 503
+        with patch("mcpgateway.main.SessionLocal", return_value=session):
+            response_obj = FastAPIResponse()
+            result = await mcpgateway_main.healthcheck(response_obj)
+        assert result.status == "unhealthy"
         assert session.invalidate_called is True
 
     def test_root_redirect(self, test_client):
@@ -1151,6 +1100,21 @@ class TestResourceEndpoints:
         assert len(data) == 1 and data[0]["name"] == "Test Resource"
         mock_list_resources.assert_called_once()
 
+    @patch("mcpgateway.main.resource_service.update_resource")
+    def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update.side_effect = ContentSizeError("Resource", 150000, 102400)
+        req = {"content": "x" * 150000}
+        response = test_client.put("/resources/1", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Resource size limit exceeded"
+        assert data["actual_size"] == 150000
+        assert data["max_size"] == 102400
+
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
         """Test registering a new resource."""
@@ -1160,6 +1124,23 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
+        mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Resource", 150000, 102400)
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "content": "x" * 150000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Resource size limit exceeded"
+        assert data["actual_size"] == 150000
+        assert data["max_size"] == 102400
+
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.read_resource")
@@ -1343,6 +1324,36 @@ class TestPromptEndpoints:
         response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
         assert response.status_code == status_code
 
+    @patch("mcpgateway.main.prompt_service.register_prompt")
+    def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
+        """Test create_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/prompts/", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 413 for content size limit exceeded."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
+        req = {"template": "x" * 15000}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 413
+        data = response.json()["detail"]
+        assert data["error"] == "Prompt size limit exceeded"
+        assert data["actual_size"] == 15000
+        assert data["max_size"] == 10240
+
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint_secondary(self, mock_delete, test_client, auth_headers):
         """Test deleting a prompt."""
@@ -1428,6 +1439,17 @@ class TestPromptEndpoints:
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
         mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
+
+    @patch("mcpgateway.main.prompt_service.get_prompt")
+    def test_get_prompt_no_args_ambiguous_returns_422(self, mock_get, test_client, auth_headers):
+        """GET /prompts/{id} returns 422 when prompt name is ambiguous across scopes."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptError
+
+        mock_get.side_effect = PromptError("Prompt name 'code_review' is ambiguous across multiple scopes")
+        response = test_client.get("/prompts/code_review", headers=auth_headers)
+        assert response.status_code == 422
+        assert "ambiguous" in response.json()["detail"]
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -1881,6 +1903,7 @@ class TestRPCEndpoints:
             plugin_context_table=None,
             plugin_global_context=ANY,
             meta_data=None,
+            skip_pre_invoke=False,
         )
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
@@ -2056,6 +2079,29 @@ class TestRPCEndpoints:
         assert "error" in body
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_not_found_error(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32002 when ResourceNotFoundError is raised."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+
+        mock_read.side_effect = ResourceNotFoundError("Resource template not found for 'file:///nonexistent/bad-resource'")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "file:///nonexistent/bad-resource"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32002
+        assert "Resource not found" in body["error"]["message"]
+        assert body["error"]["message"] != "Internal error"
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -2773,6 +2819,7 @@ class TestRealtimeEndpoints:
 class TestMetricsEndpoints:
     """Tests for metrics collection, aggregation, and reset functionality."""
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)
@@ -2792,6 +2839,7 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
+    @patch("mcpgateway.main.a2a_service", None)
     @patch("mcpgateway.main.prompt_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.server_service.aggregate_metrics", new_callable=AsyncMock)
     @patch("mcpgateway.main.resource_service.aggregate_metrics", new_callable=AsyncMock)

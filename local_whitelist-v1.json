@@ -11,13 +11,13 @@
       "https://github.com/pypa/pip/issues/8606|https://github.com/pypa/pip/issues/8606] - twistlock"
     ],
     "planned_for_remediation": [
-      "No remediation is currently available"
+      "{{Not exploitable. Readonly filesystem so pip commands do not operate filesystem}}"
     ],
     "reason_for_not_exploitable": [
-      "According to link, this is not an issue that can be fixed and is just how pip works"
+      "{{resolved once ubi minimal address on future image.}}"
     ],
     "jira_ticket": [
-      "https://ibm-qrs.atlassian.net/browse/CYFR-40317"
+      "https://ibm-qrs.atlassian.net/browse/CYFR-149516"
     ]
   }
 ]
