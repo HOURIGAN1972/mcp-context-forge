@@ -1213,30 +1213,42 @@ class ServerService(BaseService):
 
             # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:
-                server.tools = []
+                # Clear existing associations by removing all tools
+                server.tools.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_tools:
                     tool_ids = [tool_id for tool_id in server_update.associated_tools if tool_id]
                     if tool_ids:
                         tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
-                        server.tools = list(tools)
+                        # Add the new tools to the relationship
+                        server.tools.extend(tools)
 
             # Update associated resources if provided using bulk query
             if server_update.associated_resources is not None:
-                server.resources = []
+                # Clear existing associations by removing all resources
+                server.resources.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_resources:
                     resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
                         resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
-                        server.resources = list(resources)
+                        # Add the new resources to the relationship
+                        server.resources.extend(resources)
 
             # Update associated prompts if provided using bulk query
             if server_update.associated_prompts is not None:
-                server.prompts = []
+                # Clear existing associations by removing all prompts
+                server.prompts.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_prompts:
                     prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
                     if prompt_ids:
                         prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
-                        server.prompts = list(prompts)
+                        # Add the new prompts to the relationship
+                        server.prompts.extend(prompts)
 
             # Update tags if provided
             if server_update.tags is not None:
