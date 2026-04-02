@@ -34,9 +34,11 @@ LOGGER = logging_service.get_logger("mcpgateway.reverse_proxy_multi_transport.cl
 # Default configuration
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_MAX_RETRIES = 0
-# Client sends heartbeats at this interval (should be less than gateway's health check interval)
-# Gateway checks every 60s, so 30s keepalive ensures at least 2 heartbeats per check cycle
-DEFAULT_KEEPALIVE_INTERVAL = 30
+# Client sends heartbeats at this interval (MUST be less than gateway's HEARTBEAT_TIMEOUT)
+# CRITICAL: Gateway with MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT=5 requires client < 5s
+# Default 2s provides safety margin for network latency and processing delays
+# For production with default gateway settings (90s timeout), this can be increased to 30s
+DEFAULT_KEEPALIVE_INTERVAL = 2
 DEFAULT_MCP_HEALTH_CHECK_TIMEOUT = 5.0
 DEFAULT_MCP_HEALTH_CHECK_RETRY_INTERVAL = 10.0
 

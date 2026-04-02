@@ -62,6 +62,7 @@ class WebSocketAdapter(GatewayTransport):
         self.cert = cert
 
         self._connection: Optional[WSClientProtocol] = None
+        self._connected = False
         self._message_handlers: List[Callable[[str], Awaitable[None]]] = []
         self._receive_task: Optional[asyncio.Task[None]] = None
 
@@ -110,6 +111,9 @@ class WebSocketAdapter(GatewayTransport):
             ssl=ssl_context if is_secure else None,
         )
 
+        # Mark as connected
+        self._connected = True
+
         # Start receiving messages
         self._receive_task = asyncio.create_task(self._receive_messages())
 
@@ -117,10 +121,11 @@ class WebSocketAdapter(GatewayTransport):
 
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
-        if not self._connection:
+        if not self._connected:
             return
 
         LOGGER.info("Disconnecting WebSocket")
+        self._connected = False
 
         if self._receive_task:
             self._receive_task.cancel()
@@ -135,7 +140,7 @@ class WebSocketAdapter(GatewayTransport):
 
     async def send(self, message: str | bytes) -> None:
         """Send a message to the gateway via WebSocket."""
-        if not self._connection:
+        if not self._connected or not self._connection:
             raise RuntimeError("Not connected to gateway")
 
         # Ensure message is string for WebSocket text frames
@@ -150,8 +155,13 @@ class WebSocketAdapter(GatewayTransport):
         self._message_handlers.append(handler)
 
     async def is_connected(self) -> bool:
-        """Check if WebSocket is connected."""
-        return self._connection is not None
+        """Check if WebSocket is connected.
+
+        Uses _connected flag for consistency with SSE/StreamableHTTP adapters.
+        This prevents race conditions where the receive loop has ended but
+        the connection object hasn't been cleared yet.
+        """
+        return self._connected
 
     async def _receive_messages(self) -> None:
         """Receive messages from WebSocket connection."""
@@ -190,9 +200,9 @@ class WebSocketAdapter(GatewayTransport):
             raise
         finally:
             # Mark connection as closed when receive loop exits
-            if self._connection:
-                LOGGER.info("WebSocket receive loop ended, marking connection as closed")
-                self._connection = None
+            LOGGER.info("WebSocket receive loop ended, marking connection as closed")
+            self._connected = False
+            self._connection = None
 
 
 # Made with Bob

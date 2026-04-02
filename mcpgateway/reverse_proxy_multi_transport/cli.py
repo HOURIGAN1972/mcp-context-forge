@@ -56,7 +56,9 @@ ENV_TOKEN = "REVERSE_PROXY_TOKEN"  # nosec B105
 # Defaults
 DEFAULT_RECONNECT_DELAY = 1.0
 DEFAULT_MAX_RETRIES = 0
-DEFAULT_KEEPALIVE_INTERVAL = 30
+# CRITICAL: Must be less than gateway's MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT
+# For gateway with 5s timeout, use 2s. For default 90s timeout, can use 30s.
+DEFAULT_KEEPALIVE_INTERVAL = 2
 
 
 def create_mcp_transport(
