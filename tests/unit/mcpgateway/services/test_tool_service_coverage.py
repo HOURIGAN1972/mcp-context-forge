@@ -202,6 +202,7 @@ def _make_tool_update(**overrides) -> MagicMock:
         name=None,
         custom_name=None,
         displayName=None,
+        title=None,
         url=None,
         description=None,
         integration_type=None,
@@ -4244,6 +4245,7 @@ class TestUpdateToolBranches:
         tool_update.name = "new_name"
         tool_update.custom_name = None
         tool_update.displayName = "New Tool"
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = "new desc"
         tool_update.integration_type = None
@@ -4302,6 +4304,7 @@ class TestUpdateToolBranches:
         tool_update.name = None
         tool_update.custom_name = None
         tool_update.displayName = None
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = None
         tool_update.integration_type = None
@@ -4339,6 +4342,7 @@ class TestUpdateToolBranches:
         tool_update.name = "conflict_name"
         tool_update.custom_name = "conflict_name"
         tool_update.displayName = None
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = None
         tool_update.integration_type = None
@@ -4710,6 +4714,7 @@ class TestUpdateToolBranches:
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = None
+        tool_update.title = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
@@ -4804,7 +4809,9 @@ def _make_tool_payload(
     }
 
 
-def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None, url=None, client_cert=None, client_key=None):
+def _make_gateway_payload(
+    *, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None, url=None, client_cert=None, client_key=None
+):
     return {
         "id": "gw-uuid-1",
         "name": "test_gw",
@@ -4915,7 +4922,7 @@ class TestInvokeToolRestTimeout:
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
                 (SimpleNamespace(modified_payload=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table),  # post-invoke (timeout handler)
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -5384,6 +5391,47 @@ class TestInvokeToolObservability:
         mock_span.set_attribute.assert_any_call("success", True)
 
     @pytest.mark.asyncio
+    async def test_observability_rest_path_creates_lookup_gateway_and_post_process_child_spans(self, tool_service):
+        """REST invocation should emit the expected nested child spans for Langfuse breakdowns."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*_a, **_kw):
+            return mock_response
+
+        @contextmanager
+        def _span_cm(*_a, **_kw):
+            yield MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span", _span_cm),
+            patch("mcpgateway.services.tool_service.create_child_span", side_effect=_span_cm) as mock_child_span,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert [call.args[0] for call in mock_child_span.call_args_list] == ["tool.lookup", "tool.gateway_call", "tool.post_process"]
+        assert mock_child_span.call_args_list[1].args[1]["tool.integration_type"] == "REST"
+
+    @pytest.mark.asyncio
     async def test_observability_span_start_failure(self, tool_service):
         """When span creation fails, invocation continues."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
@@ -5827,9 +5875,6 @@ class TestInvokeToolPluginPostInvokeSerialization:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_dict_result_serialized_as_json(self, tool_service):
         """When plugin post-invoke returns a dict without 'content' key, it should be serialized as valid JSON."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
@@ -5846,8 +5891,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False})), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0), {}),  # post-invoke
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -5886,9 +5931,6 @@ class TestInvokeToolPluginPostInvokeSerialization:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_unserializable_result_falls_back_to_str(self, tool_service):
         """When plugin post-invoke returns an unserializable value (e.g. set), it should fall back to str() instead of crashing."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
@@ -5905,8 +5947,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"})), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0), {}),  # post-invoke
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -6684,7 +6726,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
         tool_service._plugin_manager = plugin_manager
 
         with (
@@ -6858,6 +6900,7 @@ class TestInvokeToolMcpSse:
 
             with pytest.raises(ToolInvocationError, match="OAuth authentication failed for gateway"):
                 await tool_service.invoke_tool(db, "test_tool", {})
+
     @pytest.mark.asyncio
     async def test_mcp_http_url_bypasses_ssl_context_creation(self, tool_service):
         """HTTP URLs should skip SSL context creation entirely (line 3986-3988)."""
@@ -6930,7 +6973,7 @@ class TestInvokeToolMcpSse:
             auth_type="basic",
             ca_certificate="dummy-ca",
             client_cert="client-cert-data",  # mTLS client cert
-            client_key="client-key-data",    # mTLS client key
+            client_key="client-key-data",  # mTLS client key
         )
         db = MagicMock()
 
@@ -7357,7 +7400,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
         tool_service._plugin_manager = plugin_manager
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
@@ -7612,7 +7655,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), None))
         tool_service._plugin_manager = plugin_manager
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
