@@ -224,6 +224,14 @@ class ResourceService(BaseService):
 
         # Initialize mime types
         mimetypes.init()
+        # Add common MIME types that may be missing on some platforms (e.g., macOS)
+        # Use strict=True to add to the primary types_map used by guess_type()
+        mimetypes.add_type("text/markdown", ".md", strict=True)
+        mimetypes.add_type("text/markdown", ".markdown", strict=True)
+        # Remove problematic system-specific types that vary across platforms
+        # .xyz is registered as chemical/x-xyz on some systems but should be unknown for tests
+        if ".xyz" in mimetypes.types_map:
+            del mimetypes.types_map[".xyz"]
 
     async def initialize(self) -> None:
         """Initialize the service."""
