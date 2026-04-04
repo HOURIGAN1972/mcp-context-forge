@@ -1563,6 +1563,116 @@ class TestGatewayService:
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_http_transport_skips_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating an HTTP transport gateway does NOT call initialize_gateway.
+        
+        HTTP transport gateways are for REST APIs with manually-registered tools,
+        so they should not attempt MCP protocol initialization.
+        """
+        # Setup HTTP transport gateway
+        mock_gateway.transport = "HTTP"
+        mock_gateway.url = "http://api.example.com"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it should NOT be called
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        
+        # Update some field (e.g., description)
+        gateway_update = GatewayUpdate(description="Updated REST API gateway")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway was NOT called for HTTP transport
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_http_transport_with_auth_change_skips_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating auth on HTTP transport gateway does NOT call initialize_gateway.
+        
+        Even when auth changes, HTTP gateways should not initialize because they don't
+        use MCP protocol - tools are manually registered.
+        """
+        # Setup HTTP transport gateway
+        mock_gateway.transport = "HTTP"
+        mock_gateway.url = "http://api.example.com"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = "old-token"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it should NOT be called
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        
+        # Update auth
+        gateway_update = GatewayUpdate(auth_type="bearer", auth_token="new-token-456")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            with patch("mcpgateway.services.gateway_service.encode_auth", return_value="encoded-new-token"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway was NOT called even with auth change
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mcp_transport_calls_initialization(self, gateway_service, mock_gateway, test_db):
+        """Test that updating an MCP transport gateway (SSE/StreamableHTTP) DOES call initialize_gateway.
+        
+        MCP transport gateways should auto-discover tools via protocol initialization.
+        """
+        # Setup SSE transport gateway
+        mock_gateway.transport = "SSE"
+        mock_gateway.url = "http://mcp-server.example.com"
+        
+        # Use return_value for all execute calls
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+        
+        # Mock _initialize_gateway - it SHOULD be called
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        gateway_service._update_or_create_tools = Mock()
+        gateway_service._update_or_create_resources = Mock()
+        gateway_service._update_or_create_prompts = Mock()
+        
+        # Update some field
+        gateway_update = GatewayUpdate(description="Updated MCP gateway")
+        
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+        
+        # Verify _initialize_gateway WAS called for MCP transport
+        gateway_service._initialize_gateway.assert_called_once()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_without_auth_type_attr(self, gateway_service, test_db):
         """Test updating gateway that doesn't have auth_type attribute."""
         # Create mock gateway without auth_type attribute

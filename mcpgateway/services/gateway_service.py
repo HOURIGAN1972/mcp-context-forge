@@ -1977,8 +1977,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             IntegrityError: If there is a database integrity error
             ValidationError: If validation fails
         """
+        logger.debug(f"[GATEWAY_UPDATE_ENTRY] Starting update for gateway_id={gateway_id}")
         try:  # pylint: disable=too-many-nested-blocks
-            logger.info(f"[AUTH UPDATE] update_gateway called for gateway_id={gateway_id}, user_email={user_email}")
             has_auth_value = gateway_update.auth_value is not None
             logger.info(
                 f"[AUTH UPDATE] Update payload: auth_type={getattr(gateway_update, 'auth_type', 'NOT_SET')}, "
@@ -2318,11 +2318,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
                 # Initialize gateway if:
-                # 1. Transport is not PROXIED, OR
+                # 1. Transport is MCP-based (SSE, STREAMABLEHTTP, STDIO) - auto-discover tools, OR
                 # 2. Transport is PROXIED AND modified_via is reverse_proxy (reconnection scenario)
-                should_initialize = gateway.transport != "PROXIED" or (gateway.transport == "PROXIED" and modified_via == "reverse_proxy")
-                logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Transport is '{gateway.transport}', modified_via='{modified_via}', will {'PERFORM' if should_initialize else 'SKIP'} initialization")
+                # Skip initialization for:
+                # - HTTP transport (REST gateways with manually-registered tools)
+                # - PROXIED transport (unless reconnecting via reverse_proxy)
+                mcp_transports = ["SSE", "STREAMABLEHTTP", "STDIO"]
+                is_mcp_gateway = gateway.transport.upper() in mcp_transports
+                is_proxied_reconnect = gateway.transport == "PROXIED" and modified_via == "reverse_proxy"
+                should_initialize = is_mcp_gateway or is_proxied_reconnect
+                logger.info(
+                    f"[AUTH UPDATE] Gateway {gateway.id}: Transport is '{gateway.transport}', "
+                    f"modified_via='{modified_via}', is_mcp={is_mcp_gateway}, "
+                    f"will {'PERFORM' if should_initialize else 'SKIP'} initialization"
+                )
+
+                # Log current tool count before any changes
+                current_tool_count = len(gateway.tools) if gateway.tools else 0
+                logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Current tool count = {current_tool_count}")
+
                 if should_initialize:
+                    logger.info(f"[AUTH UPDATE] Gateway {gateway.id}: Starting MCP initialization to discover tools/resources/prompts")
                     # Try to reinitialize connection if URL actually changed
                     # if url_changed:
                     # Initialize empty lists in case initialization fails
@@ -2475,6 +2491,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         self._active_gateways.add(gateway.url)
                     except Exception as e:
                         logger.warning(f"Failed to initialize updated gateway: {e}")
+                else:
+                    logger.info(
+                        f"[AUTH UPDATE] Gateway {gateway.id}: Skipped initialization based on transport. "
+                        f"Tool count remains: {current_tool_count}"
+                    )
 
                 # Update tags if provided
                 if gateway_update.tags is not None:

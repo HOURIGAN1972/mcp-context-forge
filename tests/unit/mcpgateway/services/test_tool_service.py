@@ -7864,3 +7864,98 @@ class TestRustMcpExecutionPlan:
                     {},
                     request_headers=request_headers,
                 )
+
+
+# ============================================================================
+# Gateway Auth Runtime Tests (REST Tool Invocation)
+# ============================================================================
+
+
+class TestToolServiceGatewayAuthRuntime:
+    """Tests for gateway authentication being applied at REST tool invocation time.
+    
+    These tests verify that when a REST MCP tool is invoked, the gateway's
+    authentication credentials are properly included in the HTTP request to
+    the target API endpoint.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_uses_gateway_bearer_auth(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST tool invocation should include gateway bearer token in request."""
+        # Setup gateway with bearer auth
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"Authorization": "Bearer gateway-token-123"}
+        mock_gateway.url = "http://api.example.com"
+        
+        # Setup REST tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = "gateway-123"
+        mock_tool.gateway = mock_gateway
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+        
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+        
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+        
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+            
+            # Verify the HTTP request included gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            assert "headers" in call_kwargs
+            assert "Authorization" in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer gateway-token-123"
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_without_gateway_auth(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST tool without gateway should work without auth headers."""
+        # Setup REST tool without gateway
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = None
+        mock_tool.gateway = None
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+        mock_tool.auth_value = None
+        
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+        
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+        
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+            
+            # Verify the HTTP request was made without gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            headers = call_kwargs.get("headers", {})
+            # Should not have Authorization header from gateway
+            assert "Authorization" not in headers or not headers.get("Authorization", "").startswith("Bearer gateway-")
+
+
+

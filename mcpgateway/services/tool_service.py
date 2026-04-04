@@ -1181,6 +1181,7 @@ class ToolService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        token_teams: Optional[list[str]] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -1229,6 +1230,35 @@ class ToolService(BaseService):
             'tool_read'
         """
         try:
+            # SECURITY: Check gateway access if gateway_id is provided
+            # This ensures users can only create tools for gateways they have access to
+            if tool.gateway_id:
+                # Fetch the gateway to verify access
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id)).scalar_one_or_none()
+                
+                if not gateway:
+                    raise ToolError(f"Gateway '{tool.gateway_id}' not found")
+                
+                # First-Party
+                from mcpgateway.utils.gateway_access import check_gateway_access  # pylint: disable=import-outside-toplevel
+                
+                # Check gateway access using token_teams from JWT
+                has_access = await check_gateway_access(db, gateway, created_by, token_teams)
+                
+                if not has_access:
+                    # Access denied - raise exception
+                    raise PermissionError(
+                        f"Access denied: You do not have permission to create tools for "
+                        f"gateway '{gateway.name}' (ID: {gateway.id}). "
+                        f"Gateway visibility: {gateway.visibility}"
+                    )
+                
+                logger.debug(
+                    f"Gateway access verified for tool '{tool.name}' creation "
+                    f"(gateway='{gateway.name}', user={created_by})"
+                )
+            
+            # Use tool's own auth configuration (no inheritance)
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -3687,6 +3717,18 @@ class ToolService(BaseService):
                 # Get combined headers for the tool including base headers, auth, and passthrough headers
                 headers = tool_headers.copy()
                 if tool_integration_type == "REST":
+                    # Runtime auth inheritance: If tool has no auth configured and feature is enabled,
+                    # inherit from gateway at execution time (allows dynamic gateway auth updates)
+                    if not tool_auth_type and has_gateway and settings.tool_inherit_gateway_auth:
+                        if gateway_auth_type:
+                            tool_auth_type = gateway_auth_type
+                            tool_auth_value = gateway_auth_value
+                            tool_oauth_config = gateway_oauth_config
+                            logger.debug(
+                                f"Tool '{name}' inheriting auth from gateway at runtime "
+                                f"(auth_type={gateway_auth_type}, gateway={gateway_name})"
+                            )
+                    
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
