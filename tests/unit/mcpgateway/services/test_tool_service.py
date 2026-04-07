@@ -1485,8 +1485,8 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        # Verify execute was called for DELETE ... RETURNING
-        test_db.execute.assert_called_once()
+        # Verify execute was called twice: once for association deletion, once for tool deletion
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
         # Verify notification
@@ -1499,19 +1499,21 @@ class TestToolService:
         test_db.commit = Mock()
         test_db.rollback = Mock()
 
-        # Mock execute results: batch deletes return rowcount=0 to stop loop, final DELETE returns rowcount=1
+        # Mock execute results: batch deletes return rowcount=0 to stop loop, association delete, final DELETE returns rowcount=1
         batch_result = Mock()
         batch_result.rowcount = 0  # No rows to delete (stops the batch loop)
+        assoc_result = Mock()
+        assoc_result.rowcount = 0  # Association deletion
         delete_result = Mock()
         delete_result.rowcount = 1  # Final DELETE succeeded
-        test_db.execute = Mock(side_effect=[batch_result, batch_result, delete_result])
+        test_db.execute = Mock(side_effect=[batch_result, batch_result, assoc_result, delete_result])
 
         tool_service._notify_tool_deleted = AsyncMock()
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for DELETE = 3
-        assert test_db.execute.call_count == 3
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for association + 1 for DELETE = 4
+        assert test_db.execute.call_count == 4
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
