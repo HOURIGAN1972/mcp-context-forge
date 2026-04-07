@@ -386,6 +386,3 @@ class StreamableHttpAdapter(McpServerTransport):
         except asyncio.CancelledError:
             LOGGER.debug("Connection monitoring cancelled")
             raise
-
-
-# Made with Bob

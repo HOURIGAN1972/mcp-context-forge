@@ -140,5 +140,3 @@ class GatewayTransport(ABC):
             True if connected to gateway.
         """
 
-
-# Made with Bob

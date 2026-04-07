@@ -151,5 +151,3 @@ class StdioAdapter(McpServerTransport):
         except Exception as e:
             LOGGER.error(f"Error reading stdout: {e}")
 
-
-# Made with Bob

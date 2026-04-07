@@ -204,5 +204,3 @@ class WebSocketAdapter(GatewayTransport):
             self._connected = False
             self._connection = None
 
-
-# Made with Bob

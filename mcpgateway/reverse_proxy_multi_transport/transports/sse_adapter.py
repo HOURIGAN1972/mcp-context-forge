@@ -424,5 +424,3 @@ class SseAdapter(McpServerTransport):
         else:
             LOGGER.warning(f"Unknown SSE event type: {event_type}")
 
-
-# Made with Bob

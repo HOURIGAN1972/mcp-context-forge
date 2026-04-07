@@ -14,4 +14,3 @@ from mcpgateway.reverse_proxy_multi_transport.transports.websocket_adapter impor
 
 __all__ = ["StdioAdapter", "StreamableHttpAdapter", "SseAdapter", "WebSocketAdapter"]
 
-# Made with Bob
