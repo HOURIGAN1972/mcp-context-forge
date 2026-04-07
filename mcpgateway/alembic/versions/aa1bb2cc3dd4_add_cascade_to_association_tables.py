@@ -15,7 +15,6 @@ from typing import Sequence, Union
 
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "aa1bb2cc3dd4"
@@ -32,7 +31,7 @@ def upgrade() -> None:
 
     if dialect_name == "postgresql":
         # PostgreSQL: Drop and recreate constraints with CASCADE
-        
+
         # server_tool_association
         op.drop_constraint("fk_server_tool_association_server_id", "server_tool_association", type_="foreignkey")
         op.drop_constraint("fk_server_tool_association_tool_id", "server_tool_association", type_="foreignkey")
@@ -140,7 +139,7 @@ def downgrade() -> None:
 
     if dialect_name == "postgresql":
         # PostgreSQL: Drop and recreate constraints without CASCADE
-        
+
         # server_tool_association
         op.drop_constraint("fk_server_tool_association_server_id", "server_tool_association", type_="foreignkey")
         op.drop_constraint("fk_server_tool_association_tool_id", "server_tool_association", type_="foreignkey")
@@ -226,5 +225,6 @@ def downgrade() -> None:
     elif dialect_name == "sqlite":
         # SQLite: No action needed for downgrade
         pass
+
 
 # Made with Bob

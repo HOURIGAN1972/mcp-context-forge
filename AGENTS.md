@@ -67,6 +67,9 @@ make autoflake isort black pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make flake8 bandit interrogate pylint verify
+
+# Before committing Rust changes (plugins_rust/ or tools_rust/):
+make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ## Authentication & RBAC Overview
@@ -281,6 +284,16 @@ make test
 - Include tests for behavior changes
 - Require green lint and tests before PR
 - Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
+
+### Tone for GitHub Comments
+
+When posting PR reviews, issue comments, or any public-facing text on GitHub, use a collaborative and constructive tone:
+
+- Lead with what's good before raising concerns.
+- Frame issues as questions or options ("worth considering", "a couple of approaches") rather than directives.
+- Remember contributors are people doing their jobs — be direct about problems without being harsh.
+- Categorize findings clearly (blocking, suggestions, minor notes) so the author knows what must change vs. what's optional.
+- Avoid sounding algorithmic or robotic; write the way a respectful senior colleague would in a code review.
 
 ## GitHub Issues (Brief)
 

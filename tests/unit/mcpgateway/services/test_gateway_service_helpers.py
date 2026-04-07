@@ -190,7 +190,7 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     )
 
     db = MagicMock()
-    db.flush = Mock()
+    db.commit = Mock()  # Implementation uses commit()
     db.refresh = Mock()
     # Mock execute for orphaned resource/prompt detection
     db.execute = Mock(
@@ -271,6 +271,7 @@ def test_update_or_create_tools_authheaders_no_spurious_update():
     existing.auth_type = "authheaders"
     existing.auth_value = encoded  # Text column — already encoded
     existing.visibility = "public"
+    existing.title = None
 
     db = MagicMock()
     db.execute.return_value.scalars.return_value.all.return_value = [existing]

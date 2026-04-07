@@ -223,7 +223,7 @@ class TestGatewayServiceProxy:
 
         # Verify gateway was added
         mock_db.add.assert_called_once()
-        mock_db.flush.assert_called_once()  # Flush to get ID without committing
+        mock_db.commit.assert_called_once()  # Implementation uses commit()
         mock_db.refresh.assert_called_once()
 
         # Verify forward_request was called for MCP protocol
