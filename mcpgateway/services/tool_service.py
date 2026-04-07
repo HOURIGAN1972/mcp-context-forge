@@ -2519,6 +2519,11 @@ class ToolService(BaseService):
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
 
+            # Delete server-tool associations first to avoid foreign key constraint errors
+            # This is necessary because SQLite may not properly handle CASCADE with direct SQL DELETE
+            stmt_assoc = delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id)
+            db.execute(stmt_assoc)
+
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
             result = db.execute(stmt)
