@@ -355,6 +355,13 @@ async def disconnect_session(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
+    # Validate session_id format (must be valid UUID hex string)
+    try:
+        # Validate UUID format - will raise ValueError if invalid
+        uuid.UUID(session_id) if len(session_id) == 36 else uuid.UUID(hex=session_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid session ID format")
+
     session = await service.manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
@@ -368,7 +375,8 @@ async def disconnect_session(
     await session.websocket.close()
     await service.manager.remove_session(session_id)
 
-    return {"status": "disconnected", "session_id": session_id}
+    # Return the validated session_id from the session object to prevent XSS
+    return {"status": "disconnected", "session_id": session.session_id}
 
 
 @router.post("/sessions/{session_id}/request")

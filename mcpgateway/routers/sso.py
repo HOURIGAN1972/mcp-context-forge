@@ -635,11 +635,15 @@ async def delete_sso_provider(
     sso_service = SSOService(db)
 
     if not sso_service.delete_provider(provider_id):
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+        # Sanitize provider_id for error message to prevent XSS
+        safe_provider_id = sanitize_for_log(provider_id)
+        raise HTTPException(status_code=404, detail=f"SSO provider '{safe_provider_id}' not found")
 
     db.commit()
     db.close()
-    return {"message": f"SSO provider '{provider_id}' deleted successfully"}
+    # Sanitize provider_id for success message to prevent XSS
+    safe_provider_id = sanitize_for_log(provider_id)
+    return {"message": f"SSO provider '{safe_provider_id}' deleted successfully"}
 
 
 # ---------------------------------------------------------------------------

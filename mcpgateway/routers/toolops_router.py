@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.main import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
@@ -95,8 +96,10 @@ async def generate_testcases_for_tool(
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
+        # Sanitize tool_id to prevent XSS in returned test cases
+        safe_tool_id = SecurityValidator.sanitize_log_message(tool_id) if tool_id else None
         # logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
+        test_cases = await validation_generate_test_cases(safe_tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
         return test_cases
 
     except orjson.JSONDecodeError:
