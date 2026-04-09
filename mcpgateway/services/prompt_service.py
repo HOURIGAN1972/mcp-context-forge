@@ -44,7 +44,7 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -283,7 +283,6 @@ class PromptService(BaseService):
         self._event_service = EventService(channel_name="mcpgateway:prompt_events")
         # Use the module-level singleton for template caching
         self._jinja_env = _get_jinja_env()
-        self._plugin_manager: PluginManager | None = get_plugin_manager()
 
     @staticmethod
     def _should_fetch_gateway_prompt(prompt: DbPrompt) -> bool:
@@ -507,7 +506,7 @@ class PromptService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="prompt",
             entity_model=DbPrompt,
             limit=effective_limit,
@@ -1355,7 +1354,7 @@ class PromptService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -1822,7 +1821,6 @@ class PromptService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="prompt.render",
                     attributes={
@@ -1854,8 +1852,9 @@ class PromptService(BaseService):
         with create_span("prompt.render", span_attributes) as span:
             try:
                 # Check if any prompt hooks are registered to avoid unnecessary context creation
-                has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
-                has_post_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH)
+                plugin_manager = await self._get_plugin_manager(server_id)
+                has_pre_fetch = plugin_manager and plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
+                has_post_fetch = plugin_manager and plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH)
 
                 # Initialize plugin context variables only if hooks are registered
                 context_table = None
@@ -1878,7 +1877,7 @@ class PromptService(BaseService):
                         global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
 
                 if has_pre_fetch:
-                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                    pre_result, context_table = await plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_PRE_FETCH,
                         payload=PromptPrehookPayload(prompt_id=prompt_id, args=arguments),
                         global_context=global_context,
@@ -1966,7 +1965,7 @@ class PromptService(BaseService):
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
                 if has_post_fetch:
-                    post_result, _ = await self._plugin_manager.invoke_hook(
+                    post_result, _ = await plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
                         payload=PromptPosthookPayload(prompt_id=prompt.name, result=result),
                         global_context=global_context,
@@ -2064,7 +2063,6 @@ class PromptService(BaseService):
                 if db_span_id and observability_service and not db_span_ended:
                     try:
                         observability_service.end_span(
-                            db=db,
                             span_id=db_span_id,
                             status="ok" if success else "error",
                             status_message=error_message if error_message else None,
