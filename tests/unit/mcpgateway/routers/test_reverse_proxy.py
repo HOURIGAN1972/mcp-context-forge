@@ -493,27 +493,35 @@ class TestHTTPEndpoints:
 
     def test_disconnect_session_success(self, client, mock_auth, mock_websocket):
         """Test disconnecting an existing session."""
+        # Use a valid UUID format for session_id
+        import uuid
+        session_id = uuid.uuid4().hex
+        
         # Add a test session
-        session = ReverseProxySession("test-session", mock_websocket, "test-user")
-        manager.sessions["test-session"] = session
+        session = ReverseProxySession(session_id, mock_websocket, "test-user")
+        manager.sessions[session_id] = session
 
         try:
-            response = client.delete("/reverse-proxy/sessions/test-session")
+            response = client.delete(f"/reverse-proxy/sessions/{session_id}")
 
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "disconnected"
-            assert data["session_id"] == "test-session"
+            assert data["session_id"] == session_id
 
             # Session should be removed
-            assert "test-session" not in manager.sessions
+            assert session_id not in manager.sessions
         finally:
             # Clean up
             manager.sessions.clear()
 
     def test_disconnect_session_not_found(self, client, mock_auth):
         """Test disconnecting a non-existent session."""
-        response = client.delete("/reverse-proxy/sessions/nonexistent")
+        # Use a valid UUID format for session_id
+        import uuid
+        session_id = uuid.uuid4().hex
+        
+        response = client.delete(f"/reverse-proxy/sessions/{session_id}")
 
         assert response.status_code == 404
         data = response.json()
