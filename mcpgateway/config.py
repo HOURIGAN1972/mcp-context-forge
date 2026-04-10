@@ -1664,6 +1664,16 @@ class Settings(BaseSettings):
     # Timeout in seconds for each health check attempt
     mcp_session_pool_health_check_timeout: float = 5.0
     mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
+    # Global session caps to prevent resource exhaustion (0 = unlimited for backwards compat)
+    mcp_session_pool_max_total_keys: int = 0  # Max total pool keys across all buckets (0 = unlimited)
+    # Soft cap with eventual enforcement - in high-concurrency scenarios, multiple concurrent
+    # acquire() calls may pass the check before sessions are added to _active, temporarily
+    # overshooting the limit. Prevents unbounded growth but not strict at exact threshold.
+    mcp_session_pool_max_total_sessions: int = 0  # Max total active sessions across all buckets (0 = unlimited, soft cap)
+    # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
+    # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
+    # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
+    mcp_session_pool_jwt_identity_extraction: bool = True
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
@@ -1896,6 +1906,48 @@ class Settings(BaseSettings):
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
     # ===================================
+
+    # ===================================
+    # OpenTelemetry Baggage Configuration
+    # ===================================
+
+    otel_baggage_enabled: bool = Field(
+        default=False,
+        description="Enable HTTP header to W3C baggage conversion for distributed tracing context propagation",
+    )
+    otel_baggage_header_mappings: str = Field(
+        default="[]",
+        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
+    )
+    otel_baggage_propagate_to_external: bool = Field(
+        default=False,
+        description=(
+            "Propagate baggage to external downstream services via W3C baggage header. "
+            "When false (default), baggage is captured in spans only for internal observability. "
+            "Enable only for trusted internal microservices."
+        ),
+    )
+    otel_baggage_max_items: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description="Maximum number of baggage items from headers (security limit to prevent DoS)",
+    )
+    otel_baggage_max_size_bytes: int = Field(
+        default=8192,
+        ge=1024,
+        le=16384,
+        description="Maximum total size of header-derived baggage in bytes (security limit)",
+    )
+    otel_baggage_log_rejected: bool = Field(
+        default=True,
+        description="Log rejected headers for security auditing",
+    )
+    otel_baggage_log_sanitization: bool = Field(
+        default=True,
+        description="Log sanitization events for compliance tracking",
+    )
+
     # Well-Known URI Configuration
     # ===================================
 

@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,6 +59,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -95,7 +96,17 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
+from mcpgateway.plugins.framework import (
+    enable_plugins,
+    get_plugin_manager,
+    HttpHookType,
+    init_plugin_manager_factory,
+    PluginError,
+    PluginViolationError,
+    PromptHookType,
+    ResourceHookType,
+    shutdown_plugin_manager_factory,
+)
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -200,17 +211,11 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
-# Initialize plugin manager as a singleton.
-_PLUGINS_ENABLED = settings.plugins.enabled
-if _PLUGINS_ENABLED:
-    _plugin_settings = settings.plugins
-    # First-Party
-    from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
-
-    plugin_manager: PluginManager | None = PluginManager(_plugin_settings.config_file, timeout=_plugin_settings.plugin_timeout, hook_policies=HOOK_PAYLOAD_POLICIES)
-else:
-    plugin_manager = None  # pylint: disable=invalid-name
-
+# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
+# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
+if settings.plugins.enabled:
+    enable_plugins(True)
+    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -592,6 +597,7 @@ async def _run_internal_mcp_authentication(
     """
     # Run pre-request plugin hooks (e.g. WXO JWT → team token exchange)
     # before building the auth scope, so plugins can transform headers.
+    plugin_manager = await get_plugin_manager()
     if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST):
         headers, _, _ = await run_pre_request_hooks(
             plugin_manager=plugin_manager,
@@ -1517,6 +1523,57 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
+def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
+    """Create JWT identity extractor function for session pool.
+
+    Extracts stable user ID from JWT token to prevent bucket explosion
+    when using short-lived JWTs with rotating jti/exp/iat claims.
+
+    Returns:
+        Callable that extracts stable user identifier from request headers,
+        or None if extraction fails.
+    """
+
+    def jwt_identity_extractor(headers: dict) -> Optional[str]:
+        """Extract stable user ID from JWT token.
+
+        Decodes JWT without signature verification to extract sub, email, or user_id claim.
+        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
+
+        Args:
+            headers: Request headers dict (case-insensitive lookup handled by caller).
+
+        Returns:
+            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
+        """
+        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
+        if not auth_header:
+            return None
+
+        # Extract token from "Bearer <token>" format
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        else:
+            token = auth_header.strip()
+        if not token:
+            return None
+
+        try:
+            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
+            # This is NOT a security boundary - authentication happens separately via get_current_user.
+            # We only extract stable identity (sub/email/user_id) to group sessions by user.
+            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
+            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
+            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
+            # Try standard claims in order of preference
+            return claims.get("sub") or claims.get("email") or claims.get("user_id")
+        except Exception as e:
+            logger.debug(f"JWT identity extraction failed: {e}")
+            return None
+
+    return jwt_identity_extractor
+
+
 async def attempt_to_bootstrap_sso_providers():
     """
     Try to bootstrap SSO provider services based on settings.
@@ -1633,6 +1690,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
 
         max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
+
+        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
+        identity_extractor = None
+        if settings.mcp_session_pool_jwt_identity_extraction:
+            identity_extractor = _create_jwt_identity_extractor()
+            logger.info("JWT identity extraction enabled for session pool")
+
         init_mcp_session_pool(
             max_sessions_per_key=max_sessions_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,
@@ -1642,6 +1706,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
             circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
             identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
+            identity_extractor=identity_extractor,
             idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
             # Use dedicated transport timeout (default 30s to match MCP SDK default).
             # This is separate from health_check_timeout to allow long-running tool calls.
@@ -1649,6 +1714,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # Configurable health check chain - ordered list of methods to try.
             health_check_methods=settings.mcp_session_pool_health_check_methods,
             health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
+            max_total_keys=settings.mcp_session_pool_max_total_keys,
+            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
         )
         logger.info("MCP session pool initialized")
 
@@ -1666,14 +1733,44 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
-        if plugin_manager:
-            logger.debug("plugin_manager.initialize() starting...")
-            try:
-                await plugin_manager.initialize()
+        # Initialize plugin manager factory if plugins are enabled
+        if settings.plugins.enabled:
+            # First-Party
+            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+
+            init_plugin_manager_factory(
+                yaml_path=settings.plugins.config_file,
+                timeout=settings.plugins.plugin_timeout,
+                hook_policies=HOOK_PAYLOAD_POLICIES,
+                observability=None,  # Will be set later if needed
+                db_factory=SessionLocal,
+            )
+            logger.info("Plugin manager factory initialized")
+
+        try:
+            plugin_manager = await get_plugin_manager()
+            if plugin_manager:
                 logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
-            except Exception as diag_exc:
-                logger.error(f"plugin_manager.initialize() failed: {diag_exc}", exc_info=True)
-                raise
+                # Wire plugin manager to plugin service for admin endpoints
+                # First-Party
+                from mcpgateway.services.plugin_service import get_plugin_service  # pylint: disable=import-outside-toplevel
+
+                plugin_service = get_plugin_service()
+                plugin_service.set_plugin_manager(plugin_manager)
+                # Expose on app.state so the admin UI can show the correct enabled status
+                app.state.plugin_manager = plugin_manager
+        except Exception as diag_exc:
+            logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
+            raise
+
+        # Wire observability adapter to plugin manager if observability is enabled
+        if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
+            # First-Party
+            from mcpgateway.plugins.framework import set_global_observability  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter  # pylint: disable=import-outside-toplevel
+
+            set_global_observability(ObservabilityServiceAdapter(service=_service))
+            logger.info("🔍 Plugin observability adapter wired to ObservabilityService")
 
         if settings.enable_header_passthrough:
             await setup_passthrough_headers()
@@ -1692,17 +1789,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_pool_notification_service(gateway_service)
 
-        # Start RPC listener for multi-worker session affinity.
-        # This must run whenever session affinity is enabled, independently of whether
-        # the full session pool is enabled (affinity needs the ownership registry but
-        # not the full pooling functionality – see ADR-038).
+        # Start heartbeat and RPC listener for multi-worker session affinity.
+        # This must be outside the mcp_session_pool_enabled guard because
+        # affinity-only deployments (pool disabled, affinity enabled) still
+        # need heartbeat and RPC forwarding.
         if settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()
+            pool.start_heartbeat()
             pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
-            logger.info("Multi-worker session affinity RPC listener started")
+            logger.info("Multi-worker session affinity heartbeat and RPC listener started")
 
         await root_service.initialize()
         await completion_service.initialize()
@@ -1862,13 +1960,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 with suppress(asyncio.CancelledError):
                     await task
 
-        # Shutdown plugin manager
-        if plugin_manager:
-            try:
-                await plugin_manager.shutdown()
-                logger.info("Plugin manager shutdown complete")
-            except Exception as e:
-                logger.error(f"Error shutting down plugin manager: {str(e)}")
+        # Shutdown global plugin manager factory (no-op when plugins were never initialised)
+        try:
+            await shutdown_plugin_manager_factory()
+            logger.info("Plugin manager shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down plugin manager: {str(e)}")
 
         # Stop reverse proxy health monitoring
         if settings.mcpgateway_reverse_proxy_enabled:
@@ -1953,7 +2050,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await shutdown_services(services_to_shutdown)
 
         # Shutdown MCP session pool (before shared HTTP client)
-        if settings.mcp_session_pool_enabled:
+        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
+        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
@@ -3026,9 +3124,8 @@ else:
     app.add_middleware(MCPPathRewriteMiddleware)
 
 # Add HTTP authentication hook middleware for plugins (before auth dependencies)
-if plugin_manager:
-    app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
-    logger.info("🔌 HTTP authentication hooks enabled for plugins")
+# Middleware will get the global plugin manager at request time if factory exists
+app.add_middleware(HttpAuthMiddleware)
 
 # Add request logging middleware FIRST (always enabled for gateway boundary logging)
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
@@ -3093,24 +3190,34 @@ else:
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-    from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
     from mcpgateway.services.observability_service import ObservabilityService
 
     _service = ObservabilityService()
     app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
-    if plugin_manager:
-        plugin_manager.observability = ObservabilityServiceAdapter(service=_service)
+    # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
 
-# Add OTEL request-root tracing middleware when external tracing is enabled.
-# Registered last so it wraps the full request path, including mounted /mcp ASGI handling.
 if otel_tracing_enabled():
     app.add_middleware(OpenTelemetryRequestMiddleware)
     logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
 else:
     logger.info("🧵 OTEL request tracing middleware disabled")
+
+# Add OTEL baggage middleware after request tracing middleware so it executes first
+# and attaches baggage before the request-root span is created.
+if settings.otel_baggage_enabled and otel_tracing_enabled():
+    # First-Party
+    from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
+
+    app.add_middleware(BaggageMiddleware)
+    logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
+elif settings.otel_baggage_enabled and not otel_tracing_enabled():
+    logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
+else:
+    logger.debug("🧳 OTEL baggage middleware disabled")
+
 
 # Database query logging middleware (for N+1 detection)
 if settings.db_query_log_enabled:
@@ -3192,16 +3299,10 @@ if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
 
-# Store plugin manager in app state for access in routes
-app.state.plugin_manager = plugin_manager
+# Plugin manager is obtained from factory at request time via get_plugin_manager()
+# No need to store in app state; routes will get it from the factory when needed
 
-# Initialize plugin service with plugin manager
-if plugin_manager:
-    # First-Party
-    from mcpgateway.services.plugin_service import get_plugin_service
-
-    plugin_service = get_plugin_service()
-    plugin_service.set_plugin_manager(plugin_manager)
+# Plugin service will be initialized in lifespan after plugin manager is ready
 
 # Create API routers
 protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
@@ -8646,7 +8747,8 @@ async def _authorize_internal_mcp_server_scoped_method(
         )
         if db.is_active and db.in_transaction() is not None:
             db.commit()
-        fallback_reason = _server_scoped_direct_execution_fallback_reason(method)
+        plugin_manager = await get_plugin_manager()
+        fallback_reason = _server_scoped_direct_execution_fallback_reason(method, plugin_manager)
         if fallback_reason:
             return ORJSONResponse(
                 status_code=status.HTTP_200_OK,
@@ -8671,7 +8773,7 @@ async def _authorize_internal_mcp_server_scoped_method(
         db.close()
 
 
-def _server_scoped_direct_execution_fallback_reason(method: str) -> Optional[str]:
+def _server_scoped_direct_execution_fallback_reason(method: str, plugin_manager) -> Optional[str]:
     """Return a direct-execution fallback reason for server-scoped Rust MCP calls.
 
     This fail-closed helper lets Python remain the source of truth for plugin
@@ -8680,6 +8782,7 @@ def _server_scoped_direct_execution_fallback_reason(method: str) -> Optional[str
 
     Args:
         method: MCP method name being considered for Rust direct execution.
+        plugin_manager: Plugin manager instance to check for configured hooks.
 
     Returns:
         A stable fallback reason when Python must handle the request to preserve
@@ -10971,6 +11074,16 @@ app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+
+# Tool plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(tool_plugin_bindings_router)
+    logger.info("Tool plugin bindings router included")
+except ImportError as e:
+    logger.error(f"Tool plugin bindings router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
