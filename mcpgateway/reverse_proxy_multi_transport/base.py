@@ -139,4 +139,3 @@ class GatewayTransport(ABC):
         Returns:
             True if connected to gateway.
         """
-

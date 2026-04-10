@@ -203,4 +203,3 @@ class WebSocketAdapter(GatewayTransport):
             LOGGER.info("WebSocket receive loop ended, marking connection as closed")
             self._connected = False
             self._connection = None
-

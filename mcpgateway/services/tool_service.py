@@ -1212,6 +1212,7 @@ class ToolService(BaseService):
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            token_teams: Optional list of team IDs from token for authorization.
 
         Returns:
             Created tool information.

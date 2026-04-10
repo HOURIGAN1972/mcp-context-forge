@@ -150,4 +150,3 @@ class StdioAdapter(McpServerTransport):
             raise
         except Exception as e:
             LOGGER.error(f"Error reading stdout: {e}")
-
