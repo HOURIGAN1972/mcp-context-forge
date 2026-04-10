@@ -266,10 +266,10 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     # First-Party
     import mcpgateway.main as main_module
 
-    # Patch both the observability check and database initialization to avoid alembic issues during reload
+    # Patch database and observability operations that happen at module load time
     with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True), \
-         patch("mcpgateway.db.init_db"), \
-         patch("mcpgateway.db.refresh_slugs_on_startup"):
+         patch("mcpgateway.utils.db_isready.wait_for_db_ready"), \
+         patch("mcpgateway.bootstrap_db.main", new_callable=AsyncMock):
         reloaded = importlib.reload(main_module)
 
     try:
@@ -277,8 +277,8 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
         assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
     finally:
         # Restore the original module state
-        with patch("mcpgateway.db.init_db"), \
-             patch("mcpgateway.db.refresh_slugs_on_startup"):
+        with patch("mcpgateway.utils.db_isready.wait_for_db_ready"), \
+             patch("mcpgateway.bootstrap_db.main", new_callable=AsyncMock):
             importlib.reload(reloaded)
 
 
