@@ -382,7 +382,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
 
@@ -11258,6 +11258,7 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -11275,9 +11276,9 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
 
 @pytest.mark.asyncio
 async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public prompts appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public prompts appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -11291,6 +11292,7 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -11305,9 +11307,9 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public resources appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public resources appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -11321,6 +11323,7 @@ async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatc
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -19313,6 +19316,109 @@ class TestTemplateButtonGating:
         assert "editA2AAgent" not in html
         assert "/delete" not in html
 
+    # -- tokens_partial.html button tests --
+
+    def _render_tokens_partial(self, jinja_env, token_data_list, current_user_email="user@example.com", is_admin=False, user_team_roles=None):
+        """Helper to render tokens_partial.html with given context."""
+        template = jinja_env.get_template("tokens_partial.html")
+        return template.render(
+            data=token_data_list,
+            pagination={"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False},
+            links=None,
+            root_path="",
+            include_inactive=False,
+            team_id=None,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def test_tokens_revoke_button_uses_data_action_not_hx_delete(self, jinja_env):
+        """Revoke button must use data-action='token-revoke' (JS path), not hx-delete (broken HTMX path)."""
+        token_data = {
+            "id": "tok-abc-123",
+            "name": "My Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": True,
+            "is_revoked": False,
+            "revoked_at": None,
+            "revoked_by": None,
+            "revocation_reason": None,
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' in html
+        assert 'data-token-id="tok-abc-123"' in html
+        assert "hx-delete" not in html
+
+    def test_tokens_revoke_button_hidden_for_inactive_token(self, jinja_env):
+        """Revoke button must be hidden when token is inactive."""
+        token_data = {
+            "id": "tok-inactive",
+            "name": "Inactive Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": False,
+            "is_revoked": False,
+            "revoked_at": None,
+            "revoked_by": None,
+            "revocation_reason": None,
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' not in html
+
+    def test_tokens_revoke_button_hidden_for_revoked_token(self, jinja_env):
+        """Revoke button must be hidden when token is already revoked."""
+        token_data = {
+            "id": "tok-revoked",
+            "name": "Revoked Token",
+            "description": None,
+            "user_email": "user@example.com",
+            "team_id": None,
+            "team_name": None,
+            "created_at": "2026-04-01T00:00:00",
+            "expires_at": None,
+            "last_used": None,
+            "is_active": True,
+            "is_revoked": True,
+            "revoked_at": "2026-04-02T00:00:00",
+            "revoked_by": "admin@example.com",
+            "revocation_reason": "Test",
+            "tags": [],
+            "server_id": None,
+            "resource_scopes": [],
+            "ip_restrictions": [],
+            "time_restrictions": {},
+            "usage_limits": {},
+            "_json": "{}",
+        }
+        html = self._render_tokens_partial(jinja_env, [token_data])
+        assert 'data-action="token-revoke"' not in html
+
 
 class TestAdminGetToolPassesTeamRoles:
     """Tests that admin_get_tool and admin_list_tools pass requesting_user_team_roles."""
@@ -21541,7 +21647,7 @@ class TestPublicVisibilityGuard:
         mock_perm_service.check_permission = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
         monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
         return mock_perm_service
 
     @pytest.mark.asyncio

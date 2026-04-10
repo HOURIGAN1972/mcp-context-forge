@@ -222,11 +222,26 @@ class PluginCondition(BaseModel):
             The set as a serializable list.
         """
         if value:
-            values = []
+            values: list[Any] = []
             for key in value:
                 values.append(key)
             return values
         return None
+
+    @field_validator("content_types")
+    @classmethod
+    def normalize_content_types(cls, value: list[str] | None) -> list[str] | None:
+        """Pre-normalize content types during initialization.
+
+        Args:
+            value: List of content types to normalize.
+
+        Returns:
+            Normalized list of content types (base type without parameters).
+        """
+        if value:
+            return [ct.split(";", maxsplit=1)[0].strip().lower() for ct in value]
+        return value
 
 
 class AppliedTo(BaseModel):
@@ -1187,6 +1202,38 @@ class PluginConfig(BaseModel):
         return self
 
 
+class PluginConfigOverride(BaseModel):
+    """Plugin configuration override for tenant/server-specific customization.
+
+    This model represents the subset of PluginConfig fields that can be overridden
+    on a per-tenant or per-server basis. It's used to customize plugin behavior
+    without modifying the base configuration.
+
+    Attributes:
+        name (str): The name of the plugin to override (must match base plugin name).
+        config (Optional[dict[str, Any]]): Plugin-specific configuration overrides.
+        mode (Optional[PluginMode]): Override for plugin execution mode.
+        priority (Optional[int]): Override for plugin execution priority.
+
+    Examples:
+        >>> override = PluginConfigOverride(
+        ...     name="pii_filter",
+        ...     config={"sensitivity": "high"},
+        ...     mode=PluginMode.ENFORCE,
+        ...     priority=50
+        ... )
+        >>> override.name
+        'pii_filter'
+        >>> override.mode
+        <PluginMode.ENFORCE: 'enforce'>
+    """
+
+    name: str
+    config: Optional[dict[str, Any]] = None
+    mode: Optional[PluginMode] = None
+    priority: Optional[int] = None
+
+
 class PluginManifest(BaseModel):
     """Plugin manifest.
 
@@ -1382,6 +1429,7 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            content_type (Optional[str]): Content-Type header from the request.
             metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
             state (Optional[dict[str,Any]]): a global shared state across plugins.
 
@@ -1401,14 +1449,43 @@ class GlobalContext(BaseModel):
         '123'
         >>> c.server_id
         'srv1'
+        >>> ctx3 = GlobalContext(request_id="req-789", content_type="application/json")
+        >>> ctx3.content_type
+        'application/json'
+        >>> ctx4 = GlobalContext(request_id="req-999", content_type="application/json; charset=utf-8")
+        >>> ctx4.content_type
+        'application/json; charset=utf-8'
     """
 
     request_id: str
     user: Optional[Union[str, dict[str, Any]]] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    content_type: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str | None) -> str | None:
+        """Pre Validate content types during initialization.
+
+        Args:
+            value: str of content type.
+
+        Raises:
+            ValueError: if name is length > 200 or not a valid character.
+
+        Returns:
+            validated content type.
+        """
+        if value is None:
+            return value
+        if len(value) > 200:
+            raise ValueError("Content-Type header too long")
+        if not value.isprintable():
+            raise ValueError("Content-Type contains invalid characters")
+        return value
 
 
 class PluginContext(BaseModel):

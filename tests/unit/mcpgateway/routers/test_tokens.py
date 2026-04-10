@@ -12,8 +12,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import pytest
 from fastapi import HTTPException, status
+import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +42,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.token_catalog_service import TokenScope
 
+# Local
 # Test utilities
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
@@ -653,6 +654,18 @@ class TestAdminEndpoints:
         assert "Admin access required" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_list_all_tokens_narrowed_admin_blocked(self, mock_db, mock_admin_user):
+        """Test narrowed admin (token_teams present) is blocked from listing all tokens."""
+        narrowed_admin = dict(mock_admin_user)
+        narrowed_admin["token_teams"] = ["team-a"]  # Narrowed admin session
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=narrowed_admin, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Token oversight requires un-narrowed admin access" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
     async def test_admin_revoke_token_success(self, mock_db, mock_admin_user):
         """Test admin revoking any token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
@@ -682,6 +695,18 @@ class TestAdminEndpoints:
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_narrowed_admin_blocked(self, mock_db, mock_admin_user):
+        """Test narrowed admin (token_teams present) is blocked from admin revoke."""
+        narrowed_admin = dict(mock_admin_user)
+        narrowed_admin["token_teams"] = ["team-a"]  # Narrowed admin session
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_revoke_token(token_id="token-123", request=None, current_user=narrowed_admin, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Token oversight requires un-narrowed admin access" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_not_found(self, mock_db, mock_admin_user):
@@ -1091,6 +1116,7 @@ class TestGetCallerPermissionsTokenNarrowing:
     @pytest.mark.asyncio
     async def test_unrestricted_admin_returns_wildcard(self):
         """Un-narrowed admin (token_teams=None) gets ['*']."""
+        # First-Party
         from mcpgateway.routers.tokens import _get_caller_permissions
 
         user = {"email": "admin@test.com", "is_admin": True, "token_teams": None}
@@ -1100,6 +1126,7 @@ class TestGetCallerPermissionsTokenNarrowing:
     @pytest.mark.asyncio
     async def test_narrowed_admin_does_not_get_wildcard(self):
         """Narrowed admin (token_teams=['team-a']) must NOT get ['*'] (Finding 1)."""
+        # First-Party
         from mcpgateway.routers.tokens import _get_caller_permissions
 
         user = {"email": "admin@test.com", "is_admin": True, "token_teams": ["team-a"]}
@@ -1110,13 +1137,12 @@ class TestGetCallerPermissionsTokenNarrowing:
             result = await _get_caller_permissions(MagicMock(), user, team_id="team-a")
 
             assert result != ["*"], "Narrowed admin must not receive wildcard permissions"
-            mock_ps.get_user_permissions.assert_awaited_once_with(
-                user_email="admin@test.com", team_id="team-a", token_teams=["team-a"]
-            )
+            mock_ps.get_user_permissions.assert_awaited_once_with(user_email="admin@test.com", team_id="team-a", token_teams=["team-a"])
 
     @pytest.mark.asyncio
     async def test_public_only_admin_does_not_get_wildcard(self):
         """Public-only admin (token_teams=[]) must NOT get ['*'] (Finding 1)."""
+        # First-Party
         from mcpgateway.routers.tokens import _get_caller_permissions
 
         user = {"email": "admin@test.com", "is_admin": True, "token_teams": []}

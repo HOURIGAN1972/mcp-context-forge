@@ -58,6 +58,7 @@ from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -80,15 +81,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-
-# Plugin support imports (conditional)
-try:
-    # First-Party
-    from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
-
-    PLUGINS_AVAILABLE = True
-except ImportError:
-    PLUGINS_AVAILABLE = False
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -211,17 +203,6 @@ class ResourceService(BaseService):
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
-        # Initialize plugin manager if plugins are enabled in settings
-        self._plugin_manager = None
-        if PLUGINS_AVAILABLE:
-            try:
-                self._plugin_manager = get_plugin_manager()
-                if self._plugin_manager:
-                    logger.info("Plugin manager initialized for ResourceService with config: %s", settings.plugins.config_file)
-            except Exception as e:
-                logger.warning("Plugin manager initialization failed in ResourceService: %s", e)
-                self._plugin_manager = None
-
         # Initialize mime types
         mimetypes.init()
         # Add common MIME types that may be missing on some platforms (e.g., macOS)
@@ -285,7 +266,7 @@ class ResourceService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="resource",
             entity_model=DbResource,
             limit=effective_limit,
@@ -1177,7 +1158,7 @@ class ResourceService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -1725,7 +1706,6 @@ class ResourceService(BaseService):
                 if trace_id and observability_service:
                     try:
                         db_span_id = observability_service.start_span(
-                            db=db,
                             trace_id=trace_id,
                             name="invoke.resource",
                             attributes={
@@ -2074,13 +2054,11 @@ class ResourceService(BaseService):
                         # before making HTTP calls to prevent connection pool exhaustion
                         if db_span_id and observability_service and not db_span_ended:
                             try:
-                                with fresh_db_session() as fresh_db:
-                                    observability_service.end_span(
-                                        db=fresh_db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                observability_service.end_span(
+                                    span_id=db_span_id,
+                                    status="ok" if success else "error",
+                                    status_message=error_message if error_message else None,
+                                )
                                 db_span_ended = True
                                 logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                             except Exception as e:
@@ -2193,7 +2171,6 @@ class ResourceService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
@@ -2231,17 +2208,12 @@ class ResourceService(BaseService):
                 contexts = None
 
                 # Check if plugin manager is available and eligible for this request
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-
-                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
-                # pylint: disable=protected-access
-                if plugin_eligible and not self._plugin_manager._initialized:
-                    await self._plugin_manager.initialize()
-                # pylint: enable=protected-access
+                plugin_manager = await self._get_plugin_manager(server_id)
+                plugin_eligible = bool(plugin_manager and uri and ("://" in uri))
 
                 # Check if any resource hooks are registered to avoid unnecessary context creation
-                has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
-                has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
+                has_pre_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
+                has_post_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
 
                 # Initialize plugin context variables only if hooks are registered
                 global_context = None
@@ -2276,7 +2248,7 @@ class ResourceService(BaseService):
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
                     # Execute pre-fetch hooks with context from previous hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                    pre_result, contexts = await plugin_manager.invoke_hook(
                         ResourceHookType.RESOURCE_PRE_FETCH,
                         pre_payload,
                         global_context,
@@ -2492,7 +2464,7 @@ class ResourceService(BaseService):
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
-                        db=db,
+                        db,
                         resource_id=getattr(content, "id"),
                         resource_uri=getattr(content, "uri") or None,
                         resource_template_uri=getattr(content, "text") or None,
@@ -2509,7 +2481,7 @@ class ResourceService(BaseService):
                     # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "blob") or None,
@@ -2523,7 +2495,7 @@ class ResourceService(BaseService):
                             setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "text") or None,
@@ -2549,7 +2521,7 @@ class ResourceService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if has_post_fetch:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    post_result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
 
@@ -2596,13 +2568,11 @@ class ResourceService(BaseService):
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        with fresh_db_session() as fresh_db:
-                            observability_service.end_span(
-                                db=fresh_db,
-                                span_id=db_span_id,
-                                status="ok" if success else "error",
-                                status_message=error_message if error_message else None,
-                            )
+                        observability_service.end_span(
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
                         db_span_ended = True
                         logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                     except Exception as e:
