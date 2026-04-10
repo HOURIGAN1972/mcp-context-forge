@@ -634,7 +634,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
     def _worker_heartbeat_key(self) -> str:
         """Redis key for this worker's heartbeat."""
-        return f"mcpgw:worker_heartbeat:{WORKER_ID}"
+        return f"mcpgw:worker_heartbeat:{get_worker_id()}"
 
     def start_heartbeat(self) -> None:
         """Start the worker heartbeat background task.
@@ -1749,7 +1749,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 return 0
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
-                reclaimed = await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
+                reclaimed = await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, worker_id, ttl)
                 if reclaimed == 1:
                     logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
                     return None  # We won the reclaim - execute locally
