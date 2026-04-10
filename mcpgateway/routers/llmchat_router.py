@@ -793,7 +793,7 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
     """
     user_id = _resolve_user_id(input_data.user_id, user)
     # Sanitize user_id for safe output (defense against potential XSS)
-    safe_user_id = SecurityValidator.sanitize_log_message(user_id)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
 
     try:
         # Validate user_id
@@ -1052,7 +1052,7 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
     """
     user_id = _resolve_user_id(input_data.user_id, user)
     # Sanitize user_id for safe output (defense against potential XSS)
-    safe_user_id = SecurityValidator.sanitize_log_message(user_id)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
 
     # Validate input
     if not user_id:
@@ -1162,7 +1162,7 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
         raise HTTPException(status_code=400, detail="User ID is required")
 
     # Sanitize user_id for safe output (defense against potential XSS)
-    safe_user_id = SecurityValidator.sanitize_log_message(user_id)
+    safe_user_id = SecurityValidator.sanitize_display_text(user_id, "user_id")
 
     # Remove and shut down chat service
     chat_service = await get_active_session(user_id)
@@ -1185,7 +1185,7 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
         logger.error(f"Error during disconnect for user {safe_user_id}: {e}", exc_info=True)
         # Session already removed, so return success with warning
         # Sanitize exception message to prevent XSS
-        safe_warning = SecurityValidator.sanitize_log_message(str(e))
+        safe_warning = SecurityValidator.sanitize_display_text(str(e), "warning")
         return {"status": "disconnected_with_errors", "user_id": safe_user_id, "message": "Disconnected but cleanup encountered errors", "warning": safe_warning}
 
 
@@ -1232,7 +1232,7 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """
     resolved_user_id = _resolve_user_id(user_id, user)
     # Sanitize user_id for safe output (defense against potential XSS)
-    safe_user_id = SecurityValidator.sanitize_log_message(resolved_user_id)
+    safe_user_id = SecurityValidator.sanitize_display_text(resolved_user_id, "user_id")
     connected = bool(await get_active_session(resolved_user_id))
     return {"user_id": safe_user_id, "connected": connected}
 
