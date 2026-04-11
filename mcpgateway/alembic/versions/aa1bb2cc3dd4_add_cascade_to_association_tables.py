@@ -25,16 +25,30 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add ON DELETE CASCADE to association table foreign keys."""
+    # Standard
+    import sqlalchemy as sa
+
     # Get database connection to check if we're using PostgreSQL
     conn = op.get_bind()
     dialect_name = conn.dialect.name
 
     if dialect_name == "postgresql":
         # PostgreSQL: Drop and recreate constraints with CASCADE
+        inspector = sa.inspect(conn)
+
+        # Helper function to check if constraint exists
+        def constraint_exists(table_name: str, constraint_name: str) -> bool:
+            try:
+                fks = inspector.get_foreign_keys(table_name)
+                return any(fk.get("name") == constraint_name for fk in fks)
+            except Exception:
+                return False
 
         # server_tool_association
-        op.drop_constraint("fk_server_tool_association_server_id", "server_tool_association", type_="foreignkey")
-        op.drop_constraint("fk_server_tool_association_tool_id", "server_tool_association", type_="foreignkey")
+        if constraint_exists("server_tool_association", "fk_server_tool_association_server_id"):
+            op.drop_constraint("fk_server_tool_association_server_id", "server_tool_association", type_="foreignkey")
+        if constraint_exists("server_tool_association", "fk_server_tool_association_tool_id"):
+            op.drop_constraint("fk_server_tool_association_tool_id", "server_tool_association", type_="foreignkey")
         op.create_foreign_key(
             "fk_server_tool_association_server_id",
             "server_tool_association",
@@ -53,8 +67,10 @@ def upgrade() -> None:
         )
 
         # server_resource_association
-        op.drop_constraint("fk_server_resource_association_server_id", "server_resource_association", type_="foreignkey")
-        op.drop_constraint("fk_server_resource_association_resource_id", "server_resource_association", type_="foreignkey")
+        if constraint_exists("server_resource_association", "fk_server_resource_association_server_id"):
+            op.drop_constraint("fk_server_resource_association_server_id", "server_resource_association", type_="foreignkey")
+        if constraint_exists("server_resource_association", "fk_server_resource_association_resource_id"):
+            op.drop_constraint("fk_server_resource_association_resource_id", "server_resource_association", type_="foreignkey")
         op.create_foreign_key(
             "fk_server_resource_association_server_id",
             "server_resource_association",
@@ -73,8 +89,10 @@ def upgrade() -> None:
         )
 
         # server_prompt_association
-        op.drop_constraint("fk_server_prompt_association_server_id", "server_prompt_association", type_="foreignkey")
-        op.drop_constraint("fk_server_prompt_association_prompt_id", "server_prompt_association", type_="foreignkey")
+        if constraint_exists("server_prompt_association", "fk_server_prompt_association_server_id"):
+            op.drop_constraint("fk_server_prompt_association_server_id", "server_prompt_association", type_="foreignkey")
+        if constraint_exists("server_prompt_association", "fk_server_prompt_association_prompt_id"):
+            op.drop_constraint("fk_server_prompt_association_prompt_id", "server_prompt_association", type_="foreignkey")
         op.create_foreign_key(
             "fk_server_prompt_association_server_id",
             "server_prompt_association",
@@ -93,8 +111,10 @@ def upgrade() -> None:
         )
 
         # server_a2a_association
-        op.drop_constraint("fk_server_a2a_association_server_id", "server_a2a_association", type_="foreignkey")
-        op.drop_constraint("fk_server_a2a_association_a2a_agent_id", "server_a2a_association", type_="foreignkey")
+        if constraint_exists("server_a2a_association", "fk_server_a2a_association_server_id"):
+            op.drop_constraint("fk_server_a2a_association_server_id", "server_a2a_association", type_="foreignkey")
+        if constraint_exists("server_a2a_association", "fk_server_a2a_association_a2a_agent_id"):
+            op.drop_constraint("fk_server_a2a_association_a2a_agent_id", "server_a2a_association", type_="foreignkey")
         op.create_foreign_key(
             "fk_server_a2a_association_server_id",
             "server_a2a_association",
@@ -113,7 +133,8 @@ def upgrade() -> None:
         )
 
         # tool_metrics - Add CASCADE to allow deleting tools with metrics
-        op.drop_constraint("tool_metrics_tool_id_fkey", "tool_metrics", type_="foreignkey")
+        if constraint_exists("tool_metrics", "tool_metrics_tool_id_fkey"):
+            op.drop_constraint("tool_metrics_tool_id_fkey", "tool_metrics", type_="foreignkey")
         op.create_foreign_key(
             "tool_metrics_tool_id_fkey",
             "tool_metrics",
@@ -226,5 +247,3 @@ def downgrade() -> None:
         # SQLite: No action needed for downgrade
         pass
 
-
-# Made with Bob
