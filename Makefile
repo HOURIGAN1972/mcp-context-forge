@@ -752,7 +752,7 @@ test:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest -n auto --maxfail=0 -v --durations=5 \
+		uv run --active pytest -n auto --maxfail=0 -v --durations=5 --timeout=60 \
 			$(PYTEST_IGNORE_FLAGS)"
 
 test-verbose:

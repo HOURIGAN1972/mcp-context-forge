@@ -1196,6 +1196,7 @@ class ToolService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        token_teams: Optional[list[str]] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -1211,6 +1212,7 @@ class ToolService(BaseService):
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            token_teams: Optional list of team IDs from token for authorization.
 
         Returns:
             Created tool information.
@@ -1244,6 +1246,30 @@ class ToolService(BaseService):
             'tool_read'
         """
         try:
+            # SECURITY: Check gateway access if gateway_id is provided
+            # This ensures users can only create tools for gateways they have access to
+            if tool.gateway_id:
+                # Fetch the gateway to verify access
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id)).scalar_one_or_none()
+
+                if not gateway:
+                    raise ToolError(f"Gateway '{tool.gateway_id}' not found")
+
+                # First-Party
+                from mcpgateway.utils.gateway_access import check_gateway_access  # pylint: disable=import-outside-toplevel
+
+                # Check gateway access using token_teams from JWT
+                has_access = await check_gateway_access(db, gateway, created_by, token_teams)
+
+                if not has_access:
+                    # Access denied - raise exception
+                    raise PermissionError(
+                        f"Access denied: You do not have permission to create tools for " f"gateway '{gateway.name}' (ID: {gateway.id}). " f"Gateway visibility: {gateway.visibility}"
+                    )
+
+                logger.debug(f"Gateway access verified for tool '{tool.name}' creation " f"(gateway='{gateway.name}', user={created_by})")
+
+            # Use tool's own auth configuration (no inheritance)
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -2541,6 +2567,11 @@ class ToolService(BaseService):
                 with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
+
+            # Delete server-tool associations first to avoid foreign key constraint errors
+            # This is necessary because SQLite may not properly handle CASCADE with direct SQL DELETE
+            stmt_assoc = delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id)
+            db.execute(stmt_assoc)
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
@@ -4039,6 +4070,15 @@ class ToolService(BaseService):
                 ):
                     headers = tool_headers.copy()
                 if tool_integration_type == "REST":
+                    # Runtime auth inheritance: If tool has no auth configured and feature is enabled,
+                    # inherit from gateway at execution time (allows dynamic gateway auth updates)
+                    if not tool_auth_type and has_gateway and settings.tool_inherit_gateway_auth:
+                        if gateway_auth_type:
+                            tool_auth_type = gateway_auth_type
+                            tool_auth_value = gateway_auth_value
+                            tool_oauth_config = gateway_oauth_config
+                            logger.debug(f"Tool '{name}' inheriting auth from gateway at runtime " f"(auth_type={gateway_auth_type}, gateway={gateway_name})")
+
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
@@ -4365,6 +4405,106 @@ class ToolService(BaseService):
                             ),
                         )
 
+                    async def connect_to_proxy_server(server_url: str, headers: dict = headers):
+                        # Import get_worker_id for logging
+                        # First-Party
+                        from mcpgateway.routers.reverse_proxy import get_worker_id
+
+                        worker_id = get_worker_id()
+                        logger.info(f"[PROXY_TOOL_CALL] Worker {worker_id} | connect_to_proxy_server server_url={server_url} headers={headers} arguments={arguments}")
+
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+
+                        # Create the JSON-RPC request
+                        json_rpc_request = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": tool_name_original, "arguments": arguments}, "id": str(uuid.uuid4())}
+
+                        logger.info(f"json_rpc_request {json_rpc_request} ")
+
+                        try:
+                            # Lazy import to avoid circular dependency
+                            # First-Party
+                            from mcpgateway.services.reverse_proxy_service import extract_session_id_from_url, get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+                            reverse_proxy_service = get_reverse_proxy_service()
+                            forward_request_to_session = reverse_proxy_service.forward_request_to_session
+
+                            session_id = extract_session_id_from_url(server_url)
+                            logger.info(f"session_id {session_id}")
+
+                            # Log MCP call start (using local variables)
+                            mcp_start_time = time.time()
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call started: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
+                            )
+
+                            result = await forward_request_to_session(session_id=session_id, mcp_request=json_rpc_request, authentication=headers, auth_type=gateway_auth_type)
+                            logger.info(f"[PROXY_TOOL_CALL] Raw result from forward_request_to_session: {result}")
+
+                            # Check if this is an error response from cross-worker forwarding
+                            if isinstance(result, dict) and result.get("status") == "error":
+                                error_msg = result.get("error", "Unknown error from reverse proxy")
+                                logger.error(f"[PROXY_TOOL_CALL] Error response from reverse proxy: {error_msg}")
+                                tool_call_result = ToolResult(
+                                    content=[TextContent(type="text", text=f"Reverse proxy error: {error_msg}")],
+                                    is_error=True,
+                                )
+                            else:
+                                # Extract the payload from the reverse proxy envelope
+                                # The result structure is: {"type": "response", "sessionId": "...", "payload": {"jsonrpc": "2.0", "id": "...", "result": {...}}}
+                                payload = result.get("payload", result)
+                                logger.info(f"[PROXY_TOOL_CALL] Extracted payload: {payload}")
+
+                                # Extract the actual MCP result from the JSON-RPC response
+                                mcp_result = payload.get("result", {})
+                                logger.info(f"[PROXY_TOOL_CALL] MCP result: {mcp_result}")
+
+                                # Get content, structured content, and error status
+                                content = mcp_result.get("content", [])
+                                structured_content = mcp_result.get("structuredContent")
+                                is_error = mcp_result.get("isError", False)
+                                logger.info(f"[PROXY_TOOL_CALL] Content: {content}, structuredContent: {structured_content}, isError: {is_error}")
+
+                                # Return the raw payload as ToolResult with structuredContent - filtering will be done by the common code path
+                                # structured_content is optional, so it's safe for STDIO servers that don't return it
+                                tool_call_result = ToolResult(content=content, structured_content=structured_content, is_error=is_error)
+
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse", "success": True},
+                            )
+
+                        except Exception as ex:
+                            error_message = str(ex) if str(ex) else f"{type(ex).__name__}: {repr(ex)}"
+                            logger.error(f"[PROXY_TOOL_CALL] Exception in connect_to_proxy_server: {error_message}", exc_info=True)
+                            tool_call_result = ToolResult(
+                                content=[TextContent(type="text", text=f"Tool error encountered: {error_message}")],
+                                is_error=True,
+                            )
+                            # Log failed MCP call (using local variables)
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={"error_type": type(ex).__name__, "error_message": error_message, "traceback": str(ex.__traceback__)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "proxied"},
+                            )
+
+                        return tool_call_result
+
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
@@ -4381,6 +4521,9 @@ class ToolService(BaseService):
                             BaseException: On connection or communication errors
 
                         """
+
+                        logger.info(f"connect_to_sse_server server_url {server_url}  headers {headers}  arguments {arguments}")
+
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
                         tracing_active = otel_context_active()
@@ -4563,6 +4706,9 @@ class ToolService(BaseService):
                             ToolTimeoutError: If the tool invocation times out.
                             BaseException: On connection or communication errors
                         """
+
+                        logger.info(f"connect_to_streamablehttp_server server_url {server_url}  headers {headers}  arguments {arguments}")
+
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
                         tracing_active = otel_context_active()
@@ -4762,10 +4908,14 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
+                        logger.info(f"transport {transport}")
+
                         if transport == "sse":
                             tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                         elif transport == "streamablehttp":
                             tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
+                        elif transport == "proxied":
+                            tool_call_result = await connect_to_proxy_server(gateway_url, headers=headers)
 
                         # In direct proxy mode, use the tool result as-is without splitting content
                         if is_direct_proxy:
@@ -4832,9 +4982,12 @@ class ToolService(BaseService):
                             method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
                         request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
                     else:
-                        # Custom agents: Pass parameters directly
-                        params = arguments if isinstance(arguments, dict) else {}
-                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
+                        # Custom agents: Pass arguments directly as request body (no wrapping)
+                        # This allows custom agents to receive their expected format directly
+                        request_data = arguments if isinstance(arguments, dict) else {}
+                        # Add protocol_version to custom agent payloads
+                        if isinstance(request_data, dict) and a2a_agent_protocol_version:
+                            request_data["protocol_version"] = a2a_agent_protocol_version
 
                     # Add authentication
                     if a2a_agent_auth_type in ("api_key", "basic", "bearer", "authheaders") and a2a_agent_auth_value:

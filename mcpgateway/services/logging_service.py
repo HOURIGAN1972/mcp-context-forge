@@ -744,7 +744,14 @@ class LoggingService:
             # Set level to match our logging service level
             if hasattr(self, "_level"):
                 log_level = getattr(logging, self._level.upper())
-                uvicorn_logger.setLevel(log_level)
+
+                # Special handling for uvicorn.error to suppress verbose WebSocket frame logging
+                # WebSocket frame logs (< TEXT, > TEXT) appear at DEBUG level and can be very noisy
+                # Set uvicorn.error to at least WARNING to suppress these unless explicitly debugging
+                if logger_name == "uvicorn.error" and log_level < logging.WARNING:
+                    uvicorn_logger.setLevel(logging.WARNING)
+                else:
+                    uvicorn_logger.setLevel(log_level)
 
             # Track the logger
             self._loggers[logger_name] = uvicorn_logger

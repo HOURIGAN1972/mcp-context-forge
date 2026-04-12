@@ -7,7 +7,7 @@ install_python3 3.11
 install_go
 # Go causing mend failure
 rm -rf  mcp-servers/go
-pip3.11 install --upgrade pip 
+pip3.11 install --upgrade pip
 mkdir -p app
 echo "############# Python Version #################"
 python3 -V

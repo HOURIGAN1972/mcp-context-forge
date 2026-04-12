@@ -488,6 +488,40 @@ class ServerService(BaseService):
             'server_read'
         """
         try:
+            logger.info("Registering server: %s", server_in.name)
+
+            # Log all input parameters to understand where team_id comes from
+            logger.debug("register_server called with:")
+            logger.debug(f"  server_in.name: {server_in.name}")
+            logger.debug(f"  server_in.id: {getattr(server_in, 'id', None)}")
+            logger.debug(f"  server_in.team_id: {getattr(server_in, 'team_id', None)}")
+            logger.debug(f"  server_in.owner_email: {getattr(server_in, 'owner_email', None)}")
+            logger.debug(f"  server_in.visibility: {getattr(server_in, 'visibility', None)}")
+            logger.debug(f"  Parameter team_id: {team_id}")
+            logger.debug(f"  Parameter owner_email: {owner_email}")
+            logger.debug(f"  Parameter visibility: {visibility}")
+            logger.debug(f"  Parameter created_by: {created_by}")
+
+            # Check for existing server with the same name (with row locking to prevent race conditions)
+            # The unique constraint is on (team_id, owner_email, name), so we check based on that
+            owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
+            team_id_to_check = getattr(server_in, "team_id", None) or team_id
+
+            # Check for name conflicts
+            # Build conditions to check for existing server with same name/team/owner
+            conditions = [
+                DbServer.name == server_in.name,
+                DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
+                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
+            ]
+
+            existing_server = get_for_update(db, DbServer, where=and_(*conditions))
+            if existing_server:
+                # Always raise ServerNameConflictError for existing servers
+                # This allows the caller (e.g., reverse_proxy) to decide whether to update or fail
+                raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
+
+            # Create the new server record (only if we reach here - no existing server found)
             logger.info(f"Registering server: {server_in.name}")
             oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
             # # Create the new server record.
@@ -513,27 +547,12 @@ class ServerService(BaseService):
                 created_user_agent=created_user_agent,
                 version=1,
             )
-            # Check for existing server with the same name (with row locking to prevent race conditions)
-            # The unique constraint is on (team_id, owner_email, name), so we check based on that
-            owner_email_to_check = getattr(server_in, "owner_email", None) or owner_email or created_by
-            team_id_to_check = getattr(server_in, "team_id", None) or team_id
 
-            # Build conditions based on the actual unique constraint: (team_id, owner_email, name)
-            conditions = [
-                DbServer.name == server_in.name,
-                DbServer.team_id == team_id_to_check if team_id_to_check else DbServer.team_id.is_(None),
-                DbServer.owner_email == owner_email_to_check if owner_email_to_check else DbServer.owner_email.is_(None),
-            ]
-            if server_in.id:
-                conditions.append(DbServer.id != server_in.id)
-
-            existing_server = get_for_update(db, DbServer, where=and_(*conditions))
-            if existing_server:
-                raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
                 db_server.id = server_in.id
+
             logger.info(f"Adding server to DB session: {db_server.name}")
             db.add(db_server)
 
@@ -1194,34 +1213,50 @@ class ServerService(BaseService):
 
             # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:
-                server.tools = []
+                # Clear existing associations by removing all tools
+                server.tools.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_tools:
                     tool_ids = [tool_id for tool_id in server_update.associated_tools if tool_id]
                     if tool_ids:
                         tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
-                        server.tools = list(tools)
+                        # Add the new tools to the relationship
+                        server.tools.extend(tools)
 
             # Update associated resources if provided using bulk query
             if server_update.associated_resources is not None:
-                server.resources = []
+                # Clear existing associations by removing all resources
+                server.resources.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_resources:
                     resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
                         resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
-                        server.resources = list(resources)
+                        # Add the new resources to the relationship
+                        server.resources.extend(resources)
 
             # Update associated prompts if provided using bulk query
             if server_update.associated_prompts is not None:
-                server.prompts = []
+                # Clear existing associations by removing all prompts
+                server.prompts.clear()
+                # Flush to ensure the association table is updated
+                db.flush()
                 if server_update.associated_prompts:
                     prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
                     if prompt_ids:
                         prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
-                        server.prompts = list(prompts)
+                        # Add the new prompts to the relationship
+                        server.prompts.extend(prompts)
 
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            # Update enabled state if provided
+            if hasattr(server_update, "enabled") and server_update.enabled is not None:
+                server.enabled = server_update.enabled
 
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment

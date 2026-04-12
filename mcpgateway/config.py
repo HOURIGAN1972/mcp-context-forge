@@ -1456,6 +1456,9 @@ class Settings(BaseSettings):
     registry_cache_gateways_ttl: int = Field(default=20, ge=5, le=300, description="TTL in seconds for gateways list cache")
     registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
 
+    # Tool Configuration
+    tool_inherit_gateway_auth: bool = Field(default=True, description="Allow tools to inherit authentication from their associated gateway when auth is not explicitly provided")
+
     # Tool Lookup Cache Configuration (reduces hot-path DB lookups in invoke_tool)
     tool_lookup_cache_enabled: bool = Field(default=True, description="Enable tool lookup cache (tool name -> tool config)")
     tool_lookup_cache_ttl_seconds: int = Field(default=60, ge=5, le=600, description="TTL in seconds for tool lookup cache entries")
@@ -1518,6 +1521,12 @@ class Settings(BaseSettings):
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
     mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
+
+    # Reverse Proxy Health Monitoring
+    mcpgateway_reverse_proxy_heartbeat_timeout: int = Field(default=90, description="Seconds without heartbeat before marking reverse proxy gateway as unreachable")
+    mcpgateway_reverse_proxy_health_check_interval: int = Field(default=60, description="Seconds between reverse proxy session health checks")
+    mcpgateway_reverse_proxy_failure_threshold: int = Field(default=3, description="Consecutive missed heartbeats before marking gateway unreachable (-1 to disable)")
+
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect

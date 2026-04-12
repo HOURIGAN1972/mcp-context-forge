@@ -869,7 +869,16 @@ async def _check_streamable_permission(
     user_email = user_context.get("email")
     if not user_email:
         return False
-    
+
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
+
     # Extract team_id from token teams for RBAC role lookup.
     # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
     token_teams = user_context.get("teams")
@@ -2895,15 +2904,15 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
 
                     # Read request body
                     body_parts = []
@@ -2946,17 +2955,18 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug(f"[HTTP_AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", {get_worker_id()}, mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", {get_worker_id()}, mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", {get_worker_id()}, mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -3077,17 +3087,31 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
-                # Look for mcp-session-id in response headers
-                response_headers = message.get("headers", [])
-                for header_name, header_value in response_headers:
-                    if isinstance(header_name, bytes):
-                        header_name = header_name.decode("latin-1")
-                    if isinstance(header_value, bytes):
-                        header_value = header_value.decode("latin-1")
-                    if header_name.lower() == "mcp-session-id":
-                        captured_session_id = header_value
-                        break
+            if message["type"] == "http.response.start":
+                # Log response status for debugging
+                status = message.get("status", 0)
+                logger.info(f"SDK returning response | Status: {status} | Session: {mcp_session_id}")
+
+                if settings.mcpgateway_session_affinity_enabled:
+                    # Look for mcp-session-id in response headers
+                    response_headers = message.get("headers", [])
+                    for header_name, header_value in response_headers:
+                        if isinstance(header_name, bytes):
+                            header_name = header_name.decode("latin-1")
+                        if isinstance(header_value, bytes):
+                            header_value = header_value.decode("latin-1")
+                        if header_name.lower() == "mcp-session-id":
+                            captured_session_id = header_value
+                            break
+            elif message["type"] == "http.response.body":
+                # Log response body for 400 errors
+                body = message.get("body", b"")
+                if body:
+                    try:
+                        body_str = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+                        logger.info(f"SDK response body | Body: {body_str[:500]}")
+                    except Exception:
+                        logger.info(f"SDK response body | Body (binary): {len(body)} bytes")
             await send(message)
 
         # Propagate middleware-resolved context via ASGI scope so that MCP
@@ -3173,11 +3197,11 @@ class SessionManagerWrapper:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
                         # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()
                         await pool.register_pool_session_owner(session_to_register)
-                        logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", WORKER_ID, session_to_register[:8])
+                        logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", get_worker_id(), session_to_register[:8])
                     except Exception as e:
                         logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
                         logger.warning("Failed to register session ownership: %s", e)

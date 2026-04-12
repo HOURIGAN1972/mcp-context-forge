@@ -394,7 +394,7 @@ class ToolCreate(BaseModel):
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
-    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
+    request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP", "PROXIED"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
@@ -2618,12 +2618,14 @@ class TransportType(str, Enum):
         HTTP (str): Standard HTTP-based transport.
         STDIO (str): Standard input/output transport.
         STREAMABLEHTTP (str): HTTP transport with streaming.
+        PROXIED (str): Proxied standard input/output transport via HTTP.
     """
 
     SSE = "SSE"
     HTTP = "HTTP"
     STDIO = "STDIO"
     STREAMABLEHTTP = "STREAMABLEHTTP"
+    PROXIED = "PROXIED"
 
 
 class GatewayCreate(BaseModelWithConfigDict):
@@ -2633,7 +2635,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     Attributes:
         model_config (ConfigDict): Configuration for the model.
         name (str): Unique name for the gateway.
-        url (Union[str, AnyHttpUrl]): Gateway endpoint URL.
+        url (Optional[Union[str, AnyHttpUrl]]): Gateway endpoint URL (optional).
         description (Optional[str]): Optional description of the gateway.
         transport (str): Transport used by the MCP server, default is "SSE".
         auth_type (Optional[str]): Type of authentication (basic, bearer, authheaders, or none).
@@ -2649,7 +2651,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -2747,15 +2749,17 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     @field_validator("url")
     @classmethod
-    def validate_url(cls, v: str) -> str:
+    def validate_url(cls, v: Optional[str]) -> Optional[str]:
         """Validate gateway URL
 
         Args:
-            v (str): Value to validate
+            v (Optional[str]): Value to validate
 
         Returns:
-            str: Value if validated as safe
+            Optional[str]: Value if validated as safe, or None
         """
+        if v is None or v == "":
+            return None
         return validate_core_url(v, "Gateway URL")
 
     @field_validator("description")
@@ -2975,6 +2979,8 @@ class GatewayCreate(BaseModelWithConfigDict):
 
         # Check host allowlist (if configured)
         if settings.insecure_queryparam_auth_allowed_hosts:
+            if not self.url:
+                raise ValueError("URL is required when using query parameter authentication with host allowlist")
             parsed = urlparse(str(self.url))
             # Extract hostname properly (handles IPv6, ports, userinfo)
             hostname = parsed.hostname or ""
@@ -4122,6 +4128,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    enabled: Optional[bool] = Field(None, description="Whether the server is enabled")
 
     @field_validator("name")
     @classmethod

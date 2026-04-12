@@ -423,7 +423,7 @@ class TestAcquireOwnershipCheck:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="other-worker:5678"):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker:1234"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker:1234"):
                     with pytest.raises(RuntimeError, match="Session owned by another worker"):
                         await pool.acquire(url, headers={"x-mcp-session-id": "validid123"})
         await pool.close_all()
@@ -1130,7 +1130,7 @@ class TestCleanupPoolSessionOwner:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "myworker:1"):
+            with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="myworker:1"):
                 await pool._cleanup_pool_session_owner("validid123")
 
         mock_redis.delete.assert_awaited_once()
@@ -1144,7 +1144,7 @@ class TestCleanupPoolSessionOwner:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "myworker:1"):
+            with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="myworker:1"):
                 await pool._cleanup_pool_session_owner("validid123")
 
         mock_redis.delete.assert_not_awaited()
@@ -1549,7 +1549,7 @@ class TestForwardRequestToOwner:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     result = await pool.forward_request_to_owner(mcp_session_id, request_data, timeout=0.5)
 
         assert result == expected
@@ -1600,7 +1600,7 @@ class TestForwardRequestToOwner:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.1  # Very short timeout
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     with pytest.raises(asyncio.TimeoutError):
                         await pool.forward_request_to_owner("sess-123", {"method": "tools/call"}, timeout=0.1)
 
@@ -1674,7 +1674,7 @@ class TestDeadWorkerOwnershipReclaim:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
                         with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                             with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
@@ -1707,7 +1707,7 @@ class TestSessionOwnerCleanupTimeout:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+            with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                 await pool._cleanup_pool_session_owner("sess-123")
 
         mock_redis.delete.assert_awaited_once()
@@ -1722,7 +1722,7 @@ class TestSessionOwnerCleanupTimeout:
         mock_redis.delete = AsyncMock()
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+            with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                 await pool._cleanup_pool_session_owner("sess-123")
 
         mock_redis.delete.assert_not_awaited()
@@ -1839,7 +1839,7 @@ class TestForwardRequestDeadOwner:
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None
@@ -1876,7 +1876,7 @@ class TestForwardRequestDeadOwner:
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         # Should have forwarded to the new owner, not executed locally
@@ -1901,7 +1901,7 @@ class TestForwardRequestDeadOwner:
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None  # Key vanished - safe to execute locally
@@ -1922,7 +1922,7 @@ class TestForwardRequestDeadOwner:
             mock_settings.mcpgateway_session_affinity_ttl = 300
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None  # We're the owner - execute locally
@@ -2106,7 +2106,7 @@ class TestAcquireReclaim:
             mock_settings.mcpgateway_pool_max_sessions = 2
             mock_settings.mcpgateway_pool_semaphore_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                         with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
                             with pytest.raises(RuntimeError, match="reclaimed by another worker"):
@@ -2131,7 +2131,7 @@ class TestAcquireReclaim:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="my-worker"):
                     with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
                         with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
                             with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
@@ -2184,15 +2184,15 @@ class TestStartRpcListener:
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock, return_value={"result": {"ok": True}}) as mock_exec_rpc:
                         with patch.object(pool, "_execute_forwarded_http_request", new_callable=AsyncMock) as mock_exec_http:
                             with pytest.raises(asyncio.CancelledError):
                                 await pool.start_rpc_listener()
 
-        # Subscribe/unsubscribe to worker-specific channels
-        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
-        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        # Subscribe/unsubscribe to worker-specific channels (SSE, Streamable HTTP, and Reverse Proxy)
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
 
         # rpc_forward executed and response published
         mock_exec_rpc.assert_awaited_once()
@@ -2227,12 +2227,12 @@ class TestStartRpcListener:
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
                     await pool.start_rpc_listener()
 
-        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
         mock_pubsub.get_message.assert_not_awaited()
-        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1", "mcpgw:reverse_proxy:worker-1")
 
     @pytest.mark.asyncio
     async def test_start_rpc_listener_skips_non_messages_and_missing_response_channel(self):
@@ -2260,7 +2260,7 @@ class TestStartRpcListener:
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock) as mock_exec:
                         with pytest.raises(asyncio.CancelledError):
                             await pool.start_rpc_listener()
@@ -2774,7 +2774,7 @@ class TestForwardStreamableHttpToOwner:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                with patch("mcpgateway.services.mcp_session_pool.get_worker_id", return_value="worker-1"):
                     result = await pool.forward_streamable_http_to_owner(
                         owner_worker_id="worker-2",
                         mcp_session_id="sess-123",

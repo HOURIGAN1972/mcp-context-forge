@@ -1484,8 +1484,8 @@ class TestToolService:
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
-        # Verify execute was called for DELETE ... RETURNING
-        test_db.execute.assert_called_once()
+        # Verify execute was called twice: once for association deletion, once for tool deletion
+        assert test_db.execute.call_count == 2
         test_db.commit.assert_called_once()
 
         # Verify notification
@@ -1498,19 +1498,21 @@ class TestToolService:
         test_db.commit = Mock()
         test_db.rollback = Mock()
 
-        # Mock execute results: batch deletes return rowcount=0 to stop loop, final DELETE returns rowcount=1
+        # Mock execute results: batch deletes return rowcount=0 to stop loop, association delete, final DELETE returns rowcount=1
         batch_result = Mock()
         batch_result.rowcount = 0  # No rows to delete (stops the batch loop)
+        assoc_result = Mock()
+        assoc_result.rowcount = 0  # Association deletion
         delete_result = Mock()
         delete_result.rowcount = 1  # Final DELETE succeeded
-        test_db.execute = Mock(side_effect=[batch_result, batch_result, delete_result])
+        test_db.execute = Mock(side_effect=[batch_result, batch_result, assoc_result, delete_result])
 
         tool_service._notify_tool_deleted = AsyncMock()
 
         await tool_service.delete_tool(test_db, 1, purge_metrics=True)
 
-        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for DELETE = 3
-        assert test_db.execute.call_count == 3
+        # Verify execute was called: 1 for ToolMetric + 1 for ToolMetricsHourly + 1 for association + 1 for DELETE = 4
+        assert test_db.execute.call_count == 4
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -3312,25 +3314,32 @@ class TestToolService:
 
     async def test_subscribe_events(self, tool_service):
         """Test event subscription mechanism."""
-        # Create an event to publish
-        test_event = {"type": "test_event", "data": {"id": 1}}
+        # Create events to publish
+        test_event1 = {"type": "test_event", "data": {"id": 1}}
+        test_event2 = {"type": "test_event", "data": {"id": 2}}
 
-        # Start subscription in background
-        subscriber = tool_service.subscribe_events()
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        # Mock the event service to provide a simple async generator
+        async def mock_event_gen():
+            yield test_event1
+            yield test_event2
 
-        # Give a moment for subscription to be registered
-        await asyncio.sleep(0.01)
+        tool_service._event_service = MagicMock()
+        tool_service._event_service.subscribe_events.return_value = mock_event_gen()
+        tool_service._event_service.publish_event = AsyncMock()
 
-        # Publish event
-        await tool_service._publish_event(test_event)
+        # Collect events from subscription
+        events = []
+        async for event in tool_service.subscribe_events():
+            events.append(event)
 
-        # Get the event
-        received_event = await subscription_task
-        assert received_event == test_event
+        # Verify events were received
+        assert len(events) == 2
+        assert events[0] == test_event1
+        assert events[1] == test_event2
 
-        # Clean up
-        await subscriber.aclose()
+        # Verify publish_event can be called
+        await tool_service._publish_event(test_event1)
+        tool_service._event_service.publish_event.assert_awaited_once_with(test_event1)
 
     async def test_notify_tool_added(self, tool_service, mock_tool):
         """Test notification when tool is added."""
@@ -8456,3 +8465,98 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     attrs = mock_create_span.call_args[0][1]
     assert attrs["mcp.definition_mode"] is True
     assert attrs["team.scope"] == "team-1"
+
+
+# ============================================================================
+# Gateway Auth Runtime Tests (REST Tool Invocation)
+# ============================================================================
+
+
+class TestToolServiceGatewayAuthRuntime:
+    """Tests for gateway authentication being applied at REST tool invocation time.
+
+    These tests verify that when a REST MCP tool is invoked, the gateway's
+    authentication credentials are properly included in the HTTP request to
+    the target API endpoint.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_uses_gateway_bearer_auth(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST tool invocation should include gateway bearer token in request."""
+        # Setup gateway with bearer auth
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"Authorization": "Bearer gateway-token-123"}
+        mock_gateway.url = "http://api.example.com"
+
+        # Setup REST tool
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = "gateway-123"
+        mock_tool.gateway = mock_gateway
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+
+            # Verify the HTTP request included gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            assert "headers" in call_kwargs
+            assert "Authorization" in call_kwargs["headers"]
+            assert call_kwargs["headers"]["Authorization"] == "Bearer gateway-token-123"
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_without_gateway_auth(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """REST tool without gateway should work without auth headers."""
+        # Setup REST tool without gateway
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "http://api.example.com/endpoint"
+        mock_tool.gateway_id = None
+        mock_tool.gateway = None
+        mock_tool.jsonpath_filter = ""
+        mock_tool.headers = {}
+        mock_tool.auth_value = None
+
+        # Set up DB mock
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock HTTP response
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "success"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        # Mock metrics
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {})
+
+            # Verify the HTTP request was made without gateway auth
+            tool_service._http_client.get.assert_called_once()
+            call_kwargs = tool_service._http_client.get.call_args[1]
+            headers = call_kwargs.get("headers", {})
+            # Should not have Authorization header from gateway
+            assert "Authorization" not in headers or not headers.get("Authorization", "").startswith("Bearer gateway-")
+
+
+

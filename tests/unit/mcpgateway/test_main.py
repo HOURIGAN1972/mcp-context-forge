@@ -266,14 +266,20 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     # First-Party
     import mcpgateway.main as main_module
 
-    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
+    # Patch database and observability operations that happen at module load time
+    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True), \
+         patch("mcpgateway.utils.db_isready.wait_for_db_ready"), \
+         patch("mcpgateway.bootstrap_db.main", new_callable=AsyncMock):
         reloaded = importlib.reload(main_module)
 
     try:
         middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
         assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
     finally:
-        importlib.reload(reloaded)
+        # Restore the original module state
+        with patch("mcpgateway.utils.db_isready.wait_for_db_ready"), \
+             patch("mcpgateway.bootstrap_db.main", new_callable=AsyncMock):
+            importlib.reload(reloaded)
 
 
 # --------------------------------------------------------------------------- #

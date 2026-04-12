@@ -1,0 +1,1 @@
+/.git/,/.github/,/tests/,/charts/,/docs/,/mcp-servers/,/a2a-agents/,/infra/,/plugin_templates/,/scripts/,/tools_rust/,/mcpgateway/admin_ui/,/plugins/,/plugins_rust/,/llms/

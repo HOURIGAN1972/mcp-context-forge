@@ -42,6 +42,7 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from mcpgateway.utils.services_auth import encode_auth
 
 # ─── autouse fixtures ────────────────────────────────────────────────────────
 
@@ -6536,7 +6537,10 @@ class TestInvokeToolA2A:
         assert result is not None
         assert captured["url"] == "http://a2a-agent:9000"
         assert captured["headers"]["X-Test"] == "1"
+        # Custom agents (without trailing slash) should include protocol_version in payload
         assert captured["json"]["protocol_version"] == "0.3"
+        assert captured["json"]["interaction_type"] == "query"
+        assert captured["json"]["foo"] == "bar"
         plugin_manager.invoke_hook.assert_awaited_once()
 
     @pytest.mark.asyncio

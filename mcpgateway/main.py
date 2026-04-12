@@ -1657,7 +1657,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting ContextForge services")
 
     # Initialize Redis client early (shared pool for all services)
-    await get_redis_client()
+    # Wrap in timeout to prevent hanging on connection issues
+    logger.info("About to initialize Redis client...")
+    try:
+        await asyncio.wait_for(get_redis_client(), timeout=10.0)
+        logger.info("Redis client initialization completed")
+    except asyncio.TimeoutError:
+        logger.warning("Redis client initialization timeout - continuing without Redis")
+    except Exception as e:
+        logger.warning(f"Redis client initialization failed: {e} - continuing without Redis")
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -1857,6 +1865,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
 
+        # Start reverse proxy health monitoring if enabled
+        if settings.mcpgateway_reverse_proxy_enabled:
+            # First-Party
+            from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+            reverse_proxy_service = get_reverse_proxy_service()
+            await reverse_proxy_service.manager.start_health_monitoring()
+            logger.info("Reverse proxy health monitoring started")
+
         logger.info("All services initialized successfully")
 
         _install_sighup_handler()
@@ -1949,6 +1966,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Plugin manager shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop reverse proxy health monitoring
+        if settings.mcpgateway_reverse_proxy_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.reverse_proxy_service import get_reverse_proxy_service  # pylint: disable=import-outside-toplevel
+
+                reverse_proxy_service = get_reverse_proxy_service()
+                await reverse_proxy_service.manager.stop_health_monitoring()
+                logger.info("Reverse proxy health monitoring stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping reverse proxy health monitoring: {e}")
 
         # Stop cache invalidation subscriber
         try:
@@ -8890,14 +8919,14 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import MCPSessionPool, WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.mcp_session_pool import get_worker_id, MCPSessionPool  # pylint: disable=import-outside-toplevel
 
         if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | RPC request received, checking affinity", get_worker_id(), session_short, method)
         try:
             # First-Party
             from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
@@ -8908,20 +8937,20 @@ async def _maybe_forward_affinitized_rpc_request(
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
             )
             if forwarded_response is not None:
-                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
+                logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", get_worker_id(), session_short, method)
                 if "error" in forwarded_response:
                     return {"jsonrpc": "2.0", "error": forwarded_response["error"], "id": req_id}
                 return {"jsonrpc": "2.0", "result": forwarded_response.get("result", {}), "id": req_id}
         except RuntimeError:
-            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", WORKER_ID, session_short, method)
+            logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Pool not initialized, executing locally", get_worker_id(), session_short, method)
         return None
 
     if is_internally_forwarded and mcp_session_id:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.mcp_session_pool import get_worker_id  # pylint: disable=import-outside-toplevel
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", WORKER_ID, session_short, method)
+        logger.debug("[AFFINITY] Worker %s | Session %s... | Method: %s | Internally forwarded request, executing locally", get_worker_id(), session_short, method)
 
     return None
 
@@ -8967,11 +8996,11 @@ async def _execute_rpc_initialize(
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, get_worker_id  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()
             await pool.register_pool_session_owner(mcp_session_id)
-            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", WORKER_ID, mcp_session_id[:8])
+            logger.debug("[AFFINITY_INIT] Worker %s | Session %s... | Registered ownership after initialize", get_worker_id(), mcp_session_id[:8])
         except Exception as e:
             logger.warning("[AFFINITY_INIT] Failed to register session ownership: %s", e)
 

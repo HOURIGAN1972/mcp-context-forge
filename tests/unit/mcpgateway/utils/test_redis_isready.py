@@ -33,7 +33,7 @@ class MockRedis:
         self.attempts = 0
 
     @classmethod
-    def from_url(cls, url):
+    def from_url(cls, url, **kwargs):
         return cls()
 
     def ping(self):
@@ -112,7 +112,7 @@ def test_wait_for_redis_ready_retries(monkeypatch):
 
     class MockRedisWithFromUrl:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             return mock
 
     with patch("redis.Redis", MockRedisWithFromUrl):
@@ -136,7 +136,7 @@ def test_wait_for_redis_ready_fails(monkeypatch):
 
     class MockRedisWithFromUrl:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             return mock
 
     with patch("redis.Redis", MockRedisWithFromUrl):
@@ -187,7 +187,7 @@ def test_wait_for_redis_ready_async_path(monkeypatch):
 
     class MockRedisWithFromUrl:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             return mock
 
     with patch("redis.Redis", MockRedisWithFromUrl):
@@ -242,7 +242,7 @@ def test_logging_config(monkeypatch):
     # Patch Redis to always succeed
     class DummyRedis:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             return cls()
 
         def ping(self):
@@ -267,7 +267,7 @@ def test_logging_config_skips_basicconfig_when_handlers_present(monkeypatch):
 
     class DummyRedis:
         @classmethod
-        def from_url(cls, url):
+        def from_url(cls, url, **kwargs):
             return cls()
 
         def ping(self):
