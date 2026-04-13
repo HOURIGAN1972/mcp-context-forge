@@ -68,6 +68,7 @@ dependencies = [
     "parse>=1.21.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
+    "protobuf>=6.33.5",  # Transitive pin via observability deps; fixes CVE-2026-0994 in runtime image
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",

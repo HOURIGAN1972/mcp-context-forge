@@ -4,6 +4,69 @@
       {
         "id": "38a605b6-1509-4e04-8849-b22e91302b8e",
         "reason": "<Please provide reason for whitelisting if applicable>"
+      },
+      {
+        "id": "d82ef03d-2470-40c9-9725-9233d1c280af",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 876,
+        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 806). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "d1469155-b214-4bbe-bfb7-d694ef7789f5",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 1084,
+        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "af61b9d7-86ce-40c0-9837-2f7919cd05ea",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 1175,
+        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "3c321a2b-5c1d-47f3-84d2-545bb67caac7",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 1183,
+        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "1d1ec258-b46c-4f14-8c24-7d3f5ee46eae",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 1189,
+        "reason": "FALSE POSITIVE: JSON response with explicitly sanitized exception message (SecurityValidator.sanitize_display_text at line 1188). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "c71ec77a-75eb-458b-9dec-e31f9ebac1bd",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/llmchat_router.py",
+        "line": 1237,
+        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "d977d55f-66a9-4c17-bdfb-ffa9fb9b4925",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/toolops_router.py",
+        "line": 103,
+        "reason": "FALSE POSITIVE: JSON response with sanitized tool_id (SecurityValidator.sanitize_display_text at line 100) and internally generated test case data. FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "f566d126-2c3e-45f6-b42b-5e9d525d3bc3",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/toolops_router.py",
+        "line": 175,
+        "reason": "FALSE POSITIVE: JSON response with sanitized tool_id (SecurityValidator.sanitize_display_text at line 166) and validated database schema fields (tool_schema.name, tool_schema.description). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+      },
+      {
+        "id": "33f2a6a8-025f-43af-b49a-aef28a957d45",
+        "cwe": "CWE-79",
+        "file": "mcpgateway/routers/sso.py",
+        "line": 647,
+        "reason": "FALSE POSITIVE: JSON response with explicitly sanitized provider_id (SecurityValidator.sanitize_display_text at line 646). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
       }
     ]
   }
