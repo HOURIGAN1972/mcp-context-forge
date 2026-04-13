@@ -6,6 +6,13 @@
         "reason": "<Please provide reason for whitelisting if applicable>"
       },
       {
+        "id": "90be6b6e-f8fa-4581-88a8-bc7a4ab78044",
+        "cwe": "CWE-918",
+        "file": "mcpgateway/services/llm_proxy_service.py",
+        "line": 497,
+        "reason": "FALSE POSITIVE: Outbound LLM provider URL is validated immediately before the request via SecurityValidator.validate_url in mcpgateway/services/llm_proxy_service.py, which enforces SSRF protections implemented in mcpgateway/common/validators.py including blocked hostnames, localhost/loopback restrictions, private-network restrictions, allowed CIDR handling, and DNS fail-closed behavior. Provider api_base is also validated during provider create/update in mcpgateway/services/llm_provider_service.py."
+      },
+      {
         "id": "d82ef03d-2470-40c9-9725-9233d1c280af",
         "cwe": "CWE-79",
         "file": "mcpgateway/routers/llmchat_router.py",
