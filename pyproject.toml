@@ -264,7 +264,7 @@ grpc = [
     "grpcio>=1.78.0",
     "grpcio-reflection>=1.78.0",
     "grpcio-tools>=1.78.0",
-    "protobuf>=5.29.0,<7.0.0",  # grpcio-reflection 1.78.x caps at <7.0.0
+    "protobuf>=5.29.6,<7.0.0",  # CVE-2026-0994 fix: requires >=5.29.6 or >=6.33.5; grpcio-reflection 1.78.x caps at <7.0.0
 ]
 
 # UI Testing

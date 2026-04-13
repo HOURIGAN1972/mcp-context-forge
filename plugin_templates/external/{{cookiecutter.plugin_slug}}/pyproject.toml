@@ -67,7 +67,7 @@ mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git
 grpc = [
     "grpcio>=1.70.0",
     "grpcio-tools>=1.70.0",
-    "protobuf>=5.29.0",
+    "protobuf>=5.29.6",  # CVE-2026-0994 fix: requires >=5.29.6 or >=6.33.5
 ]
 
 dev = [
