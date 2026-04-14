@@ -137,6 +137,7 @@ RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade 'protobuf>=6.33.6' \
     && /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]" \
     && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
