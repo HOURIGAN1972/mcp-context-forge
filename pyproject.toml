@@ -68,7 +68,7 @@ dependencies = [
     "parse>=1.21.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
-    "protobuf>=6.33.5",  # Transitive pin via observability deps; fixes CVE-2026-0994 in runtime image
+    "protobuf>=6.33.6",  # Transitive pin via observability deps; fixes CVE-2026-0994 in runtime image
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",
@@ -265,7 +265,7 @@ grpc = [
     "grpcio>=1.78.0",
     "grpcio-reflection>=1.78.0",
     "grpcio-tools>=1.78.0",
-    "protobuf>=5.29.6,<7.0.0",  # CVE-2026-0994 fix: requires >=5.29.6 or >=6.33.5; grpcio-reflection 1.78.x caps at <7.0.0
+    "protobuf>=6.33.6,<7.0.0",  # CVE-2026-0994 fix: requires >=6.33.6; grpcio-reflection 1.78.x caps at <7.0.0
 ]
 
 # UI Testing
