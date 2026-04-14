@@ -5,7 +5,7 @@ USER root
 RUN microdnf install -y python3-devel gcc postgresql-devel
 RUN /app/.venv/bin/python3 -m ensurepip && \
     /app/.venv/bin/python3 -m pip install --upgrade pip && \
-    /app/.venv/bin/python3 -m pip install --upgrade 'protobuf>=6.33.6' && \
+    /app/.venv/bin/python3 -m pip install --upgrade 'protobuf>=6.33.6,<7.0.0' && \
     /app/.venv/bin/python3 -m pip install 'psycopg2' && \
     /app/.venv/bin/python3 -m pip install 'jwcrypto'
 RUN microdnf remove -y python3-devel gcc postgresql-devel
