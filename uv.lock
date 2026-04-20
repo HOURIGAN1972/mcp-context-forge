@@ -11,7 +11,6 @@ resolution-markers = [
 exclude-newer = "2026-04-20T17:00:00Z"
 
 [options.exclude-newer-package]
-cryptography = "2026-04-03T16:30:00Z"
 langchain-core = "2026-03-24T18:48:45Z"
 langchain-openai = "2026-03-23T18:59:20Z"
 requests = "2026-03-25T15:10:42Z"
