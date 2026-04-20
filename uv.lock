@@ -2966,7 +2966,7 @@ requires-dist = [
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.58.0" },
     { name = "prometheus-client", specifier = ">=0.24.1" },
     { name = "prometheus-fastapi-instrumentator", specifier = ">=7.1.0" },
-    { name = "protobuf", specifier = ">=6.33.6" },
+    { name = "protobuf", specifier = ">=6.33.6,<7.0.0" },
     { name = "protobuf", marker = "extra == 'grpc'", specifier = ">=6.33.6,<7.0.0" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "psycopg", extras = ["c", "binary"], marker = "extra == 'postgres'", specifier = ">=3.3.3" },
