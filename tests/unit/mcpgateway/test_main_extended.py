@@ -9880,21 +9880,14 @@ class TestRemainingCoverageGaps:
         assert result["status"] == "healthy"
 
         # Check MCP runtime fields
-        redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
-        assert redis_status is not None
-        assert redis_status.statusCode == 200
-        assert redis_status.message == "ready"
-        
-        # Check MCP runtime fields
-        assert result.mcp_runtime["mode"] == "python-rust-built-disabled"
-        assert result.mcp_runtime["mounted"] == "python"
-        assert result.mcp_runtime["rust_build_included"] is True
-        assert result.mcp_runtime["session_core_mode"] == "python"
-        assert result.mcp_runtime["event_store_mode"] == "python"
-        assert result.mcp_runtime["resume_core_mode"] == "python"
-        assert result.mcp_runtime["live_stream_core_mode"] == "python"
-        assert result.mcp_runtime["session_auth_reuse_mode"] == "python"
-        
+        assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
+        assert result["mcp_runtime"]["mounted"] == "python"
+        assert result["mcp_runtime"]["rust_build_included"] is True
+        assert result["mcp_runtime"]["session_core_mode"] == "python"
+        assert result["mcp_runtime"]["event_store_mode"] == "python"
+        assert result["mcp_runtime"]["resume_core_mode"] == "python"
+        assert result["mcp_runtime"]["live_stream_core_mode"] == "python"
+        assert result["mcp_runtime"]["session_auth_reuse_mode"] == "python"
         # Check response headers
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
@@ -9904,7 +9897,8 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
-        async def test_healthcheck_redis_removed(self, monkeypatch):
+
+    async def test_healthcheck_redis_removed(self, monkeypatch):
             """Test that /health endpoint no longer checks Redis."""
             # First-Party
             import mcpgateway.main as main_mod
