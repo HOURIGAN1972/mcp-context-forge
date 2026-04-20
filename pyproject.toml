@@ -36,7 +36,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<=3.13"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
