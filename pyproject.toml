@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "2026-04-20T17:00:00Z"
-exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z", cryptography = "2026-04-21T00:00:00Z" }
+exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z", cryptography = "2026-04-03T16:30:00Z" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -53,7 +53,7 @@ maintainers = [
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.5,<46.0.7",
+    "cryptography>=46.0.5",
     "fastapi>=0.135.1",
     "filelock>=3.25.2",
     "gunicorn>=25.1.0",
@@ -918,4 +918,3 @@ omit-covered-files = false
 # --------------------------------------------------------------------
 [tool.bandit]
 # No global skips - use inline # nosec comments for specific false positives
-
