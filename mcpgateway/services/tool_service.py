@@ -875,6 +875,9 @@ class ToolService(BaseService):
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
+        # Handle endpoint safely for both real objects and mocks
+        endpoint_value = getattr(tool, "endpoint", None)
+        tool_dict["endpoint"] = endpoint_value if isinstance(endpoint_value, (str, type(None))) else None
 
         # Only decode auth if include_auth=True AND we have encrypted credentials
         if include_auth and has_encrypted_auth:
@@ -1306,6 +1309,7 @@ class ToolService(BaseService):
                 display_name=tool.displayName or tool.name,
                 title=tool.title,
                 url=str(tool.url),
+                endpoint=tool.endpoint,
                 description=tool.description,
                 original_description=tool.description,
                 integration_type=tool.integration_type,
@@ -1868,6 +1872,7 @@ class ToolService(BaseService):
             display_name=tool.displayName or name,
             title=tool.title,
             url=str(tool.url),
+            endpoint=tool.endpoint,
             description=tool.description,
             original_description=tool.description,
             integration_type=tool.integration_type,
@@ -3812,6 +3817,7 @@ class ToolService(BaseService):
         tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
         tool_name_computed = tool_payload.get("name") or name
         tool_url = tool_payload.get("url")
+        tool_endpoint = tool_payload.get("endpoint")
         tool_integration_type = tool_payload.get("integration_type")
         tool_request_type = tool_payload.get("request_type")
         tool_headers = _decrypt_tool_headers_for_runtime(tool_payload.get("headers") or {})
@@ -4069,10 +4075,20 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
+                
+                # Construct tool_url from gateway_url + endpoint if needed
+                if tool_integration_type == "REST" and settings.tool_inherit_from_gateway:
+                    if (not tool_url or tool_url.strip() == "") and tool_endpoint and has_gateway and gateway_url:
+                        # Concatenate gateway URL with endpoint
+                        gateway_url_base = gateway_url.rstrip('/')
+                        endpoint_path = tool_endpoint.lstrip('/')
+                        tool_url = f"{gateway_url_base}/{endpoint_path}"
+                        logger.debug(f"Tool '{name}' constructed URL from gateway and endpoint: {tool_url}")
+                
                 if tool_integration_type == "REST":
                     # Runtime auth inheritance: If tool has no auth configured and feature is enabled,
                     # inherit from gateway at execution time (allows dynamic gateway auth updates)
-                    if not tool_auth_type and has_gateway and settings.tool_inherit_gateway_auth:
+                    if not tool_auth_type and has_gateway and settings.tool_inherit_from_gateway:
                         if gateway_auth_type:
                             tool_auth_type = gateway_auth_type
                             tool_auth_value = gateway_auth_value
@@ -5437,6 +5453,9 @@ class ToolService(BaseService):
                 tool.display_name = tool_update.displayName
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
+            endpoint_update = getattr(tool_update, "endpoint", None)
+            if endpoint_update is not None:
+                tool.endpoint = endpoint_update
             if tool_update.description is not None:
                 tool.description = tool_update.description
             if tool_update.title is not None:
