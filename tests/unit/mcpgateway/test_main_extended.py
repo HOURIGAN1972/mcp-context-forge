@@ -9842,52 +9842,42 @@ class TestRemainingCoverageGaps:
             def close(self):
                 self.closed = True
 
-        sess = FakeSession()
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: sess)
+        # Mock _check_db_ready to return failure
+        monkeypatch.setattr(main_mod, "_check_db_ready", lambda: (False, "db down"))
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
         # Check overall status
-        assert result["status"] == "unhealthy"
-        assert "error" in result
-        assert "db down" in result["error"]
-        assert sess.closed is True
+        assert result.status == "unhealthy"
+        assert len(result.status_items) == 1
+        assert result.status_items[0].status_code == 503
 
     async def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
-        class FakeSession:  # noqa: D401 - test helper
-            def execute(self, _stmt):  # noqa: ANN001
-                return None
-
-            def commit(self):
-                return None
-
-            def close(self):
-                return None
-
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        # Mock _check_db_ready to return success
+        monkeypatch.setattr(main_mod, "_check_db_ready", lambda: (True, None))
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
         # Check overall status
-        assert result["status"] == "healthy"
+        assert result.status == "healthy"
 
         # Check MCP runtime fields
-        assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
-        assert result["mcp_runtime"]["mounted"] == "python"
-        assert result["mcp_runtime"]["rust_build_included"] is True
-        assert result["mcp_runtime"]["session_core_mode"] == "python"
-        assert result["mcp_runtime"]["event_store_mode"] == "python"
-        assert result["mcp_runtime"]["resume_core_mode"] == "python"
-        assert result["mcp_runtime"]["live_stream_core_mode"] == "python"
-        assert result["mcp_runtime"]["session_auth_reuse_mode"] == "python"
+        assert result.mcp_runtime["mode"] == "python-rust-built-disabled"
+        assert result.mcp_runtime["mounted"] == "python"
+        assert result.mcp_runtime["rust_build_included"] is True
+        assert result.mcp_runtime["session_core_mode"] == "python"
+        assert result.mcp_runtime["event_store_mode"] == "python"
+        assert result.mcp_runtime["resume_core_mode"] == "python"
+        assert result.mcp_runtime["live_stream_core_mode"] == "python"
+        assert result.mcp_runtime["session_auth_reuse_mode"] == "python"
         # Check response headers
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
@@ -9903,31 +9893,23 @@ class TestRemainingCoverageGaps:
             # First-Party
             import mcpgateway.main as main_mod
     
-            class FakeSession:  # noqa: D401 - test helper
-                def execute(self, _stmt):  # noqa: ANN001
-                    return None
-    
-                def commit(self):
-                    return None
-    
-                def close(self):
-                    return None
-    
-            monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+            # Mock _check_db_ready to return success
+            monkeypatch.setattr(main_mod, "_check_db_ready", lambda: (True, None))
     
             # Configure Redis to be enabled - but /health should not check it
             monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
             monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
     
             response = FastAPIResponse()
-            result = main_mod.healthcheck(response)
+            result = await main_mod.healthcheck(response)
     
             # Check overall status - should be healthy (Redis not checked)
-            assert result["status"] == "healthy"
+            assert result.status == "healthy"
     
-            # Verify no status_items in response (simple dict format)
-            assert "status_items" not in result
-            assert "mcp_runtime" in result
+            # Verify status_items contains only Database (Redis not checked)
+            assert len(result.status_items) == 1
+            assert result.status_items[0].name == "Database"
+            assert result.mcp_runtime is not None
     
    
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
@@ -10149,24 +10131,16 @@ class TestRemainingCoverageGaps:
         # First-Party
         import mcpgateway.main as main_mod
 
-        class FakeSession:  # noqa: D401 - test helper
-            def execute(self, _stmt):  # noqa: ANN001
-                raise RuntimeError("db down")
-
-            def rollback(self):
-                return None
-
-            def close(self):
-                return None
-
-        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
+        # Mock _check_db_ready to return failure
+        monkeypatch.setattr(main_mod, "_check_db_ready", lambda: (False, "db down"))
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
-        assert result["status"] == "unhealthy"
-        assert "error" in result
+        assert result.status == "unhealthy"
+        assert len(result.status_items) == 1
+        assert result.status_items[0].status_code == 503
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):

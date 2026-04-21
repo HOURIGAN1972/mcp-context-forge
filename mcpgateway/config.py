@@ -1457,7 +1457,7 @@ class Settings(BaseSettings):
     registry_cache_catalog_ttl: int = Field(default=300, ge=60, le=600, description="TTL in seconds for catalog servers list cache (external catalog, changes infrequently)")
 
     # Tool Configuration
-    tool_inherit_gateway_auth: bool = Field(default=True, description="Allow tools to inherit authentication from their associated gateway when auth is not explicitly provided")
+    tool_inherit_from_gateway: bool = Field(default=True, description="Allow tools to inherit configuration (authentication, URL) from their associated gateway when not explicitly provided")
 
     # Tool Lookup Cache Configuration (reduces hot-path DB lookups in invoke_tool)
     tool_lookup_cache_enabled: bool = Field(default=True, description="Enable tool lookup cache (tool name -> tool config)")

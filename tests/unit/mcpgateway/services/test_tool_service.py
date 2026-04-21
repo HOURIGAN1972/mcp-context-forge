@@ -8560,3 +8560,171 @@ class TestToolServiceGatewayAuthRuntime:
 
 
 
+# ============================================================================
+# Endpoint Property Tests
+# ============================================================================
+
+
+class TestToolEndpointProperty:
+    """Tests for the new endpoint property functionality."""
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_includes_endpoint(self, tool_service):
+        """Test that convert_tool_to_read includes the endpoint field."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = "/v1/users"
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        assert result.endpoint == "/v1/users"
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_endpoint_none(self, tool_service):
+        """Test that convert_tool_to_read handles None endpoint."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = None
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        assert result.endpoint is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_endpoint_mock_object(self, tool_service):
+        """Test that convert_tool_to_read handles MagicMock endpoint gracefully."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.original_name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.display_name = "Test Tool"
+        tool.url = "https://api.example.com"
+        # endpoint will be a MagicMock when accessed via getattr
+        tool.description = "Test tool"
+        tool.original_description = "Test tool"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.created_at = datetime.now(timezone.utc)
+        tool.updated_at = datetime.now(timezone.utc)
+        tool.enabled = True
+        tool.reachable = True
+        tool.gateway_id = None
+        tool.gateway_slug = ""
+        tool.custom_name_slug = "test_tool"
+        tool.tags = []
+        tool.team_id = None
+        tool.team = None
+        tool.visibility = "public"
+
+        result = tool_service.convert_tool_to_read(tool)
+
+        # Should handle MagicMock and return None
+        assert result.endpoint is None
+
+    @pytest.mark.asyncio
+    async def test_update_tool_with_endpoint(self, tool_service):
+        """Test updating a tool with an endpoint value."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool1"
+        tool.name = "test_tool"
+        tool.custom_name = "test_tool"
+        tool.url = "https://api.example.com"
+        tool.endpoint = None
+        tool.visibility = "public"
+        tool.team_id = None
+        tool.owner_email = "test@example.com"
+        tool.version = 1
+        tool.gateway_id = None
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+        tool_update.custom_name = None
+        tool_update.displayName = None
+        tool_update.title = None
+        tool_update.url = None
+        tool_update.endpoint = "/v2/users"
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None
+        tool_update.auth = None
+        tool_update.tags = None
+
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool1", "endpoint": "/v2/users"}),
+        ):
+            result = await tool_service.update_tool(db, "tool1", tool_update)
+
+            # Verify endpoint was updated
+            assert tool.endpoint == "/v2/users"
+            assert result["endpoint"] == "/v2/users"
+
+

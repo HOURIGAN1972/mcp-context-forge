@@ -392,6 +392,7 @@ class ToolCreate(BaseModel):
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
+    endpoint: Optional[str] = Field(None, description="Tool endpoint")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP", "PROXIED"] = Field("SSE", description="HTTP method to be used for invoking the tool")
@@ -968,6 +969,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
+    endpoint: Optional[str] = Field(None, description="Tool endpoint")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
@@ -1401,8 +1403,9 @@ class ToolRead(BaseModelWithConfigDict):
 
     id: str
     original_name: str
-    url: Optional[str]
-    description: Optional[str]
+    url: Optional[str] = None
+    endpoint: Optional[str] = None
+    description: Optional[str] = None
     original_description: Optional[str] = None
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
@@ -7763,7 +7766,7 @@ class CacheMetricsSchema(BaseModel):
     keyspace_misses: int = Field(0, description="Failed key lookups")
 
 
-class HealthStatusItem(BaseModel):
+class HealthStatusItem(BaseModelWithConfigDict):
     """Individual health status item for a service component."""
 
     name: str = Field(..., description="Component name (e.g., 'Database', 'Cache')")
@@ -7771,7 +7774,7 @@ class HealthStatusItem(BaseModel):
     message: str = Field(..., description="Status message describing the component state")
 
 
-class HealthCheckResponse(BaseModel):
+class HealthCheckResponse(BaseModelWithConfigDict):
     """Health check response containing status of all monitored components."""
 
     status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
