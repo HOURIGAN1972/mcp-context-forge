@@ -10491,45 +10491,34 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 ####################
 # Healthcheck      #
 ####################
-@app.get("/health")
-def healthcheck(response: Response = None):
+@app.get("/health", response_model=HealthCheckResponse)
+async def healthcheck(response: Response):
     """
     Perform a basic health check to verify database connectivity.
 
-    Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
-    Uses a dedicated session to avoid cross-thread issues and double-commit
-    from get_db dependency. All DB operations happen in the same thread.
+    This is a lightweight health check that only verifies database connectivity.
+    For comprehensive readiness checks including cache, use /ready endpoint.
 
     Args:
         response: Response object used to attach runtime-mode headers.
 
     Returns:
-        dict: Simple health status with database check and MCP runtime info.
+        HealthCheckResponse: Health status with database check and MCP runtime info.
     """
-    db = SessionLocal()
-    try:
-        db.execute(text("SELECT 1"))
-        # Explicitly commit to release PgBouncer backend connection in transaction mode.
-        db.commit()
-        if response:
-            _apply_runtime_mode_headers(response)
-        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
-    except Exception as e:
-        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = f"Database health check failed: {str(e)}"
+    # Database health check (run in thread to avoid blocking event loop)
+    db_success, db_error = await asyncio.to_thread(_check_db_ready)
+    
+    if db_success:
+        status_items = [HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful")]
+        overall_status = "healthy"
+    else:
+        error_message = f"Database health check failed: {db_error}"
         logger.error(error_message)
-        if response:
-            _apply_runtime_mode_headers(response)
-        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
-    finally:
-        db.close()
+        status_items = [HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database")]
+        overall_status = "unhealthy"
+    
+    _apply_runtime_mode_headers(response)
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 
 def _check_db_ready() -> tuple[bool, str | None]:
