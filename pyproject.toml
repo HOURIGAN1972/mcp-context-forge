@@ -92,7 +92,7 @@ dependencies = [
 # ----------------------------------------------------------------
 [dependency-groups]
 dev = [
-    "a2a-sdk[http-server]",
+    "a2a-sdk[http-server]>=0.3.26,<1.0",
     "aiohttp>=3.13.3",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
