@@ -65,7 +65,16 @@ if [ $MULTI_ARCH_BUILD == "1" ]; then
 else
    echo "Building single architecture image"
    BASE_IMAGE_REPO="${IMAGE_BASE}:${BASE_IMAGE_TAG}"
+   
    sed -i "s%BASE_IMAGE_REPO%${BASE_IMAGE_REPO}%g" Containerfile.cyberfraud
+      # Check if node:lts exists in Containerfile.lite before substitution
+   if ! grep -q "FROM node:lts" Containerfile.lite; then
+      echo "ERROR: Expected to find 'FROM node:lts' in Containerfile.lite for substitution"
+      echo "Cannot proceed with build - Containerfile.lite may have been modified"
+      exit 1
+   fi
+   sed -i "s%FROM node:lts%FROM registry.access.redhat.com/ubi9/nodejs-24:9.7%g" Containerfile.lite
+
    make IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" docker-prod && \
    make IMAGE_BASE="$IMAGE_NAME" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
    docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE}" && \
