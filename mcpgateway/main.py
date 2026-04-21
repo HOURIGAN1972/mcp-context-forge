@@ -10492,9 +10492,9 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-async def healthcheck(response: Response):
+def healthcheck(response: Response = None):
     """
-    Perform health check to verify database and Redis connectivity.
+    Perform a basic health check to verify database connectivity.
 
     Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
@@ -10504,15 +10504,16 @@ async def healthcheck(response: Response):
         response: Response object used to attach runtime-mode headers.
 
     Returns:
-        A HealthCheckResponse with the health status and optional error message.
+        dict: Simple health status with database check and MCP runtime info.
     """
-    status_items = []
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Databse Connection Successful"))
+        if response:
+            _apply_runtime_mode_headers(response)
+        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -10524,91 +10525,104 @@ async def healthcheck(response: Response):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database health check failed: {str(e)}"
         logger.error(error_message)
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Databse"))
+        if response:
+            _apply_runtime_mode_headers(response)
+        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
     finally:
         db.close()
 
-    # Check Redis
-    if settings.cache_type == "redis" and settings.redis_url:
+
+def _check_db_ready() -> tuple[bool, str | None]:
+    """
+    Check database connectivity in a thread-safe manner.
+
+    Returns:
+        tuple: (success: bool, error_message: str | None)
+    """
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        # Explicitly commit to release PgBouncer backend connection in transaction mode.
+        db.commit()
+        return (True, None)
+    except Exception as e:
+        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
-            # is_redis_available() checks if Redis is available and responding to ping.
-            if await is_redis_available():
-                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_200_OK, message="ready"))
-            else:
-                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
-        except Exception as e:
-            logger.error(f"Redis health check failed: {str(e)}")
-            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return (False, str(e))
+    finally:
+        db.close()
 
-    # Determine overall status:
-    # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
-    # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
-    database_status = next((item for item in status_items if item.name == "Database"), None)
-    redis_status = next((item for item in status_items if item.name == "Redis"), None)
 
-    # Check database health
-    database_healthy = database_status and database_status.statusCode == 200
+@app.get("/ready", response_model=HealthCheckResponse)
+async def readiness_check(response: Response):
+    """
+    Perform a comprehensive readiness check to verify all dependencies.
+
+    This endpoint checks:
+    - Database connectivity (via asyncio.to_thread to avoid blocking)
+    - Cache availability (if enabled)
+
+    Returns HTTP 200 when ready, HTTP 503 when not ready.
+
+    Args:
+        response: Response object used to attach runtime-mode headers and status code.
+
+    Returns:
+        A HealthCheckResponse with detailed component health status.
+        HTTP 200 if all components are healthy (ready).
+        HTTP 503 if any component is unhealthy (not ready).
+    """
+    status_items = []
+
+    # Database health check (run in thread to avoid blocking event loop)
+    db_success, db_error = await asyncio.to_thread(_check_db_ready)
+
+    if db_success:
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
+    else:
+        error_message = f"Database health check failed: {db_error}"
+        logger.error(error_message)
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
 
     # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
     redis_enabled = settings.cache_type == "redis" and settings.redis_url
-    redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
-
-    overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
-
-    _apply_runtime_mode_headers(response)
-    return HealthCheckResponse(status=overall_status, statusItems=status_items, mcp_runtime=_mcp_runtime_status_payload())
-
-
-@app.get("/ready")
-async def readiness_check():
-    """
-    Perform a readiness check to verify if the application is ready to receive traffic.
-
-    Creates and manages its own session inside the worker thread to ensure all DB
-    operations (create, execute, commit, rollback, close) happen in the same thread.
-    This avoids cross-thread session issues and double-commit from get_db.
-
-    Returns:
-        JSONResponse with status 200 if ready, 503 if not.
-    """
-
-    def _check_db() -> str | None:
-        """Check database connectivity by executing a simple query.
-
-        Returns:
-            None if successful, error message string if failed.
-        """
-        # Create session in this thread - all DB operations stay in the same thread.
-        db = SessionLocal()
+    if redis_enabled:
         try:
-            db.execute(text("SELECT 1"))
-            # Explicitly commit to release PgBouncer backend connection.
-            db.commit()
-            return None  # Success
+            # is_redis_available() checks if Redis is available and responding to ping.
+            if await is_redis_available():
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="Cache Connection Successful"))
+            else:
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
         except Exception as e:
-            # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
-            try:
-                db.rollback()
-            except Exception:
-                try:
-                    db.invalidate()
-                except Exception:
-                    pass  # nosec B110 - Best effort cleanup on connection failure
-            return str(e)
-        finally:
-            db.close()
+            logger.error(f"Redis health check failed: {str(e)}")
+            status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
 
-    # Run the blocking DB check in a thread to avoid blocking the event loop.
-    error = await asyncio.to_thread(_check_db)
-    if error:
-        error_message = f"Readiness check failed: {error}"
-        logger.error(error_message)
-        response = ORJSONResponse(content={"status": "not ready", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}, status_code=503)
-        _apply_runtime_mode_headers(response)
-        return response
-    response = ORJSONResponse(content={"status": "ready", "mcp_runtime": _mcp_runtime_status_payload()}, status_code=200)
+    # Determine overall status:
+    # - "ready" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unready" if Database is unhealthy (503) OR Redis is unhealthy when enabled
+    database_status = next((item for item in status_items if item.name == "Database"), None)
+    redis_status = next((item for item in status_items if item.name == "Cache"), None)
+
+    # Check database health
+    database_healthy = database_status and database_status.status_code == 200
+
+    # Redis is healthy if: not enabled OR (enabled AND status is 200)
+    redis_healthy = not redis_enabled or (redis_status and redis_status.status_code == 200)
+
+    is_ready = database_healthy and redis_healthy
+    overall_status = "ready" if is_ready else "unready"
+
+    # Set HTTP status code: 200 for ready, 503 for unready
+    response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+
     _apply_runtime_mode_headers(response)
-    return response
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 
 @app.get("/health/security", tags=["health"])

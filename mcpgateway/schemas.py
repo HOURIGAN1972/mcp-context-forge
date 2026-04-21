@@ -7769,8 +7769,8 @@ class CacheMetricsSchema(BaseModel):
 class HealthStatusItem(BaseModel):
     """Individual health status item for a service component."""
 
-    name: str = Field(..., description="Component name (e.g., 'Database', 'Redis')")
-    statusCode: int = Field(..., description="HTTP status code (200 for healthy, 503 for unhealthy)")
+    name: str = Field(..., description="Component name (e.g., 'Database', 'Cache')")
+    status_code: int = Field(..., description="HTTP status code (200 for healthy, 503 for unhealthy)")
     message: str = Field(..., description="Status message describing the component state")
 
 
@@ -7778,7 +7778,7 @@ class HealthCheckResponse(BaseModel):
     """Health check response containing status of all monitored components."""
 
     status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
-    statusItems: List[HealthStatusItem] = Field(..., description="List of component health statuses")
+    status_items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
     mcp_runtime: Dict[str, Any] = Field(default_factory=dict, description="MCP runtime diagnostics and configuration")
 
 
