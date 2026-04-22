@@ -4076,7 +4076,7 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
-                
+
                 # Construct tool_url from gateway_url + endpoint if needed
                 if tool_integration_type == "REST" and settings.tool_inherit_from_gateway:
                     logger.info(
@@ -4087,16 +4087,13 @@ class ToolService(BaseService):
                     )
                     if (not tool_url or tool_url.strip() == "") and tool_endpoint and has_gateway and gateway_url:
                         # Concatenate gateway URL with endpoint
-                        gateway_url_base = gateway_url.rstrip('/')
-                        endpoint_path = tool_endpoint.lstrip('/')
+                        gateway_url_base = gateway_url.rstrip("/")
+                        endpoint_path = tool_endpoint.lstrip("/")
                         tool_url = f"{gateway_url_base}/{endpoint_path}"
-                        logger.info(
-                            f"Tool '{name}' constructed URL from gateway and endpoint: "
-                            f"gateway_url_base={gateway_url_base!r} + endpoint_path={endpoint_path!r} = {tool_url!r}"
-                        )
+                        logger.info(f"Tool '{name}' constructed URL from gateway and endpoint: " f"gateway_url_base={gateway_url_base!r} + endpoint_path={endpoint_path!r} = {tool_url!r}")
                     else:
                         logger.info(f"Tool '{name}' using existing URL (no construction needed): {tool_url!r}")
-                
+
                 if tool_integration_type == "REST":
                     # Runtime auth inheritance: If tool has no auth configured and feature is enabled,
                     # inherit from gateway at execution time (allows dynamic gateway auth updates)
@@ -4186,7 +4183,7 @@ class ToolService(BaseService):
                             f"tool_url from DB: {tool_url!r}, tool_endpoint: {tool_endpoint!r}, "
                             f"gateway_url: {gateway_url!r}, TOOL_INHERIT_FROM_GATEWAY: {settings.tool_inherit_from_gateway}"
                         )
-                    
+
                     parsed = urlparse(final_url)
                     if not parsed.scheme:
                         raise ToolInvocationError(
