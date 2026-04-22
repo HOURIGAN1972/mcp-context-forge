@@ -682,6 +682,7 @@ class ToolService(BaseService):
             "name": tool.name,
             "original_name": tool.original_name,
             "url": tool.url,
+            "endpoint": tool.endpoint,
             "description": tool.description,
             "original_description": tool.original_description,
             "integration_type": tool.integration_type,
@@ -4075,16 +4076,24 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
-                
+
                 # Construct tool_url from gateway_url + endpoint if needed
                 if tool_integration_type == "REST" and settings.tool_inherit_from_gateway:
+                    logger.info(
+                        f"Tool '{name}' URL construction check: "
+                        f"tool_url={tool_url!r}, tool_endpoint={tool_endpoint!r}, "
+                        f"has_gateway={has_gateway}, gateway_url={gateway_url!r}, "
+                        f"TOOL_INHERIT_FROM_GATEWAY={settings.tool_inherit_from_gateway}"
+                    )
                     if (not tool_url or tool_url.strip() == "") and tool_endpoint and has_gateway and gateway_url:
                         # Concatenate gateway URL with endpoint
-                        gateway_url_base = gateway_url.rstrip('/')
-                        endpoint_path = tool_endpoint.lstrip('/')
+                        gateway_url_base = gateway_url.rstrip("/")
+                        endpoint_path = tool_endpoint.lstrip("/")
                         tool_url = f"{gateway_url_base}/{endpoint_path}"
-                        logger.debug(f"Tool '{name}' constructed URL from gateway and endpoint: {tool_url}")
-                
+                        logger.info(f"Tool '{name}' constructed URL from gateway and endpoint: " f"gateway_url_base={gateway_url_base!r} + endpoint_path={endpoint_path!r} = {tool_url!r}")
+                    else:
+                        logger.info(f"Tool '{name}' using existing URL (no construction needed): {tool_url!r}")
+
                 if tool_integration_type == "REST":
                     # Runtime auth inheritance: If tool has no auth configured and feature is enabled,
                     # inherit from gateway at execution time (allows dynamic gateway auth updates)
@@ -4154,7 +4163,7 @@ class ToolService(BaseService):
 
                     # Handle URL path parameter substitution (using local variable)
                     final_url = tool_url
-                    if "{" in tool_url and "}" in tool_url:
+                    if tool_url and "{" in tool_url and "}" in tool_url:
                         # Extract path parameters from URL template and arguments
                         url_params = re.findall(r"\{(\w+)\}", tool_url)
                         url_substitutions = {}
@@ -4167,7 +4176,23 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
                     # --- Extract query params from URL ---
+                    # Validate that final_url has a scheme before parsing
+                    if not final_url:
+                        raise ToolInvocationError(
+                            f"Tool URL is empty. Tool: {name}, "
+                            f"tool_url from DB: {tool_url!r}, tool_endpoint: {tool_endpoint!r}, "
+                            f"gateway_url: {gateway_url!r}, TOOL_INHERIT_FROM_GATEWAY: {settings.tool_inherit_from_gateway}"
+                        )
+
                     parsed = urlparse(final_url)
+                    if not parsed.scheme:
+                        raise ToolInvocationError(
+                            f"Tool URL is missing protocol (http:// or https://). "
+                            f"URL: {final_url!r}. Tool: {name}, "
+                            f"tool_url from DB: {tool_url!r}, tool_endpoint: {tool_endpoint!r}, "
+                            f"gateway_url: {gateway_url!r}, TOOL_INHERIT_FROM_GATEWAY: {settings.tool_inherit_from_gateway}. "
+                            f"Check that the gateway URL includes the protocol."
+                        )
                     final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
                     query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}

@@ -5682,6 +5682,7 @@ class TestToolServiceHelpers:
             name="tool-name",
             original_name="tool-name",
             url="https://example.com/tool",
+            endpoint=None,
             description="desc",
             original_description="desc",
             integration_type="http",
@@ -7515,6 +7516,7 @@ class TestRustMcpExecutionPlan:
         tool = SimpleNamespace(
             id="tool-1",
             url=None,
+            endpoint=None,
             description="tool-one",
             original_description="tool-one",
             enabled=True,
@@ -7587,6 +7589,7 @@ class TestRustMcpExecutionPlan:
         tool = SimpleNamespace(
             id="tool-1",
             url=None,
+            endpoint=None,
             description="tool-one",
             original_description="tool-one",
             enabled=True,
