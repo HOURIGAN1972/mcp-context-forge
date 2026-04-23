@@ -4164,7 +4164,7 @@ class ToolService(BaseService):
                     # Handle URL path parameter substitution (using local variable)
                     # Use tool_url which may have been constructed from gateway_url + endpoint above
                     # Treat string 'None' as None for safety
-                    final_url = tool_url if tool_url and tool_url.lower() != 'none' else None
+                    final_url = tool_url if tool_url and tool_url.lower() != "none" else None
                     if final_url and "{" in final_url and "}" in final_url:
                         # Extract path parameters from URL template and arguments
                         url_params = re.findall(r"\{(\w+)\}", final_url)
