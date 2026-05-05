@@ -54,6 +54,7 @@ from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_
 # Intentionally strict: protects Redis key/channel construction and log lines.
 _MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
+
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers and gunicorn workers
 # IMPORTANT: Must be a function to get current PID after fork (not cached at import time)
@@ -69,8 +70,6 @@ def get_worker_id() -> str:
         Worker ID string in format "hostname:pid"
     """
     return f"{socket.gethostname()}:{os.getpid()}"
-
-
 
 
 logger = logging.getLogger(__name__)
