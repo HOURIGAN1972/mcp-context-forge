@@ -85,7 +85,45 @@ echo "Cargo version: $(cargo --version)"
 echo "Rustup version: $(rustup --version)"
 
 echo "############# Running Install ################"
-make venv install install-dev
+make venv install
+
+echo "############# Installing plugins with verbose output ################"
+. .venv/bin/activate
+echo "Installing plugin packages..."
+python3 -m uv pip install -v \
+    "cpex-encoded-exfil-detection>=0.2.0" \
+    "cpex-pii-filter>=0.2.1" \
+    "cpex-rate-limiter>=0.0.4" \
+    "cpex-retry-with-backoff>=0.1.0" \
+    "cpex-secrets-detection>=0.2.0" \
+    "cpex-url-reputation>=0.2.0" || {
+    echo "ERROR: Plugin installation failed"
+    echo "Checking if Rust is available..."
+    rustc --version || echo "Rust not found"
+    cargo --version || echo "Cargo not found"
+    exit 1
+}
+
+echo "############# Verifying plugin installation ################"
+echo "Checking installed packages..."
+python3 -m pip list | grep cpex || {
+    echo "ERROR: No cpex packages found after installation"
+    exit 1
+}
+echo "Attempting to import cpex_retry_with_backoff..."
+python3 -c "import cpex_retry_with_backoff; print('✓ cpex_retry_with_backoff imported successfully')" || {
+    echo "✗ Failed to import cpex_retry_with_backoff"
+    exit 1
+}
+echo "Attempting to import cpex_pii_filter..."
+python3 -c "import cpex_pii_filter; print('✓ cpex_pii_filter imported successfully')" || {
+    echo "✗ Failed to import cpex_pii_filter"
+    exit 1
+}
+deactivate
+
+echo "############# Installing dev dependencies ################"
+make install-dev
 
 echo "############# Running Linting ##################"
 make ruff autoflake isort black
