@@ -68,6 +68,12 @@ echo "npm version: $(npm --version)"
 
 echo "############# Installing UV as a pre-requisite ########"
 curl -LsSf https://astral.sh/uv/install.sh | sh
+
+echo "############# Installing Rust for plugin builds ########"
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+source "$HOME/.cargo/env"
+echo "Rust version: $(rustc --version)"
+
 echo "############# Running Install ################"
 make venv install install-dev
 echo "############# Running Linting ##################"
