@@ -88,8 +88,8 @@ echo "############# Running Install ################"
 make venv install
 
 echo "############# Installing plugins with verbose output ################"
-echo "Installing plugin packages..."
-~/.local/bin/uv pip install -v \
+echo "Installing plugin packages (forcing build from source)..."
+~/.local/bin/uv pip install -v --no-binary :all: \
     "cpex-encoded-exfil-detection>=0.2.0" \
     "cpex-pii-filter>=0.2.1" \
     "cpex-rate-limiter>=0.0.4" \
@@ -100,6 +100,10 @@ echo "Installing plugin packages..."
     echo "Checking if Rust is available..."
     rustc --version || echo "Rust not found"
     cargo --version || echo "Cargo not found"
+    echo "Checking Python version..."
+    python3 --version
+    echo "Checking uv version..."
+    ~/.local/bin/uv --version
     exit 1
 }
 
