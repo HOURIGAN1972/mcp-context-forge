@@ -141,10 +141,21 @@ echo "############# Running Install dependencies ################"
 echo "############# Running Install DB ################"
 make install-db
 echo "############# Running Tests and Coverage ##################"
+echo "Note: Skipping tests that require Rust-based plugin packages (cpex-*)"
 source .venv/bin/activate && \
         export DATABASE_URL='sqlite:///:memory:' && \
         export TEST_DATABASE_URL='sqlite:///:memory:' && \
-        uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v --ignore=tests/fuzz --cov=mcpgateway
+        uv run --active pytest -p pytest_cov -n auto --maxfail=0 -v \
+        --ignore=tests/fuzz \
+        --ignore=tests/integration/test_encoded_exfil.py \
+        --ignore=tests/integration/test_rate_limiter.py \
+        --ignore=tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py \
+        --ignore=tests/unit/mcpgateway/plugins/plugins/url_reputation/test_url_reputation.py \
+        --ignore=tests/unit/plugins/test_encoded_exfil_detector.py \
+        --ignore=tests/unit/plugins/test_retry_with_backoff.py \
+        --deselect=tests/unit/mcpgateway/plugins/framework/test_manager.py::test_manager_initializes_packaged_plugins_from_shipped_configs \
+        --deselect=tests/unit/mcpgateway/plugins/plugins/test_init_hooks_plugins.py::TestAllPluginsTogether::test_all_plugins_load_together \
+        --cov=mcpgateway
 coverage xml
 coverage report
 
