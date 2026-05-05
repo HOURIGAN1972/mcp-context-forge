@@ -90,7 +90,7 @@ make venv install
 echo "############# Installing plugins with verbose output ################"
 . .venv/bin/activate
 echo "Installing plugin packages..."
-python3 -m uv pip install -v \
+pip install -v \
     "cpex-encoded-exfil-detection>=0.2.0" \
     "cpex-pii-filter>=0.2.1" \
     "cpex-rate-limiter>=0.0.4" \
