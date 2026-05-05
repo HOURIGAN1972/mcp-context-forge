@@ -285,7 +285,7 @@ class TestToolServiceOwnership:
 
             await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
 
-            # Verify execute was called twice: once for association deletion, once for tool deletion
+            # Verify execute was called for association cleanup + tool DELETE
             assert mock_db_session.execute.call_count == 2
             mock_db_session.commit.assert_called_once()
 
