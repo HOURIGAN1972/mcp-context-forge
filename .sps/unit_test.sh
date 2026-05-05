@@ -19,17 +19,27 @@ else
     echo "nvm already installed"
 fi
 
-# Load nvm into current shell
+# Load nvm into current shell - use explicit source command
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || {
-    echo "ERROR: Failed to load nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    echo "Loading nvm from $NVM_DIR/nvm.sh"
+    source "$NVM_DIR/nvm.sh"
+else
+    echo "ERROR: nvm.sh not found at $NVM_DIR/nvm.sh"
+    ls -la "$NVM_DIR/" || echo "NVM_DIR does not exist"
     exit 1
-}
+fi
 
 # Verify nvm is available
 if ! command -v nvm &> /dev/null; then
     echo "ERROR: nvm command not found after loading"
-    exit 1
+    echo "Attempting to load nvm as a function..."
+    # Try loading as a bash function
+    [ -s "$NVM_DIR/bash_completion" ] && source "$NVM_DIR/bash_completion"
+    if ! command -v nvm &> /dev/null; then
+        echo "ERROR: Still cannot find nvm command"
+        exit 1
+    fi
 fi
 
 # Install and use Node.js 20.19.0 (minimum required by Vite 7.3.2)
