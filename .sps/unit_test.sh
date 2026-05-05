@@ -72,10 +72,24 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "############# Installing Rust for plugin builds ########"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 source "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
 echo "Rust version: $(rustc --version)"
+echo "Cargo version: $(cargo --version)"
 
 echo "############# Running Install ################"
+# Export cargo env for make subprocess
+export PATH="$HOME/.cargo/bin:$PATH"
 make venv install install-dev
+
+echo "############# Verifying and retrying plugin installation ################"
+# Activate venv and explicitly install plugins with Rust environment
+. .venv/bin/activate && \
+    export PATH="$HOME/.cargo/bin:$PATH" && \
+    echo "Attempting to install plugins with Rust environment..." && \
+    python3 -m uv pip install --no-cache-dir '.[plugins]' && \
+    echo "Plugin installation completed" && \
+    deactivate
+
 echo "############# Running Linting ##################"
 make ruff autoflake isort black
 echo "############# Running Install dependencies ################"
