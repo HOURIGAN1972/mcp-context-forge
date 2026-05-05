@@ -13,18 +13,37 @@ echo "############# Installing Node.js 20.19+ ########"
 # Check if nvm is already installed
 if [ ! -d "$HOME/.nvm" ]; then
     echo "Installing nvm..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+    # Install nvm (ignore exit code as it may return non-zero after modifying .bashrc)
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash || true
 else
     echo "nvm already installed"
 fi
 
-# Load nvm
+# Load nvm into current shell
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || {
+    echo "ERROR: Failed to load nvm"
+    exit 1
+}
+
+# Verify nvm is available
+if ! command -v nvm &> /dev/null; then
+    echo "ERROR: nvm command not found after loading"
+    exit 1
+fi
 
 # Install and use Node.js 20.19.0 (minimum required by Vite 7.3.2)
-nvm install 20.19.0
-nvm use 20.19.0
+echo "Installing Node.js 20.19.0..."
+nvm install 20.19.0 || {
+    echo "ERROR: Failed to install Node.js 20.19.0"
+    exit 1
+}
+
+nvm use 20.19.0 || {
+    echo "ERROR: Failed to switch to Node.js 20.19.0"
+    exit 1
+}
+
 echo "Node.js version: $(node --version)"
 echo "npm version: $(npm --version)"
 
