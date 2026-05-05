@@ -73,6 +73,8 @@ echo "############# Installing Rust for plugin builds ########"
 # Install Rust and ensure it's available system-wide
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 source "$HOME/.cargo/env"
+
+# Set Rust environment variables for the entire session
 export PATH="$HOME/.cargo/bin:$PATH"
 export CARGO_HOME="$HOME/.cargo"
 export RUSTUP_HOME="$HOME/.rustup"
@@ -82,14 +84,7 @@ echo "Rust version: $(rustc --version)"
 echo "Cargo version: $(cargo --version)"
 echo "Rustup version: $(rustup --version)"
 
-# Disable maturin's auto-install of Rust since we already have it
-export MATURIN_PEP517_ARGS="--skip-install"
-
 echo "############# Running Install ################"
-# Export cargo env for make subprocess
-export PATH="$HOME/.cargo/bin:$PATH"
-export CARGO_HOME="$HOME/.cargo"
-export RUSTUP_HOME="$HOME/.rustup"
 make venv install install-dev
 
 echo "############# Running Linting ##################"
