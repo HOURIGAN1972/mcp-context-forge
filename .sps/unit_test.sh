@@ -9,6 +9,25 @@ echo "############# Python Version #################"
 python3 -V
 dnf install -y  postgresql-devel
 
+echo "############# Installing Node.js 20.19+ ########"
+# Check if nvm is already installed
+if [ ! -d "$HOME/.nvm" ]; then
+    echo "Installing nvm..."
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+else
+    echo "nvm already installed"
+fi
+
+# Load nvm
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# Install and use Node.js 20.19.0 (minimum required by Vite 7.3.2)
+nvm install 20.19.0
+nvm use 20.19.0
+echo "Node.js version: $(node --version)"
+echo "npm version: $(npm --version)"
+
 echo "############# Installing UV as a pre-requisite ########"
 curl -LsSf https://astral.sh/uv/install.sh | sh
 echo "############# Running Install ################"
