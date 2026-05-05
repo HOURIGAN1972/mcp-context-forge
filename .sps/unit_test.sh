@@ -88,9 +88,8 @@ echo "############# Running Install ################"
 make venv install
 
 echo "############# Installing plugins with verbose output ################"
-. .venv/bin/activate
 echo "Installing plugin packages..."
-python3 -m pip install -v \
+~/.local/bin/uv pip install -v \
     "cpex-encoded-exfil-detection>=0.2.0" \
     "cpex-pii-filter>=0.2.1" \
     "cpex-rate-limiter>=0.0.4" \
@@ -105,8 +104,9 @@ python3 -m pip install -v \
 }
 
 echo "############# Verifying plugin installation ################"
+. .venv/bin/activate
 echo "Checking installed packages..."
-python3 -m pip list | grep cpex || {
+~/.local/bin/uv pip list | grep cpex || {
     echo "ERROR: No cpex packages found after installation"
     exit 1
 }
