@@ -119,7 +119,7 @@ class SharedHttpClient:
         )
 
         # Determine SSL verification setting
-        # Priority: SKIP_SSL_VERIFY > SSL_CERT_FILE > default
+        # Priority: SKIP_SSL_VERIFY > SSL_CERT_FILE (combined with system) > default
         if settings.skip_ssl_verify:
             verify_setting = False
             logger.info("SSL verification disabled via SKIP_SSL_VERIFY")
@@ -127,8 +127,13 @@ class SharedHttpClient:
             # Check for SSL_CERT_FILE environment variable (used in containers)
             ssl_cert_file = os.environ.get("SSL_CERT_FILE")
             if ssl_cert_file and os.path.isfile(ssl_cert_file):
-                verify_setting = ssl_cert_file
-                logger.info("Using custom CA bundle from SSL_CERT_FILE: %s", ssl_cert_file)
+                # Create SSL context that combines system CAs with custom CA bundle
+                # ssl.create_default_context() loads system CAs automatically
+                # then we add the custom CA file on top
+                ssl_context = ssl.create_default_context()
+                ssl_context.load_verify_locations(cafile=ssl_cert_file)
+                verify_setting = ssl_context
+                logger.info("Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
             else:
                 verify_setting = True
                 logger.debug("Using default system CA bundle")
