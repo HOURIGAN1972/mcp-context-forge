@@ -25,7 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add ON DELETE CASCADE to association table foreign keys."""
-    # Standard
+    # Third-Party
     import sqlalchemy as sa
 
     # Get database connection to check if we're using PostgreSQL
@@ -246,4 +246,3 @@ def downgrade() -> None:
     elif dialect_name == "sqlite":
         # SQLite: No action needed for downgrade
         pass
-

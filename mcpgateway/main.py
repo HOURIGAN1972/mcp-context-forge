@@ -9364,7 +9364,7 @@ async def _maybe_forward_affinitized_rpc_request(
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
         # First-Party
-        from mcpgateway.services.session_affinity import SessionAffinity, get_worker_id  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.session_affinity import get_worker_id, SessionAffinity  # pylint: disable=import-outside-toplevel
 
         if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
             logger.debug("Invalid MCP session id for affinity forwarding, executing locally")

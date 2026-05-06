@@ -654,7 +654,9 @@ async def delete_sso_provider(
     db.commit()
     db.close()
     # Sanitize provider_id for success message to prevent XSS
+    # First-Party
     from mcpgateway.common.validators import SecurityValidator
+
     safe_provider_id = SecurityValidator.sanitize_display_text(provider_id, "provider_id")
     return {"message": f"SSO provider '{safe_provider_id}' deleted successfully"}
 

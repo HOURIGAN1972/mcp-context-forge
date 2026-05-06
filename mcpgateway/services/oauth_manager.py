@@ -276,7 +276,7 @@ class OAuthManager:
                 ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                 async with httpx.AsyncClient(verify=ssl_context) as client:
                     return await client.post(url, data=data, timeout=self.request_timeout)
-        
+
         # No custom CA certificate - use shared client which respects SSL_CERT_FILE
         client = await self._get_client()
         return await client.post(url, data=data, timeout=self.request_timeout)
