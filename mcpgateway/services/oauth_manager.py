@@ -248,7 +248,12 @@ class OAuthManager:
         is created with the corresponding SSL context so that OAuth token
         exchange works against self-signed or custom-CA upstream servers.
         Otherwise the shared HTTP client (which respects the global
-        ``SKIP_SSL_VERIFY`` setting) is used.
+        ``SKIP_SSL_VERIFY`` and ``SSL_CERT_FILE`` settings) is used.
+
+        The global ``SKIP_SSL_VERIFY`` setting is respected even when custom
+        CA certificates are provided, allowing SSL verification to be disabled
+        for development/testing environments. Similarly, ``SSL_CERT_FILE`` is
+        respected when no custom CA is provided.
 
         Args:
             url: Token endpoint URL.
@@ -261,9 +266,18 @@ class OAuthManager:
             The HTTP response from the token endpoint.
         """
         if ca_certificate:
-            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, timeout=self.request_timeout)
+            # Check if SSL verification should be skipped globally
+            if self.settings.skip_ssl_verify:
+                # When SKIP_SSL_VERIFY is enabled, disable verification entirely
+                async with httpx.AsyncClient(verify=False) as client:
+                    return await client.post(url, data=data, timeout=self.request_timeout)
+            else:
+                # Use custom SSL context with CA certificate
+                ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+                async with httpx.AsyncClient(verify=ssl_context) as client:
+                    return await client.post(url, data=data, timeout=self.request_timeout)
+        
+        # No custom CA certificate - use shared client which respects SSL_CERT_FILE
         client = await self._get_client()
         return await client.post(url, data=data, timeout=self.request_timeout)
 

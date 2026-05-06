@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+import os
 import ssl
 from typing import AsyncIterator, Optional
 
@@ -98,6 +99,7 @@ class SharedHttpClient:
         Initialize the HTTP client with configured limits and timeouts.
 
         Reads configuration from settings and creates the shared AsyncClient.
+        Respects SSL_CERT_FILE environment variable for custom CA bundles.
         """
         # Import here to avoid circular imports
         # First-Party
@@ -116,20 +118,36 @@ class SharedHttpClient:
             pool=settings.httpx_pool_timeout,
         )
 
+        # Determine SSL verification setting
+        # Priority: SKIP_SSL_VERIFY > SSL_CERT_FILE > default
+        if settings.skip_ssl_verify:
+            verify_setting = False
+            logger.info("SSL verification disabled via SKIP_SSL_VERIFY")
+        else:
+            # Check for SSL_CERT_FILE environment variable (used in containers)
+            ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+            if ssl_cert_file and os.path.isfile(ssl_cert_file):
+                verify_setting = ssl_cert_file
+                logger.info("Using custom CA bundle from SSL_CERT_FILE: %s", ssl_cert_file)
+            else:
+                verify_setting = True
+                logger.debug("Using default system CA bundle")
+
         self._client = httpx.AsyncClient(
             limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
             follow_redirects=True,
-            verify=not settings.skip_ssl_verify,
+            verify=verify_setting,
         )
         self._initialized = True
 
         logger.info(
-            "Shared HTTP client initialized: max_connections=%d, keepalive=%d, http2=%s",
+            "Shared HTTP client initialized: max_connections=%d, keepalive=%d, http2=%s, ssl_verify=%s",
             settings.httpx_max_connections,
             settings.httpx_max_keepalive_connections,
             settings.httpx_http2_enabled,
+            verify_setting if isinstance(verify_setting, bool) else "custom_ca",
         )
 
     @property
