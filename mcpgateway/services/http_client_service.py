@@ -307,20 +307,36 @@ def get_admin_timeout() -> httpx.Timeout:
     )
 
 
-def get_default_verify() -> bool:
+def get_default_verify() -> bool | ssl.SSLContext:
     """
-    Get the default SSL verification setting based on skip_ssl_verify config.
+    Get the default SSL verification setting based on skip_ssl_verify config and SSL_CERT_FILE.
 
     Use this when creating factory clients that should respect the global
-    skip_ssl_verify setting when no custom SSL context is provided.
+    skip_ssl_verify setting and SSL_CERT_FILE environment variable when no custom SSL context is provided.
 
     Returns:
-        bool: True if SSL should be verified, False if skip_ssl_verify is enabled.
+        bool | ssl.SSLContext: False if skip_ssl_verify is enabled,
+                               SSL context if SSL_CERT_FILE is set (combines system + custom CAs),
+                               True for default system CA verification.
     """
     # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-    return not settings.skip_ssl_verify
+    if settings.skip_ssl_verify:
+        return False
+    
+    # Check for SSL_CERT_FILE environment variable (used in containers)
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+    if ssl_cert_file and os.path.isfile(ssl_cert_file):
+        # Create SSL context that combines system CAs with custom CA bundle
+        # ssl.create_default_context() loads system CAs automatically
+        # then we add the custom CA file on top
+        ssl_context = ssl.create_default_context()
+        ssl_context.load_verify_locations(cafile=ssl_cert_file)
+        logger.debug("get_default_verify: Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
+        return ssl_context
+    
+    return True
 
 
 @asynccontextmanager
