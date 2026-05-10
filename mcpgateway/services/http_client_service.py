@@ -333,7 +333,7 @@ def get_default_verify() -> bool | ssl.SSLContext:
         # then we add the custom CA file on top
         ssl_context = ssl.create_default_context()
         ssl_context.load_verify_locations(cafile=ssl_cert_file)
-        logger.debug("get_default_verify: Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
+        logger.info("get_default_verify: Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
         return ssl_context
     
     return True

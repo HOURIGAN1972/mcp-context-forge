@@ -6193,14 +6193,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            logger.info(f"get_httpx_client_factory called: server_url={server_url}, ca_certificate={'SET' if ca_certificate else 'NONE'}")
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
+                logger.info("Using HTTP (no SSL)")
             elif ca_certificate:
+                logger.info("Using get_cached_ssl_context with ca_certificate")
                 ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
+                logger.info("No ca_certificate, will use get_default_verify()")
                 ctx = None
+            
+            verify_setting = ctx if ctx else get_default_verify()
+            logger.info(f"Final verify setting type: {type(verify_setting).__name__}")
+            
             return httpx.AsyncClient(
-                verify=ctx if ctx else get_default_verify(),
+                verify=verify_setting,
                 follow_redirects=True,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
