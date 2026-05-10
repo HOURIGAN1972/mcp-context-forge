@@ -185,8 +185,21 @@ def get_cached_ssl_context(
         _ssl_context_cache_timestamps.pop(cache_key, None)
 
     # Create new SSL context and configure CA cert
+    # ssl.create_default_context() automatically loads system CAs
     ctx = ssl.create_default_context()
+    
+    # Load the provided CA certificate (from gateway/server config)
     ctx.load_verify_locations(cadata=ca_certificate)
+    
+    # Also load SSL_CERT_FILE if set (for custom CAs like OpenShift)
+    # This allows both the gateway-specific CA AND custom environment CAs to work
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+    if ssl_cert_file and os.path.isfile(ssl_cert_file):
+        try:
+            ctx.load_verify_locations(cafile=ssl_cert_file)
+            logger.debug("Loaded additional CA certificates from SSL_CERT_FILE: %s", ssl_cert_file)
+        except Exception as e:
+            logger.warning("Failed to load SSL_CERT_FILE %s: %s", ssl_cert_file, e)
 
     # Validate mTLS: require both or neither
     if bool(client_cert) != bool(client_key):
