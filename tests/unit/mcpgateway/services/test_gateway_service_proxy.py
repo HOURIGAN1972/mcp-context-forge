@@ -584,8 +584,10 @@ class TestGatewayServiceProxy:
             oauth_config=oauth_config,
         )
 
-        # Verify OAuth token was obtained
-        gateway_service.oauth_manager.get_access_token.assert_called_once_with(oauth_config)
+        # Verify OAuth token was obtained with SSL cert parameters
+        gateway_service.oauth_manager.get_access_token.assert_called_once_with(
+            oauth_config, ca_certificate=None, client_cert=None, client_key=None
+        )
         # Verify SSE connection was made with Bearer token
         gateway_service.connect_to_sse_server.assert_called_once()
 

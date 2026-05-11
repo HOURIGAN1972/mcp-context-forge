@@ -6,15 +6,17 @@ Create Date: 2026-04-20 17:38:19.787236
 
 Add endpoint column to tools table to support URL construction from gateway URL + endpoint.
 """
+
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
-revision: str = '93529b1429b4'
-down_revision: Union[str, Sequence[str], None] = 'a145cf277a07'
+revision: str = "93529b1429b4"
+down_revision: Union[str, Sequence[str], None] = "a145cf277a07"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -47,5 +49,6 @@ def downgrade() -> None:
     columns = [col["name"] for col in inspector.get_columns("tools")]
     if "endpoint" in columns:
         op.drop_column("tools", "endpoint")
+
 
 # Made with Bob

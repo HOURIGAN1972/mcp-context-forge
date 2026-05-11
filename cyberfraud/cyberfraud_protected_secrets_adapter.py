@@ -65,9 +65,16 @@ def read_protected_secrets() -> None:
     db_url_template= "postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
     os.environ["DATABASE_URL"] = os.path.expandvars(db_url_template)
     logger.info("DATABASE_URL updated")
-    redis_url_template = "redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0"
+    # Build Redis URL with TLS support
+    # If SSL_CERT_FILE is set, use it for CA certificate verification
+    ssl_cert_file = os.environ.get("SSL_CERT_FILE", "")
+    if ssl_cert_file:
+        redis_url_template = f"rediss://:${{REDIS_PASSWORD}}@${{REDIS_HOST}}:${{REDIS_PORT}}/0?ssl_cert_reqs=required&ssl_ca_certs={ssl_cert_file}"
+        logger.info("REDIS_URL updated (TLS enabled with custom CA bundle: %s)", ssl_cert_file)
+    else:
+        redis_url_template = "rediss://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0"
+        logger.info("REDIS_URL updated (TLS enabled with system CA bundle)")
     os.environ["REDIS_URL"] = os.path.expandvars(redis_url_template)
-    logger.info("REDIS_URL updated")
 
 
 if os.environ.get("USE_PROTECTED_SECRETS", "").lower() == "true":

@@ -1,7 +1,7 @@
-"""merge_heads_c2d3e4f5a6b7_and_d80ddfa65ddb
+"""merge_heads_ff03273d8f93_and_d80ddfa65ddb
 
 Revision ID: a145cf277a07
-Revises: c2d3e4f5a6b7, d80ddfa65ddb
+Revises: ff03273d8f93, d80ddfa65ddb
 Create Date: 2026-04-10 17:30:34.370402
 
 """
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
 revision: str = "a145cf277a07"
-down_revision: Union[str, Sequence[str], None] = ("c2d3e4f5a6b7", "d80ddfa65ddb")
+down_revision: Union[str, Sequence[str], None] = ("ff03273d8f93", "d80ddfa65ddb")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
