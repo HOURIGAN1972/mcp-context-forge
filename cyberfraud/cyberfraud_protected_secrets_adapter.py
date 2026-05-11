@@ -66,15 +66,21 @@ def read_protected_secrets() -> None:
     os.environ["DATABASE_URL"] = os.path.expandvars(db_url_template)
     logger.info("DATABASE_URL updated")
     # Build Redis URL with TLS support
-    # If SSL_CERT_FILE is set, use it for CA certificate verification
+    # Use rediss:// scheme for TLS - the Redis client will use SSL_CERT_FILE from environment
+    redis_url_template = "rediss://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0"
+    redis_url = os.path.expandvars(redis_url_template)
+    os.environ["REDIS_URL"] = redis_url
+    
+    # Log the TLS configuration
     ssl_cert_file = os.environ.get("SSL_CERT_FILE", "")
     if ssl_cert_file:
-        redis_url_template = f"rediss://:${{REDIS_PASSWORD}}@${{REDIS_HOST}}:${{REDIS_PORT}}/0?ssl_cert_reqs=required&ssl_ca_certs={ssl_cert_file}"
-        logger.info("REDIS_URL updated (TLS enabled with custom CA bundle: %s)", ssl_cert_file)
+        logger.info("REDIS_URL updated (TLS enabled, SSL_CERT_FILE=%s)", ssl_cert_file)
     else:
-        redis_url_template = "rediss://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/0"
-        logger.info("REDIS_URL updated (TLS enabled with system CA bundle)")
-    os.environ["REDIS_URL"] = os.path.expandvars(redis_url_template)
+        logger.info("REDIS_URL updated (TLS enabled, using system CA bundle)")
+    
+    # Debug: log the actual URL structure (without password)
+    sanitized_url = redis_url.replace(os.environ.get("REDIS_PASSWORD", ""), "***") if os.environ.get("REDIS_PASSWORD") else redis_url
+    logger.info("Constructed REDIS_URL: %s", sanitized_url)
 
 
 if os.environ.get("USE_PROTECTED_SECRETS", "").lower() == "true":
