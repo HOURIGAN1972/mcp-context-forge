@@ -6,6 +6,26 @@
         "reason": "{{FALSE POSITIVE: Backend URL constructed at line 644-647 via internal_backend_url() from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled.}}"
       },
       {
+        "id": "f72f5ba6-8d78-4a91-9b8d-a16f3635601e",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+      },
+      {
+        "id": "e814a8b9-c4cd-46e9-b758-7d8dc412cfc5",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authentication. Not user-controlled. A2A runtime uses trusted backend configuration}}"
+      },
+      {
+        "id": "e5a4ab22-bd85-4ed3-9527-e060664ccbe9",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
+      },
+      {
+        "id": "d07169c0-4645-4c64-8391-cfed83e6072d",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+      },
+      {
+        "id": "ce40e20e-8011-4935-8ca8-cf6b3f2021b3",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
+      },
+      {
         "id": "b7f86fe0-ee17-4b1a-8975-6a395b450dfa",
         "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
@@ -20,6 +40,10 @@
       {
         "id": "8f64c21f-13e0-4fe6-8f5b-3e617a0f3337",
         "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+      },
+      {
+        "id": "7d1ff717-ef8c-4547-b46a-49fca448b2ea",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authorization. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
       {
         "id": "7a1bb8f9-29f3-460e-bd1c-1136726f1d35",
@@ -54,12 +78,20 @@
         "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
+        "id": "30eef339-d8d4-4a86-acc1-e897973e474c",
+        "reason": "{{FALSE POSITIVE: Backend URL validated at line 7894 via state.validate_backend_url(). URL constructed from derive_backend_session_delete_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced.}}"
+      },
+      {
+        "id": "272cb573-1bac-42c3-865b-c44cfa400f96",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+      },
+      {
         "id": "21a67e25-5fd4-42b9-be8c-da8fbb93ed0d",
-        "reason": "<Please provide reason for whitelisting if applicable>"
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
         "id": "105defa5-61d6-4846-a08c-b749199c9946",
-        "reason": "<Please provide reason for whitelisting if applicable>"
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
         "id": "0747f12e-588f-44ea-876f-a832df02cfda",
