@@ -22,7 +22,7 @@ langchain-core = "2026-04-22T23:59:59Z"
 uv = "2026-04-11T23:59:59Z"
 authlib = "2026-04-19T23:59:59Z"
 Mako = "2026-04-22T23:59:59Z"
-python-multipart = "2026-04-22T23:59:59Z"
+python-multipart = "2026-05-06T23:59:59Z"
 langsmith = "2026-04-22T23:59:59Z"
 langchain-openai = "2026-04-22T23:59:59Z"
 
