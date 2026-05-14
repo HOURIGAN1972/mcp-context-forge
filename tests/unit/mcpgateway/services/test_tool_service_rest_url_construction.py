@@ -14,7 +14,7 @@ def test_url_construction_with_none_string():
     tool_endpoint = "/api/test"
     gateway_url = "https://api.example.com"
     
-    # Simulate the condition check from line 4088
+
     should_construct = bool((not tool_url or tool_url.strip() == "" or tool_url.strip().lower() == "none") and tool_endpoint and gateway_url)
     
     assert should_construct is True

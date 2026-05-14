@@ -99,7 +99,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
-from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
@@ -1710,7 +1710,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Use the existing connection logic with validation context for diagnostics
             if gateway.transport.upper() == "SSE":
-                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
+                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings, gateway=gateway)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 try:
                     capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
@@ -3894,6 +3894,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 Returns:
                     httpx.AsyncClient: Configured HTTPX async client
                 """
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                
                 return httpx.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=True,
@@ -5698,7 +5701,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return valid_tools, validation_errors
 
-    async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None, validation_warnings: Optional[List[str]] = None):
+    async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None, validation_warnings: Optional[List[str]] = None, gateway=None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
 
         This is used for OAuth-protected servers. Token claim validation
@@ -5710,6 +5713,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             server_url: The URL of the SSE MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
             validation_warnings: Optional list of token validation warnings for diagnostics.
+            gateway: Optional gateway object for CA certificate handling.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -5719,9 +5723,38 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if validation_warnings is None:
             validation_warnings = []
 
+        # Create httpx client factory for SSL handling
+        def create_sse_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for SSE connections."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+            
+            # Handle gateway CA certificate if present
+            if gateway and hasattr(gateway, 'ca_certificate') and gateway.ca_certificate:
+                ctx = get_cached_ssl_context(
+                    gateway.ca_certificate,
+                    client_cert=getattr(gateway, 'client_cert', None),
+                    client_key=getattr(gateway, 'client_key', None)
+                )
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+            
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.health_check_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use async with for both sse_client and ClientSession
         try:
-            async with sse_client(url=server_url, headers=authentication) as streams:
+            async with sse_client(url=server_url, headers=authentication, httpx_client_factory=create_sse_client) as streams:
                 async with ClientSession(*streams) as session:
                     # Initialize the session
                     response = await session.initialize()
@@ -6026,6 +6059,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+            
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
             elif ca_certificate:
@@ -6193,6 +6230,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+            
             logger.info(f"get_httpx_client_factory called: server_url={server_url}, ca_certificate={'SET' if ca_certificate else 'NONE'}")
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None

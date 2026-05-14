@@ -1410,8 +1410,33 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         if identity:
             headers.update(build_identity_headers(identity, gateway))
 
+        # Create httpx client factory for SSL handling
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+            
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+            
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -1466,8 +1491,33 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
+        # Create httpx client factory for SSL handling (reuse from list_tools)
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+            
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+            
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
@@ -1532,8 +1582,33 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
+        # Create httpx client factory for SSL handling (reuse from list_tools)
+        def create_transport_client() -> httpx.AsyncClient:
+            """Create httpx client with proper SSL verification for transport operations."""
+            # First-Party
+            from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+            
+            # Handle gateway CA certificate if present
+            if gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                verify_setting = ctx
+            else:
+                verify_setting = get_default_verify()
+            
+            return httpx.AsyncClient(
+                verify=verify_setting,
+                follow_redirects=True,
+                timeout=settings.mcpgateway_direct_proxy_timeout,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            )
+
         # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_transport_client) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
