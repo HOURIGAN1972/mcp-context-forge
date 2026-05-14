@@ -2,302 +2,100 @@
   "PSIRT_PRD0015613//cyberfraud-mcp-context-forge": {
     "finding_ids": [
       {
-        "id": "38a605b6-1509-4e04-8849-b22e91302b8e",
-        "reason": "<Please provide reason for whitelisting if applicable>"
+        "id": "fa93b072-4a39-4a44-ba78-8864f5e0d518",
+        "reason": "{{FALSE POSITIVE: Backend URL constructed at line 644-647 via internal_backend_url() from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled.}}"
       },
       {
-        "id": "e45dc066-8fb1-40d7-a8b9-739bb860a599",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8269,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request (see backend_url_validator.rs). URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "f72f5ba6-8d78-4a91-9b8d-a16f3635601e",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "f81284a7-a675-46cd-a95c-21c256b3973b",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8469,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "e814a8b9-c4cd-46e9-b758-7d8dc412cfc5",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authentication. Not user-controlled. A2A runtime uses trusted backend configuration}}"
       },
       {
-        "id": "29c88868-6f9e-4e82-b7ec-4ae798f8c738",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/trust.rs",
-        "line": 133,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust→Python authentication. Not user-controlled. A2A runtime uses trusted backend configuration."
+        "id": "e5a4ab22-bd85-4ed3-9527-e060664ccbe9",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
       },
       {
-        "id": "661a524c-bb9b-43e1-a8e0-c27d96335cfa",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 7867,
-        "reason": "FALSE POSITIVE: Backend URL validated at line 7865 via state.validate_backend_url(). URL constructed from environment-configured backend_transport_url. Allowlist + CIDR blocklist enforced."
+        "id": "d07169c0-4645-4c64-8391-cfed83e6072d",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "b8869831-8569-4535-b87a-750764d42b8b",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8559,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "ce40e20e-8011-4935-8ca8-cf6b3f2021b3",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
       },
       {
-        "id": "f1f43591-e8c1-4980-93bd-2657ca7a04f5",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8021,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "b7f86fe0-ee17-4b1a-8975-6a395b450dfa",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
       {
-        "id": "b695a336-dc8a-4cdb-9030-9b444a8acd24",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 7990,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "ac39806c-fc77-49f8-91d9-e6fa53e5940c",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
       {
-        "id": "b333810a-43e3-41b5-bb12-4061e65b95b3",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/server.rs",
-        "line": 2069,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration."
+        "id": "a58c0a17-9709-416b-8b82-2fe7acacf9f7",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
       {
-        "id": "66d87c6c-dda0-41ec-9a83-5629a2c32434",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8052,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "8f64c21f-13e0-4fe6-8f5b-3e617a0f3337",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "70789559-f7e7-4869-ade5-c5d0e99c06c1",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/server.rs",
-        "line": 850,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration."
+        "id": "7d1ff717-ef8c-4547-b46a-49fca448b2ea",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authorization. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       },
       {
-        "id": "b5d927c0-3b9a-4d00-9564-011f4347b459",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 7959,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "7a1bb8f9-29f3-460e-bd1c-1136726f1d35",
+        "reason": "{{FALSE POSITIVE: Backend URL validated at line 2664 via state.validate_backend_url(). URL constructed from state.backend_authenticate_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "71123a92-81c2-4a54-a2b6-5a77cec8d481",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8593,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "78b0a51d-c28b-4770-9396-48d95ae02caa",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "2441f324-ef25-49f5-96a5-42a6e5dc417b",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8114,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "778be146-d5a3-4413-825b-ddeda3e7e4be",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "e4f296dd-6e43-47e0-9f88-3ecd82b3f872",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 6229,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "5e6a24a0-695d-4f70-afb4-1bbaf47d4ec1",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "aa8faba9-4909-485f-8195-8b0f6f969854",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 2668,
-        "reason": "FALSE POSITIVE: Backend URL validated at line 2664 via state.validate_backend_url(). URL constructed from state.backend_authenticate_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced."
+        "id": "49762647-7968-4e17-bc25-09241e256493",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "64949818-41ef-4061-bafb-35844fcbcb08",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8083,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "44d7da2f-2a3b-4875-9efa-54d0130b774c",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request (see backend_url_validator.rs). URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "0acc1c05-855b-497b-803f-4fa016cf84e3",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/server.rs",
-        "line": 949,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration."
+        "id": "42bf5fb9-42a5-4106-a44e-e022689a7d7d",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "46cb96cd-37c9-4a80-acb3-4e6e8c8349f8",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 7898,
-        "reason": "FALSE POSITIVE: Backend URL validated at line 7894 via state.validate_backend_url(). URL constructed from derive_backend_session_delete_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced."
+        "id": "4268704c-e31c-4c29-b5d4-887200575eed",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "7e0c82ac-d9e4-490c-8cbc-fcc164140ce8",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/server.rs",
-        "line": 741,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration."
+        "id": "30eef339-d8d4-4a86-acc1-e897973e474c",
+        "reason": "{{FALSE POSITIVE: Backend URL validated at line 7894 via state.validate_backend_url(). URL constructed from derive_backend_session_delete_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "4bd4256a-e214-4fbc-9017-4295d23a76b0",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8238,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "272cb573-1bac-42c3-865b-c44cfa400f96",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "3b85583e-605a-441c-b190-fd74c35d046a",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8207,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "21a67e25-5fd4-42b9-be8c-da8fbb93ed0d",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "83c8e930-4af2-4dc7-bd67-8760ecc4e9e6",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8176,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
+        "id": "105defa5-61d6-4846-a08c-b749199c9946",
+        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
       },
       {
-        "id": "2d7641fd-bceb-4f39-a93d-2ccb1f4cc1ac",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/server.rs",
-        "line": 656,
-        "reason": "FALSE POSITIVE: Backend URL constructed at line 644-647 via internal_backend_url() from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled."
-      },
-      {
-        "id": "c21f03eb-3d9d-48ee-8112-6deb1eb84c4d",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 4553,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
-      },
-      {
-        "id": "58a93abc-42ea-4fde-8e15-6fda3676ba34",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 8145,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
-      },
-      {
-        "id": "94840573-93d6-43b1-8627-cefe9a4cb091",
-        "cwe": "CWE-918",
-        "file": "crates/a2a_runtime/src/trust.rs",
-        "line": 177,
-        "reason": "FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust→Python authorization. Not user-controlled. A2A runtime uses trusted backend configuration."
-      },
-      {
-        "id": "f55a26ab-d916-4125-9381-b8a7bc7646ab",
-        "cwe": "CWE-918",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 7929,
-        "reason": "FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced."
-      },
-      {
-        "id": "917b02c6-45bd-40c9-a3bb-51b9140ca681",
-        "cwe": "CWE-943",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 3804,
-        "reason": "FALSE POSITIVE: This is type-safe JSON serialization using Rust's serde_json library with validated request structures. No direct database query construction from user input. Not a NoSQL injection vector."
-      },
-      {
-        "id": "2c650495-f8a5-4c3e-ae5f-a91203e3944a",
-        "cwe": "CWE-943",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 3465,
-        "reason": "FALSE POSITIVE: This is type-safe JSON serialization using Rust's serde_json library with validated request structures. No direct database query construction from user input. Not a NoSQL injection vector."
-      },
-      {
-        "id": "67b7bc86-0c73-456b-b103-9247866bfac8",
-        "cwe": "CWE-502",
-        "file": "crates/mcp_runtime/src/lib.rs",
-        "line": 2703,
-        "reason": "FALSE POSITIVE: This is parsing a JSON-RPC request with strict schema validation using Rust's type-safe serde_json library. Explicit error handling at lines 2703-2707. Not deserializing arbitrary untrusted objects."
-      },
-      {
-        "id": "0afa0938-790e-4152-8cfa-83cb559e265c",
-        "cwe": "CWE-606",
-        "file": "crates/a2a_runtime/src/invoke.rs",
-        "line": 128,
-        "reason": "LOW RISK: This is iterating over a validated, bounded collection from the A2A agent response. Not a user-controlled loop condition. Collection size is constrained by upstream agent response limits."
-      },
-      {
-        "id": "90be6b6e-f8fa-4581-88a8-bc7a4ab78044",
-        "cwe": "CWE-918",
-        "file": "mcpgateway/services/llm_proxy_service.py",
-        "line": 497,
-        "reason": "FALSE POSITIVE: Outbound LLM provider URL is validated immediately before the request via SecurityValidator.validate_url in mcpgateway/services/llm_proxy_service.py, which enforces SSRF protections implemented in mcpgateway/common/validators.py including blocked hostnames, localhost/loopback restrictions, private-network restrictions, allowed CIDR handling, and DNS fail-closed behavior. Provider api_base is also validated during provider create/update in mcpgateway/services/llm_provider_service.py."
-      },
-      {
-        "id": "d82ef03d-2470-40c9-9725-9233d1c280af",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 876,
-        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 806). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "d1469155-b214-4bbe-bfb7-d694ef7789f5",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 1084,
-        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "af61b9d7-86ce-40c0-9837-2f7919cd05ea",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 1175,
-        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "3c321a2b-5c1d-47f3-84d2-545bb67caac7",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 1183,
-        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "1d1ec258-b46c-4f14-8c24-7d3f5ee46eae",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 1189,
-        "reason": "FALSE POSITIVE: JSON response with explicitly sanitized exception message (SecurityValidator.sanitize_display_text at line 1188). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "c71ec77a-75eb-458b-9dec-e31f9ebac1bd",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/llmchat_router.py",
-        "line": 1237,
-        "reason": "FALSE POSITIVE: JSON response with sanitized user_id (SecurityValidator.sanitize_display_text at line 1235). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "d977d55f-66a9-4c17-bdfb-ffa9fb9b4925",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/toolops_router.py",
-        "line": 103,
-        "reason": "FALSE POSITIVE: JSON response with sanitized tool_id (SecurityValidator.sanitize_display_text at line 100) and internally generated test case data. FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "f566d126-2c3e-45f6-b42b-5e9d525d3bc3",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/toolops_router.py",
-        "line": 175,
-        "reason": "FALSE POSITIVE: JSON response with sanitized tool_id (SecurityValidator.sanitize_display_text at line 166) and validated database schema fields (tool_schema.name, tool_schema.description). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "33f2a6a8-025f-43af-b49a-aef28a957d45",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/sso.py",
-        "line": 647,
-        "reason": "FALSE POSITIVE: JSON response with explicitly sanitized provider_id (SecurityValidator.sanitize_display_text at line 646). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
-      },
-      {
-        "id": "3ab347ee-664a-4eb0-a2db-1ddc125507ba",
-        "cwe": "CWE-79",
-        "file": "mcpgateway/routers/toolops_router.py",
-        "line": 181,
-        "reason": "FALSE POSITIVE: JSON response with sanitized tool_id (SecurityValidator.sanitize_display_text at line 172) and validated database schema fields (tool_schema.name at line 177, tool_schema.description at line 178). FastAPI JSONResponse automatically escapes special characters. Content-Type is application/json, not HTML."
+        "id": "0747f12e-588f-44ea-876f-a832df02cfda",
+        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
       }
     ]
   }
