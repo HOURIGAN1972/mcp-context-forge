@@ -3948,8 +3948,8 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
         return real_resource_validate(data)
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.httpx.AsyncClient", lambda **_kw: SimpleNamespace())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: None)
-    monkeypatch.setattr("mcpgateway.services.gateway_service.get_http_timeout", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_default_verify", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_timeout", lambda: None)
     monkeypatch.setattr(service, "create_ssl_context", MagicMock(return_value="ctx"))
     monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **kw: DummyStreamable(**kw))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())

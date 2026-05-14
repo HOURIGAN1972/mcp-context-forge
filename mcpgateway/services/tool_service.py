@@ -936,7 +936,10 @@ class ToolService(BaseService):
             True
         """
         self._event_service = EventService(channel_name="mcpgateway:tool_events")
-        self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
+        # First-Party
+        from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+        
+        self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": get_default_verify()})
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
@@ -3627,6 +3630,31 @@ class ToolService(BaseService):
 
         # Use MCP SDK to connect and call tool
         try:
+            # Create httpx client factory for SSL handling
+            def create_direct_proxy_client() -> httpx.AsyncClient:
+                """Create httpx client with proper SSL verification for direct proxy mode."""
+                # First-Party
+                from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+                
+                # Handle gateway CA certificate if present
+                if gateway.ca_certificate:
+                    ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                    verify_setting = ctx
+                else:
+                    verify_setting = get_default_verify()
+                
+                return httpx.AsyncClient(
+                    verify=verify_setting,
+                    follow_redirects=True,
+                    timeout=settings.mcpgateway_direct_proxy_timeout,
+                    limits=httpx.Limits(
+                        max_connections=settings.httpx_max_connections,
+                        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                        keepalive_expiry=settings.httpx_keepalive_expiry,
+                    ),
+                )
+            
             with create_span(
                 "mcp.client.call",
                 {
@@ -3642,7 +3670,7 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
-                async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+                async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_direct_proxy_client) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                             await session.initialize()
