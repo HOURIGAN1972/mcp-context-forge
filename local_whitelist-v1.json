@@ -1,5 +1,47 @@
 [
   {
+    "package": "pip",
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "cve_name": [
+      "CVE-2026-6357"
+    ],
+    "cve_url": [
+      "https://nvd.nist.gov/vuln/detail/CVE-2026-6357|https://nvd.nist.gov/vuln/detail/CVE-2026-6357] - twistlock"
+    ],
+    "planned_for_remediation": [
+      "not exploitable, the sps build uses pip 26.1.1 which is latest, container scan is passing."
+    ],
+    "reason_for_not_exploitable": [
+      "not exploitable, the sps build uses pip 26.1.1 which is the latest. container scan is passing."
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-165023"
+    ]
+  },
+  {
+    "package": "pip",
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "cve_name": [
+      "CVE-2026-3219"
+    ],
+    "cve_url": [
+      "https://nvd.nist.gov/vuln/detail/CVE-2026-3219|https://nvd.nist.gov/vuln/detail/CVE-2026-3219] - twistlock"
+    ],
+    "planned_for_remediation": [
+      "not exploitable, the sps build uses pip 26.1.1 which is latest, container scan is passing."
+    ],
+    "reason_for_not_exploitable": [
+      "not exploitable, the sps build uses pip 26.1.1 which is the latest. container scan is passing."
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-160262"
+    ]
+  },
+  {
     "package": "protobuf",
     "images": [
       "cyberfraud-mcp-context-forge"
@@ -18,6 +60,27 @@
     ],
     "jira_ticket": [
       "https://ibm-qrs.atlassian.net/browse/CYFR-158602"
+    ]
+  },
+  {
+    "package": "pip",
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "cve_name": [
+      "CVE-2025-8869"
+    ],
+    "cve_url": [
+      "https://nvd.nist.gov/vuln/detail/CVE-2025-8869|https://nvd.nist.gov/vuln/detail/CVE-2025-8869] - twistlock"
+    ],
+    "planned_for_remediation": [
+      "not exploitable, the sps build uses pip 26.1.1 which is latest, container scan is passing."
+    ],
+    "reason_for_not_exploitable": [
+      "not exploitable, the sps build uses pip 26.1.1 which is the latest. container scan is passing."
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-153964"
     ]
   },
   {
