@@ -2,100 +2,92 @@
   "PSIRT_PRD0015613//cyberfraud-mcp-context-forge": {
     "finding_ids": [
       {
-        "id": "fa93b072-4a39-4a44-ba78-8864f5e0d518",
-        "reason": "{{FALSE POSITIVE: Backend URL constructed at line 644-647 via internal_backend_url() from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled.}}"
+        "id": "ec4d3be6-55f7-46d4-8b34-3548a9f8c1ca",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "f72f5ba6-8d78-4a91-9b8d-a16f3635601e",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "eb516c54-56ca-4844-b0d5-16568d97c403",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "e814a8b9-c4cd-46e9-b758-7d8dc412cfc5",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authentication. Not user-controlled. A2A runtime uses trusted backend configuration}}"
+        "id": "da541d52-da09-4488-a766-7f8f8300a30a",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "e5a4ab22-bd85-4ed3-9527-e060664ccbe9",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
+        "id": "d11b3c89-af96-4a5e-842e-3cfb337894bd",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "d07169c0-4645-4c64-8391-cfed83e6072d",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "cbb6528f-d270-4398-9d45-7b8a066a7c43",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "ce40e20e-8011-4935-8ca8-cf6b3f2021b3",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced}}"
+        "id": "b359c2ed-178a-4996-b580-4cae14e11706",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "b7f86fe0-ee17-4b1a-8975-6a395b450dfa",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
+        "id": "6fef025f-0d8c-46dc-bef7-41e65e9c9a0f",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "ac39806c-fc77-49f8-91d9-e6fa53e5940c",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
+        "id": "6eacd9d6-9fb6-44c0-b2f1-30374b923571",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "a58c0a17-9709-416b-8b82-2fe7acacf9f7",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
+        "id": "3de72b0f-d879-4b97-9934-6cffce69ff55",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "8f64c21f-13e0-4fe6-8f5b-3e617a0f3337",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "2b5e45ef-4a60-49f9-9ad8-7e066f04ca41",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "7d1ff717-ef8c-4547-b46a-49fca448b2ea",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal Rust\u2192Python authorization. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
+        "id": "0fc077e6-1c29-42a8-a2b7-06ed1d4a74e7",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "7a1bb8f9-29f3-460e-bd1c-1136726f1d35",
-        "reason": "{{FALSE POSITIVE: Backend URL validated at line 2664 via state.validate_backend_url(). URL constructed from state.backend_authenticate_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced.}}"
+        "id": "f463daf3-6b06-491c-b94b-12c69cdecec2",
+        "reason": "whitelisting because in a production environment, the operator will always present the ssl cert so it will always be validated."
       },
       {
-        "id": "78b0a51d-c28b-4770-9396-48d95ae02caa",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "6f5a87b1-2954-400e-b21c-da9ec6274cb2",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "778be146-d5a3-4413-825b-ddeda3e7e4be",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "69260803-4670-43f9-b893-70882f81da61",
+        "reason": "whitelisting because in a production environment, the operator will always present the ssl cert so it will always be validated."
       },
       {
-        "id": "5e6a24a0-695d-4f70-afb4-1bbaf47d4ec1",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "5a45cba0-6865-4473-9125-6e252c8a1d7b",
+        "reason": "whitelisting because in a production environment, the operator will always present the ssl cert so it will always be validated."
       },
       {
-        "id": "49762647-7968-4e17-bc25-09241e256493",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "13b11de6-8c06-4db0-af10-12f1d41b82ee",
+        "reason": "Identified code is unit-test-related."
       },
       {
-        "id": "44d7da2f-2a3b-4875-9efa-54d0130b774c",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request (see backend_url_validator.rs). URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "006a862b-2e64-48b0-a73e-a9d9b340ad42",
+        "reason": "whitelisting because in a production environment, the operator will always present the ssl cert so it will always be validated."
       },
       {
-        "id": "42bf5fb9-42a5-4106-a44e-e022689a7d7d",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "ab1e8ab5-92f5-4382-8ede-c2fa88766abc",
+        "reason": "The values is under Pydantic schema example definitions via json_schema_extra. Not actual \u2018real' credentials."
       },
       {
-        "id": "4268704c-e31c-4c29-b5d4-887200575eed",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "a55797ca-e006-47a3-a815-7fbda54dd831",
+        "reason": "The values is under Pydantic schema example definitions via json_schema_extra. Not actual \u2018real' credentials."
       },
       {
-        "id": "30eef339-d8d4-4a86-acc1-e897973e474c",
-        "reason": "{{FALSE POSITIVE: Backend URL validated at line 7894 via state.validate_backend_url(). URL constructed from derive_backend_session_delete_url() which uses environment-configured backend_rpc_url. Allowlist + CIDR blocklist enforced.}}"
+        "id": "73a61184-cccf-410e-a39c-daec83b592c3",
+        "reason": "The values is under Pydantic schema example definitions via json_schema_extra. Not actual \u2018real' credentials."
       },
       {
-        "id": "272cb573-1bac-42c3-865b-c44cfa400f96",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
+        "id": "70603824-bfe7-4dea-953f-7a29a6c520e4",
+        "reason": "The values is under Pydantic schema example definitions via json_schema_extra. Not actual \u2018real' credentials."
       },
       {
-        "id": "21a67e25-5fd4-42b9-be8c-da8fbb93ed0d",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
-      },
-      {
-        "id": "105defa5-61d6-4846-a08c-b749199c9946",
-        "reason": "{{FALSE POSITIVE: Backend URL is validated via BackendUrlValidator.validate_url() before request. URL is constructed from environment-configured backend_rpc_url, not user input. Allowlist + CIDR blocklist enforced.}}"
-      },
-      {
-        "id": "0747f12e-588f-44ea-876f-a832df02cfda",
-        "reason": "{{FALSE POSITIVE: Backend URL is constructed from environment-configured backend_base_url for internal A2A agent resolution. Not user-controlled. A2A runtime uses trusted backend configuration.}}"
+        "id": "175091a1-9cf1-4389-9782-c37769c0ee33",
+        "reason": "The values is under Pydantic schema example definitions via json_schema_extra. Not actual \u2018real' credentials."
       }
     ]
   }
