@@ -25,6 +25,7 @@ Mako = "2026-05-14T23:59:59Z"
 python-multipart = "2026-05-14T23:59:59Z"
 langsmith = "2026-04-22T23:59:59Z"
 langchain-openai = "2026-04-22T23:59:59Z"
+idna = "2026-05-28T23:59:59Z"  # Or later date when idna 3.16 was published
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
