@@ -1270,6 +1270,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
+    
+    # Start log config watcher if file watcher is enabled and config path is set
+    log_config_watcher_instance = None
+    if settings.file_watcher_enabled and settings.log_config_path:
+        try:
+            # First-Party
+            from mcpgateway.services.log_config_watcher import get_log_config_watcher  # pylint: disable=import-outside-toplevel
+
+            log_config_watcher_instance = await get_log_config_watcher(logging_service)
+            await log_config_watcher_instance.start(settings.log_config_path)
+            logger.info("Log config watcher started for: %s", settings.log_config_path)
+        except FileNotFoundError:
+            logger.warning("Log config file not found: %s - watcher not started", settings.log_config_path)
+        except RuntimeError as e:
+            logger.warning("Log config watcher not started: %s", e)
+        except Exception as e:
+            logger.error("Failed to start log config watcher: %s", e)
     logger.info("Starting ContextForge services")
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
@@ -1695,6 +1712,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.info("Reverse proxy health monitoring stopped")
             except Exception as e:
                 logger.debug(f"Error stopping reverse proxy health monitoring: {e}")
+        # Stop log config watcher
+        if log_config_watcher_instance is not None:
+            try:
+                await log_config_watcher_instance.stop()
+                logger.info("Log config watcher stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping log config watcher: {e}")
+        
+        # Stop FileWatcherService singleton (only if enabled)
+        if settings.file_watcher_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.file_watcher_service import get_file_watcher_service  # pylint: disable=import-outside-toplevel
+                
+                file_watcher_service = await get_file_watcher_service()
+                await file_watcher_service.stop_all()
+                logger.info("FileWatcherService stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping FileWatcherService: {e}")
 
         # Stop cache invalidation subscriber
         try:

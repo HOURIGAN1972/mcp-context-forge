@@ -308,8 +308,31 @@ class LoggingService:
             >>> asyncio.run(service.initialize())
 
         """
-        # Update service log level from settings BEFORE configuring loggers
-        self._level = LogLevel[settings.log_level.upper()]
+        # Default to settings log level
+        log_level_str = settings.log_level.upper()
+        log_source = "settings"
+        
+        # Try to read log level from config file if file watcher is enabled
+        if settings.file_watcher_enabled and settings.log_config_path:
+            try:
+                # First-Party
+                from mcpgateway.services.log_config_watcher import read_log_level_from_config  # pylint: disable=import-outside-toplevel
+                
+                file_level = read_log_level_from_config(settings.log_config_path)
+                if file_level:
+                    log_level_str = file_level
+                    log_source = f"config file ({settings.log_config_path})"
+                    logging.info(f"Using log level from {log_source}: {log_level_str}")
+                else:
+                    logging.info(f"Config file not found or invalid, using log level from settings: {log_level_str}")
+            except Exception as e:
+                logging.warning(f"Error reading log config file, falling back to settings: {e}")
+        else:
+            logging.info(f"Using log level from {log_source}: {log_level_str}")
+        
+        # Update service log level BEFORE configuring loggers
+        # This will use either the config file level or fall back to settings
+        self._level = LogLevel[log_level_str]
 
         root_logger = logging.getLogger()
         self._loggers[""] = root_logger
@@ -317,8 +340,8 @@ class LoggingService:
         # Clear existing handlers to avoid duplicates
         root_logger.handlers.clear()
 
-        # Set root logger level to match settings - this is critical for LOG_LEVEL to work
-        log_level = getattr(logging, settings.log_level.upper())
+        # Set root logger level to match the resolved startup level
+        log_level = getattr(logging, log_level_str)
         root_logger.setLevel(log_level)
 
         # Console handler (stdout/stderr)
@@ -375,6 +398,9 @@ class LoggingService:
 
         # Suppress high-volume health check and readiness probe logs
         self._install_uvicorn_health_check_filter()
+
+        # Suppress noisy watchfiles debug logs (timeout messages, filtered changes)
+        self._suppress_watchfiles_debug_logs()
 
     async def shutdown(self) -> None:
         """Shutdown logging service.
@@ -560,6 +586,17 @@ class LoggingService:
 
         uvicorn_access_logger = logging.getLogger("uvicorn.access")
         uvicorn_access_logger.addFilter(_UvicornHealthCheckFilter())
+
+    @staticmethod
+    def _suppress_watchfiles_debug_logs() -> None:
+        """Suppress noisy DEBUG logs from watchfiles.main.
+
+        The watchfiles library logs frequent DEBUG messages about timeouts and filtered changes
+        which create noise without adding value. This sets the watchfiles.main logger to INFO level
+        to suppress these messages while keeping INFO, WARNING, ERROR, and CRITICAL logs.
+        """
+        watchfiles_logger = logging.getLogger("watchfiles.main")
+        watchfiles_logger.setLevel(logging.INFO)
 
     @staticmethod
     def _install_httpx_url_sanitize_filter() -> None:
