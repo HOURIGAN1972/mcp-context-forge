@@ -1,6 +1,27 @@
 [
   {
     "cve_name": [
+      "CVE-2026-45186"
+    ],
+    "cve_url": [
+      "https://access.redhat.com/security/cve/CVE-2026-45186 - twistlock"
+    ],
+    "images": [
+      "cyberfraud-mcp-context-forge"
+    ],
+    "jira_ticket": [
+      "https://ibm-qrs.atlassian.net/browse/CYFR-167071"
+    ],
+    "package": "expat",
+    "planned_for_remediation": [
+      "We need to wait for an update to the base layer image from red hat"
+    ],
+    "reason_for_not_exploitable": [
+      "Not exploitable as we do not use expatlib in our service"
+    ]
+  },
+  {
+    "cve_name": [
       "CVE-2025-8869"
     ],
     "cve_url": [
