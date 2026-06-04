@@ -1,27 +1,6 @@
 [
   {
     "cve_name": [
-      "CVE-2026-45186"
-    ],
-    "cve_url": [
-      "https://access.redhat.com/security/cve/CVE-2026-45186 - twistlock"
-    ],
-    "images": [
-      "cyberfraud-mcp-context-forge"
-    ],
-    "jira_ticket": [
-      "https://ibm-qrs.atlassian.net/browse/CYFR-167071"
-    ],
-    "package": "expat",
-    "planned_for_remediation": [
-      "We need to wait for an update to the base layer image from red hat"
-    ],
-    "reason_for_not_exploitable": [
-      "Not exploitable as we do not use expatlib in our service"
-    ]
-  },
-  {
-    "cve_name": [
       "CVE-2025-8869"
     ],
     "cve_url": [
@@ -102,27 +81,6 @@
     ],
     "reason_for_not_exploitable": [
       "{{resolved once ubi minimal address on future image.}}"
-    ]
-  },
-  {
-    "cve_name": [
-      "CVE-2026-0994"
-    ],
-    "cve_url": [
-      "https://nvd.nist.gov/vuln/detail/CVE-2026-0994|https://nvd.nist.gov/vuln/detail/CVE-2026-0994] - twistlock"
-    ],
-    "images": [
-      "cyberfraud-mcp-context-forge"
-    ],
-    "jira_ticket": [
-      "https://ibm-qrs.atlassian.net/browse/CYFR-158602"
-    ],
-    "package": "protobuf",
-    "planned_for_remediation": [
-      "{{Already remediated. Protobuf upgraded to 6.33.6 which includes the fix for CVE-2026-0994}}"
-    ],
-    "reason_for_not_exploitable": [
-      "{{Protobuf 6.33.6 contains the security patch for CVE-2026-0994. Version constraint protobuf>=6.33.6,<7.0.0 enforced in pyproject.toml. Also, grpc is not used by the context forge app and therefore it is not used in the application.}}"
     ]
   }
 ]
