@@ -229,9 +229,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # Load configuration file if provided
     if args.config:
         try:
-            with open(args.config, "r", encoding="utf-8") as f:
+            config_path = os.path.expanduser(args.config)
+            with open(config_path, "r", encoding="utf-8") as f:
                 # Determine format by file extension
-                if args.config.endswith((".yaml", ".yml")):
+                if config_path.endswith((".yaml", ".yml")):
                     if not yaml:
                         parser.error("PyYAML package required for YAML configuration file support")
                     config = yaml.safe_load(f)
@@ -248,7 +249,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                 if not hasattr(args, key_normalized) or getattr(args, key_normalized) is None:
                     setattr(args, key_normalized, value)
         except FileNotFoundError:
-            parser.error(f"Configuration file not found: {args.config}")
+            parser.error(f"Configuration file not found: {config_path}")
         except Exception as e:
             parser.error(f"Error loading configuration file: {e}")
 
