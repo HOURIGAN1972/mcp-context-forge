@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add code_verifier to oauth_states for PKCE support
+"""Location: ./mcpgateway/alembic/versions/61ee11c482d6_add_code_verifier_to_oauth_states_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add code_verifier to oauth_states for PKCE support
 
 Revision ID: 61ee11c482d6
 Revises: 0f81d4a5efe0
 Create Date: 2025-09-30 15:45:43.895080
-
 """
 
 # Standard
@@ -16,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "61ee11c482d6"
-down_revision: Union[str, Sequence[str], None] = "0f81d4a5efe0"
+down_revision: Union[str, Sequence[str], None] = "0f81d4a5efe0"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

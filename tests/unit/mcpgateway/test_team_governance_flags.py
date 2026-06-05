@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_team_governance_flags.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -34,13 +34,19 @@ class TestAllowTeamCreationFlag:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.routers.teams.settings")
-    async def test_allow_team_creation_disabled_non_admin(self, mock_settings):
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_allow_team_creation_disabled_non_admin(self, MockPermissionService, mock_settings):
         """When allow_team_creation=False and user is not admin, create_team returns 403."""
         mock_settings.allow_team_creation = False
 
         # First-Party
         from mcpgateway.routers.teams import create_team
         from mcpgateway.schemas import TeamCreateRequest
+
+        # Mock PermissionService
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=False)
+        MockPermissionService.return_value = mock_perm_service
 
         request = TeamCreateRequest(name="Test Team", visibility="private")
         current_user_ctx = {"email": "user@example.com", "is_admin": False}
@@ -547,7 +553,7 @@ class TestAdminCreatedUserEmailVerified:
             mock_user_instance.email_verified_at = None
             MockUser.return_value = mock_user_instance
 
-            result = await service.create_user(email="new@example.com", password="P@ssw0rd123", granted_by="admin@example.com")
+            result = await service.create_user(email="new@example.com", password="P@ssw0rd123", granted_by="admin@example.com")  # pragma: allowlist secret
 
         # email_verified_at should be set before db.add
         assert mock_user_instance.email_verified_at is not None
@@ -577,7 +583,7 @@ class TestAdminCreatedUserEmailVerified:
             mock_user_instance.email_verified_at = None
             MockUser.return_value = mock_user_instance
 
-            result = await service.create_user(email="self@example.com", password="P@ssw0rd123")
+            result = await service.create_user(email="self@example.com", password="P@ssw0rd123")  # pragma: allowlist secret
 
         # email_verified_at should remain None
         assert mock_user_instance.email_verified_at is None

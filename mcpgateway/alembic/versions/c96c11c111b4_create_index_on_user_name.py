@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add index on email_users.full_name for search performance
+"""Location: ./mcpgateway/alembic/versions/c96c11c111b4_create_index_on_user_name.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add index on email_users.full_name for search performance
 
 Revision ID: c96c11c111b4
 Revises: 77243f5bfce5
@@ -26,7 +31,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "c96c11c111b4"
-down_revision: Union[str, Sequence[str], None] = "77243f5bfce5"
+down_revision: Union[str, Sequence[str], None] = "77243f5bfce5"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

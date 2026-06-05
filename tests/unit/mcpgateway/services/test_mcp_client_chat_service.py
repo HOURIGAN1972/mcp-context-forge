@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_mcp_client_chat_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
 Unit tests for mcp client chat service.
 """
 
@@ -15,6 +16,7 @@ from types import SimpleNamespace
 
 import mcpgateway.services.mcp_client_chat_service as svc
 
+
 # Patch LoggingService globally so logging doesn't pollute test outputs
 @pytest.fixture(autouse=True)
 def patch_logger(monkeypatch):
@@ -23,9 +25,11 @@ def patch_logger(monkeypatch):
     monkeypatch.setattr(svc.logging_service, "get_logger", lambda _: mock)
     return mock
 
+
 # --------------------------------------------------------------------------- #
 # CONFIGURATION TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_mcpserverconfig_http_and_stdio_modes(monkeypatch):
     http_conf = svc.MCPServerConfig(url="https://srv", transport="sse", auth_token="token")
@@ -55,24 +59,20 @@ def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
 
 
 def test_azure_openai_config_and_defaults():
-    conf = svc.AzureOpenAIConfig(
-        api_key="key",
-        azure_endpoint="https://end",
-        azure_deployment="gpt-4"
-    )
+    conf = svc.AzureOpenAIConfig(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")  # pragma: allowlist secret
     assert conf.model == "gpt-4"
     assert conf.temperature == pytest.approx(0.7)
     assert conf.max_retries == 2
 
 
 def test_openai_config():
-    conf = svc.OpenAIConfig(api_key="sk-123", model="gpt-4")
+    conf = svc.OpenAIConfig(api_key="sk-123", model="gpt-4")  # pragma: allowlist secret
     assert conf.model.startswith("gpt-")
     assert conf.temperature == 0.7
 
 
 def test_anthropic_config_defaults_and_constraints():
-    conf = svc.AnthropicConfig(api_key="ant-1")
+    conf = svc.AnthropicConfig(api_key="ant-1")  # pragma: allowlist secret
     assert 0.0 <= conf.temperature <= 1.0
     assert conf.max_tokens > 0
 
@@ -80,7 +80,7 @@ def test_anthropic_config_defaults_and_constraints():
 def test_bedrock_and_watsonx_config_basic_properties():
     conf = svc.AWSBedrockConfig(model_id="anthropic.claude-v2", region_name="us-east-1")
     assert "anthropic" in conf.model_id
-    watson_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")
+    watson_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")  # pragma: allowlist secret
     assert watson_conf.model_id.startswith("ibm/")
     assert watson_conf.temperature <= 2.0
 
@@ -89,20 +89,18 @@ def test_bedrock_and_watsonx_config_basic_properties():
 # PROVIDER FACTORY AND INDIVIDUAL PROVIDERS
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("provider_cls,config_cls,required_kwargs", [
-    (svc.AzureOpenAIProvider, svc.AzureOpenAIConfig,
-        dict(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")),
-    (svc.OpenAIProvider, svc.OpenAIConfig,
-        dict(api_key="sk-1")),
-    (svc.OllamaProvider, svc.OllamaConfig,
-        dict(base_url="http://localhost:11434", model="llama2")),
-    (svc.AnthropicProvider, svc.AnthropicConfig,
-        dict(api_key="ant-key")),
-    (svc.AWSBedrockProvider, svc.AWSBedrockConfig,
-        dict(model_id="anthropic.claude-v2", region_name="us-east-1")),
-    (svc.WatsonxProvider, svc.WatsonxConfig,
-        dict(api_key="key", url="https://us-south.ml.cloud.ibm.com", project_id="proj")),
-])
+
+@pytest.mark.parametrize(
+    "provider_cls,config_cls,required_kwargs",
+    [
+        (svc.AzureOpenAIProvider, svc.AzureOpenAIConfig, dict(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")),  # pragma: allowlist secret
+        (svc.OpenAIProvider, svc.OpenAIConfig, dict(api_key="sk-1")),  # pragma: allowlist secret
+        (svc.OllamaProvider, svc.OllamaConfig, dict(base_url="http://localhost:11434", model="llama2")),
+        (svc.AnthropicProvider, svc.AnthropicConfig, dict(api_key="ant-key")),  # pragma: allowlist secret
+        (svc.AWSBedrockProvider, svc.AWSBedrockConfig, dict(model_id="anthropic.claude-v2", region_name="us-east-1")),
+        (svc.WatsonxProvider, svc.WatsonxConfig, dict(api_key="key", url="https://us-south.ml.cloud.ibm.com", project_id="proj")),  # pragma: allowlist secret
+    ],
+)
 def test_provider_model_name_and_mock_llm(monkeypatch, provider_cls, config_cls, required_kwargs):
     # Mock external imports and bypass import checks by patching constructors
     monkeypatch.setattr(svc, "ChatAnthropic", MagicMock())
@@ -122,7 +120,7 @@ def test_provider_model_name_and_mock_llm(monkeypatch, provider_cls, config_cls,
 
 
 def test_llmprovider_factory_creates_correct_class(monkeypatch):
-    cfg = svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="sk", model="gpt-4"))
+    cfg = svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="sk", model="gpt-4"))  # pragma: allowlist secret
     with patch.object(svc, "OpenAIProvider", MagicMock()) as mock_cls:
         svc.LLMProviderFactory.create(cfg)
         mock_cls.assert_called_once()
@@ -145,7 +143,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     # OpenAI
     monkeypatch.setattr(svc, "ChatOpenAI", DummyLLM)
     monkeypatch.setattr(svc, "OpenAI", DummyLLM)
-    open_conf = svc.OpenAIConfig(api_key="sk-1", model="gpt-4")
+    open_conf = svc.OpenAIConfig(api_key="sk-1", model="gpt-4")  # pragma: allowlist secret
     open_provider = svc.OpenAIProvider(open_conf)
     assert isinstance(open_provider.get_llm("chat"), DummyLLM)
     open_provider = svc.OpenAIProvider(open_conf)
@@ -164,7 +162,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
     monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
-    ant_conf = svc.AnthropicConfig(api_key="ant-1")
+    ant_conf = svc.AnthropicConfig(api_key="ant-1")  # pragma: allowlist secret
     ant_provider = svc.AnthropicProvider(ant_conf)
     assert isinstance(ant_provider.get_llm("chat"), DummyLLM)
     ant_provider = svc.AnthropicProvider(ant_conf)
@@ -184,7 +182,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
-    wat_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")
+    wat_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")  # pragma: allowlist secret
     wat_provider = svc.WatsonxProvider(wat_conf)
     assert isinstance(wat_provider.get_llm("chat"), DummyLLM)
     wat_provider = svc.WatsonxProvider(wat_conf)
@@ -194,6 +192,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
 # --------------------------------------------------------------------------- #
 # CHAT HISTORY MANAGER
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_chat_history_manager_memory_flow(monkeypatch):
@@ -226,6 +225,7 @@ async def test_chat_history_manager_redis_json_decode_error_returns_empty(patch_
 # --------------------------------------------------------------------------- #
 # MCP CLIENT TESTS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_disconnect_get_tools(monkeypatch):
@@ -313,6 +313,7 @@ async def test_mcpclient_get_tools_logs_and_raises_on_error(patch_logger):
 # MCP CHAT SERVICE TESTS (Async orchestration, streaming, concurrency)
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_success_and_idempotent(monkeypatch, patch_logger):
     cfg = svc.MCPClientConfig(
@@ -354,7 +355,7 @@ async def test_mcpchatservice_initialize_and_chat(monkeypatch):
 
     # ✅ async agent with awaitable ainvoke
     service._agent = AsyncMock()
-    service._agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="Hello!")]} )
+    service._agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="Hello!")]})
 
     # ✅ async history manager methods
     service.history_manager = MagicMock()
@@ -378,10 +379,7 @@ async def test_mcpchatservice_initialize_and_chat(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_concurrent_calls_and_error_handling(monkeypatch):
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg, user_id="u1")
 
     monkeypatch.setattr(service, "initialize", AsyncMock(return_value=None))
@@ -403,6 +401,7 @@ async def test_chat_concurrent_calls_and_error_handling(monkeypatch):
 # ERROR AND RETRY LOGIC COVERAGE
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_chat_retries_and_permanent_errors(monkeypatch):
     mcpcfg = svc.MCPClientConfig(
@@ -417,7 +416,7 @@ async def test_chat_retries_and_permanent_errors(monkeypatch):
 
     # ✅ async agent mock
     chat._agent = AsyncMock()
-    chat._agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="ok")]} )
+    chat._agent.ainvoke = AsyncMock(return_value={"messages": [MagicMock(content="ok")]})
 
     # ✅ async history manager methods
     chat.history_manager = MagicMock()
@@ -445,12 +444,10 @@ async def test_chat_retries_and_permanent_errors(monkeypatch):
 # RESOURCE CLEANUP, LOGGING, AND TIMEOUTS
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_service_resource_cleanup(monkeypatch):
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://s", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._client = AsyncMock()
     service._client.disconnect = AsyncMock()
@@ -462,6 +459,7 @@ async def test_service_resource_cleanup(monkeypatch):
 # --------------------------------------------------------------------------- #
 # STREAMING + BASIC PRECONDITIONS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_chat_stream_requires_initialized_service():
@@ -537,13 +535,11 @@ async def test_chat_events_empty_message_raises():
 # OUT-OF-ORDER TOOL EVENT HANDLING
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_chat_events_reconciles_out_of_order_tool_events(monkeypatch, patch_logger):
     """Test that on_tool_end before on_tool_start is buffered and reconciled when start arrives."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -605,10 +601,7 @@ async def test_chat_events_reconciles_out_of_order_tool_events(monkeypatch, patc
 @pytest.mark.asyncio
 async def test_chat_events_emits_error_for_orphan_tool_ends(monkeypatch, patch_logger):
     """Test that orphan on_tool_end (no matching start) emits aggregated error at stream end."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -670,10 +663,7 @@ async def test_chat_events_emits_error_for_orphan_tool_ends(monkeypatch, patch_l
 @pytest.mark.asyncio
 async def test_chat_events_tool_error_clears_buffered_end(monkeypatch, patch_logger):
     """Test that on_tool_error clears any buffered end for that run to avoid inconsistent streams."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -720,10 +710,7 @@ async def test_chat_events_tool_error_clears_buffered_end(monkeypatch, patch_log
 @pytest.mark.asyncio
 async def test_chat_events_buffer_full_drops_included_in_error(monkeypatch, patch_logger):
     """Test that buffer-full drops are tracked and included in aggregated error."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -773,10 +760,7 @@ async def test_chat_events_buffer_full_drops_included_in_error(monkeypatch, patc
 @pytest.mark.asyncio
 async def test_chat_events_ttl_expiry_included_in_error(monkeypatch, patch_logger):
     """Test that TTL-expired orphans are tracked and included in aggregated error."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -841,10 +825,7 @@ async def test_chat_events_dropped_then_start_still_reports_orphan(monkeypatch, 
     2. A tool only ends once, so no second end will arrive
     3. This is a data integrity issue that clients should know about
     """
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -902,10 +883,7 @@ async def test_chat_events_dropped_then_start_still_reports_orphan(monkeypatch, 
 @pytest.mark.asyncio
 async def test_chat_events_dropped_then_error_clears_from_dropped(monkeypatch, patch_logger):
     """Test that a later on_tool_error clears run_id from dropped set to avoid false orphan."""
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -958,10 +936,7 @@ async def test_chat_events_dropped_tracking_overflow(monkeypatch, patch_logger):
     cannot be tracked individually. The overflow count should be included in the
     aggregated error message to inform clients of the full extent of data loss.
     """
-    mcpcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
-        llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2"))
-    )
+    mcpcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"), llm=svc.LLMConfig(provider="ollama", config=svc.OllamaConfig(model="llama2")))
     service = svc.MCPChatService(mcpcfg)
     service._initialized = True
     service.user_id = "test-user"
@@ -1019,6 +994,7 @@ async def test_chat_events_dropped_tracking_overflow(monkeypatch, patch_logger):
 # --------------------------------------------------------------------------- #
 # ADDITIONAL CHAT_EVENTS BRANCH COVERAGE
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_chat_events_register_run_failure_logs_and_noop_cancel_cb(monkeypatch, patch_logger):
@@ -1317,6 +1293,7 @@ async def test_chat_events_reraises_timeout_error(monkeypatch, patch_logger):
 # --------------------------------------------------------------------------- #
 # HISTORY + SHUTDOWN + RELOAD TOOLS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_get_conversation_history_no_user_id_returns_empty():

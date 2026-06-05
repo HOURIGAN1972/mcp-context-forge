@@ -255,11 +255,6 @@ export const setupTabNavigation = function () {
     if (!tabElement) {
       return;
     }
-    // The sidebar anchors already have inline onclick handlers in admin.html.
-    // Avoid adding a second click handler that would call showTab twice.
-    if (tabElement.hasAttribute("onclick")) {
-      return;
-    }
     if (tabElement.dataset.tabBound === "true") {
       return;
     }
@@ -929,8 +924,8 @@ export const initializeTabState = function () {
     }
   });
 
-  // Note: URL state persistence for show-inactive toggles is now handled by
-  // Admin.updateInactiveUrlState() in admin.html via @change handlers on checkboxes.
+  // Note: URL state persistence for show-inactive toggles is handled by
+  // window.updateInactiveUrlState() (utils.js) via Alpine @change handlers on checkboxes.
   // The handlers write namespaced params (e.g., servers_inactive, tools_inactive).
 
   // Disable toggle until its target exists (prevents race with initial HTMX load)

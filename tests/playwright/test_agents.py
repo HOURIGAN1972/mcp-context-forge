@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_agents.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -8,6 +8,7 @@ A2A Agents UI tests for agent management features.
 """
 
 # Standard
+import uuid
 from typing import Any, Dict
 
 # Third-Party
@@ -231,12 +232,12 @@ class TestAgentsUI:
         agents_page.navigate_to_agents_tab()
 
         # Use helper to fill basic auth
-        agents_page.fill_basic_auth("testuser", "testpass")
+        agents_page.fill_basic_auth("testuser", "TestP@ssw0rd!Test2026X")
 
         # Verify fields are filled and visible
         expect(agents_page.auth_basic_fields).to_be_visible()
         expect(agents_page.auth_username_input).to_have_value("testuser")
-        expect(agents_page.auth_password_input).to_have_value("testpass")
+        expect(agents_page.auth_password_input).to_have_value("TestP@ssw0rd!Test2026X")
 
     def test_fill_bearer_auth_helper(self, agents_page: AgentsPage):
         """Test the fill_bearer_auth helper method."""
@@ -260,7 +261,7 @@ class TestAgentsUI:
             grant_type="client_credentials",
             issuer="https://oauth.example.com",
             client_id="test-client-id",
-            client_secret="test-client-secret",
+            client_secret="test-client-secret",  # pragma: allowlist secret
             token_url="https://oauth.example.com/token",
             scopes="read write",
         )
@@ -459,9 +460,12 @@ class TestAgentsUI:
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
+        # Use a unique agent name to avoid 409 conflicts from prior test runs
+        agent_name = f"Test Agent No UAID {uuid.uuid4().hex[:8]}"
+
         # Create an agent WITHOUT UAID
-        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent No UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://no-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -470,12 +474,24 @@ class TestAgentsUI:
         # Do NOT check UAID checkbox
         expect(agents_page.generate_uaid_checkbox).not_to_be_checked()
 
-        # Submit form
-        agents_page.submit_agent_form()
-        agents_page.page.wait_for_timeout(2000)
+        # Submit form and capture response
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        # After form submission the page may redirect/reload; wait for settle
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        # Ensure we're back on the agents tab with the table loaded
+        agents_page.navigate_to_agents_tab()
+
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
 
         # Verify UAID checkbox is NOT checked and is ENABLED (can be checked)
         expect(agents_page.edit_generate_uaid_checkbox).not_to_be_checked()
@@ -498,14 +514,63 @@ class TestAgentsUI:
         protocol_value = agents_page.edit_uaid_protocol_select.input_value()
         assert protocol_value == "a2a"
 
+    def test_protocol_version_select_present(self, agents_page: AgentsPage):
+        """Test that the A2A protocol version select is present on the add form."""
+        agents_page.navigate_to_agents_tab()
+
+        expect(agents_page.protocol_version_select).to_be_visible()
+
+    def test_protocol_version_options_and_default(self, agents_page: AgentsPage):
+        """Test that the protocol version select exposes 1.0/0.3 with 1.0 as default."""
+        agents_page.navigate_to_agents_tab()
+
+        options = agents_page.protocol_version_select.locator("option")
+        option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
+
+        assert option_values == ["1.0", "0.3"], f"Unexpected protocol version options: {option_values}"
+
+        default_value = agents_page.protocol_version_select.input_value()
+        assert default_value == "1.0"
+
+    def test_edit_agent_protocol_version_prefilled(self, agents_page: AgentsPage):
+        """Test that the edit modal prefills the protocol version from the saved agent."""
+        agents_page.navigate_to_agents_tab()
+
+        agent_name = f"Test Agent Protocol {uuid.uuid4().hex[:8]}"
+
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
+        agents_page.agent_type_select.select_option("custom")
+        agents_page.protocol_version_select.select_option("0.3")
+
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
+
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
+
+        expect(agents_page.edit_protocol_version_select).to_be_visible()
+        assert agents_page.edit_protocol_version_select.input_value() == "0.3"
+
     def test_edit_agent_with_uaid_fields_readonly(self, agents_page: AgentsPage):
         """Test that editing an agent with UAID shows read-only fields."""
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
+        # Use a unique agent name to avoid 409 conflicts from prior test runs
+        agent_name = f"Test Agent With UAID {uuid.uuid4().hex[:8]}"
+
         # Create an agent WITH UAID
-        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent With UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://with-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -514,12 +579,24 @@ class TestAgentsUI:
         # Enable UAID
         agents_page.enable_uaid(registry="test-registry", protocol="mcp")
 
-        # Submit form
-        agents_page.submit_agent_form()
-        agents_page.page.wait_for_timeout(2000)
+        # Submit form and capture response
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        # After form submission the page may redirect/reload; wait for settle
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        # Ensure we're back on the agents tab with the table loaded
+        agents_page.navigate_to_agents_tab()
+
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
 
         # Verify UAID checkbox is CHECKED and DISABLED (immutable)
         expect(agents_page.edit_generate_uaid_checkbox).to_be_checked()

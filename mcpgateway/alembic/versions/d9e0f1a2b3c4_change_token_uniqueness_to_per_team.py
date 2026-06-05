@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""change token uniqueness constraint to per-team scope
+"""Location: ./mcpgateway/alembic/versions/d9e0f1a2b3c4_change_token_uniqueness_to_per_team.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+change token uniqueness constraint to per-team scope
 
 Revision ID: d9e0f1a2b3c4
 Revises: b2d9c6e4f1a7
@@ -26,8 +32,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "d9e0f1a2b3c4"
-down_revision: Union[str, Sequence[str], None] = "b2d9c6e4f1a7"
+revision: str = "d9e0f1a2b3c4"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b2d9c6e4f1a7"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

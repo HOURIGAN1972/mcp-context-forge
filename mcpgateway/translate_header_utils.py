@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Header processing utilities for dynamic environment injection in translate module.
-
-Location: ./mcpgateway/translate_header_utils.py
-Copyright 2025
+"""Location: ./mcpgateway/translate_header_utils.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
+Header processing utilities for dynamic environment injection in translate module.
 Header processing utilities for dynamic environment variable injection in mcpgateway.translate.
 """
 
@@ -259,7 +258,7 @@ class NormalizedMappings:
             View of environment variable names
 
         Examples:
-            >>> mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})
+            >>> mappings = NormalizedMappings({"Authorization": "AUTH", "X-Api-Key": "KEY"})  # pragma: allowlist secret
             >>> sorted(mappings.values())
             ['AUTH', 'KEY']
         """

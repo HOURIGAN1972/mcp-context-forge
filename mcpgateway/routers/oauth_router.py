@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/oauth_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -14,7 +14,10 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 from html import escape
+import json
 import logging
+import re
+import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
@@ -26,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
@@ -36,10 +40,68 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+
+# First-Party - CSP nonce support
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 logger = logging.getLogger(__name__)
+
+ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+
+
+async def enforce_fetch_tools_csrf(request: Request) -> None:
+    """Validate admin CSRF token for OAuth fetch-tools mutations.
+
+    Also enforces same-origin via Origin/Referer header check to prevent
+    cross-site request forgery on this state-changing endpoint.
+    """
+    auth_header = get_auth_header_value(request.headers) or ""
+    scheme, separator, token = auth_header.partition(" ")
+    if separator and scheme.lower() == "bearer" and token.strip():
+        return
+
+    # Same-origin check: require Origin or Referer to match app domain (fail-closed)
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    candidate = origin
+    if not candidate and referer:
+        try:
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                candidate = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            candidate = None
+
+    if not candidate:
+        # Fail closed: missing Origin/Referer is not allowed for state-changing requests
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    # Derive the request origin from the already-normalized request.url
+    # (ProxyHeadersMiddleware + ForwardedHostMiddleware run before this handler).
+    # Only trust request.url-derived origin when app_domain is a loopback
+    # address (localhost dev), to prevent X-Forwarded-Host amplification.
+    app_domain = str(settings.app_domain)
+    parsed_app = urlparse(app_domain)
+    app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+    allowed = {app_origin}
+    if parsed_app.hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:  # nosec B104
+        request_origin = f"{request.url.scheme}://{request.url.netloc}"
+        allowed.add(request_origin)
+    allowed.update(settings.csrf_trusted_origins)
+    if candidate not in allowed:
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    # Double-submit cookie check
+    csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+    csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)
+    if not isinstance(csrf_cookie, str) or not csrf_cookie or not isinstance(csrf_header, str) or not csrf_header:
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+    if not secrets.compare_digest(csrf_header, csrf_cookie):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
 def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
@@ -414,11 +476,11 @@ async def initiate_oauth_flow(
                     logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
+                        detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
-                    raise HTTPException(status_code=500, detail=f"Failed to register OAuth client: {str(dcr_ex)}")
+                    raise HTTPException(status_code=500, detail="Failed to register OAuth client")
             else:
                 # DCR is disabled or auto-register is off
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
@@ -445,7 +507,7 @@ async def initiate_oauth_flow(
         raise
     except Exception as e:
         logger.error(f"Failed to initiate OAuth flow: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to initiate OAuth flow: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to initiate OAuth flow")
 
 
 @oauth_router.get("/callback")
@@ -460,7 +522,7 @@ async def oauth_callback(
     # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
     code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
-    error: Annotated[str | None, Query(max_length=100, pattern=r"^[a-zA-Z0-9_]+$", description="OAuth provider error code")] = None,
+    error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,
@@ -601,7 +663,15 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
         # Return success page with option to return to admin
-        return HTMLResponse(content=f"""
+        # Get CSP nonce for inline script
+        csp_nonce = get_csp_nonce_from_request(request)
+
+        # Generate CSRF token early so it can be embedded in the JS literal
+        csrf_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
+        if not isinstance(csrf_token, str) or not re.match(r"^[A-Za-z0-9_=-]{32,}$", csrf_token):
+            csrf_token = secrets.token_urlsafe(32)
+
+        html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -619,8 +689,12 @@ async def oauth_callback(
                     text-decoration: none;
                     border-radius: 5px;
                     margin-top: 20px;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 16px;
                 }}
                 .button:hover {{ background-color: #2563eb; }}
+                .button:disabled {{ opacity: 0.6; cursor: not-allowed; }}
             </style>
         </head>
         <body>
@@ -635,7 +709,7 @@ async def oauth_callback(
             <div style="margin: 30px 0;">
                 <h3>Next Steps:</h3>
                 <p>Now that OAuth authorization is complete, you can fetch tools from the MCP server:</p>
-                <button onclick="fetchTools()" class="button" style="background-color: #059669;">
+                <button id="fetch-tools-btn" class="button" style="background-color: #059669;">
                     🔧 Fetch Tools from MCP Server
                 </button>
                 <div id="fetch-status" style="margin-top: 15px;"></div>
@@ -643,53 +717,79 @@ async def oauth_callback(
 
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
 
-            <script>
-            async function fetchTools() {{
-                const button = event.target;
-                const statusDiv = document.getElementById('fetch-status');
-
-                button.disabled = true;
-                button.textContent = '⏳ Fetching Tools...';
-                statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
-
+            <script nonce="{csp_nonce}">
+            (function() {{
                 try {{
-                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: {{ 'Accept': 'text/html' }}
-                    }});
-
-                    const result = await response.json();
-
-                    if (response.ok) {{
-                        statusDiv.innerHTML = `
-                            <div style="color: #059669; padding: 15px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 5px;">
-                                <h4>✅ Tools Fetched Successfully!</h4>
-                                <p>${{result.message}}</p>
-                            </div>
-                        `;
-                        button.textContent = '✅ Tools Fetched';
-                        button.style.backgroundColor = '#059669';
-                    }} else {{
-                        throw new Error(result.detail || 'Failed to fetch tools');
+                    const button = document.getElementById('fetch-tools-btn');
+                    const statusDiv = document.getElementById('fetch-status');
+                    if (!button || !statusDiv) {{
+                        console.error('OAuth success page: required DOM elements missing');
+                        return;
                     }}
-                }} catch (error) {{
-                    statusDiv.innerHTML = `
-                        <div style="color: #dc2626; padding: 15px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 5px;">
-                            <h4>❌ Failed to Fetch Tools</h4>
-                            <p><strong>Error:</strong> ${{error.message}}</p>
-                            <p>You can still return to the admin panel and try again later.</p>
-                        </div>
-                    `;
-                    button.textContent = '❌ Retry Fetch Tools';
-                    button.style.backgroundColor = '#dc2626';
-                    button.disabled = false;
+
+                    button.addEventListener('click', async function() {{
+                        button.disabled = true;
+                        button.textContent = '⏳ Fetching Tools...';
+                        statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
+
+                        try {{
+                            const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
+                                method: 'POST',
+                                credentials: 'include',
+                                headers: {{
+                                    'Accept': 'application/json',
+                                    'X-CSRF-Token': {json.dumps(csrf_token)}
+                                }}
+                            }});
+
+                            const result = await response.json();
+
+                            if (response.ok) {{
+                                statusDiv.innerHTML = `
+                                    <div style="color: #059669; padding: 15px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 5px;">
+                                        <h4>✅ Tools Fetched Successfully!</h4>
+                                        <p>${{result.message}}</p>
+                                    </div>
+                                `;
+                                button.textContent = '✅ Tools Fetched';
+                                button.style.backgroundColor = '#059669';
+                            }} else {{
+                                throw new Error(result.detail || 'Failed to fetch tools');
+                            }}
+                        }} catch (error) {{
+                            statusDiv.innerHTML = `
+                                <div style="color: #dc2626; padding: 15px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 5px;">
+                                    <h4>❌ Failed to Fetch Tools</h4>
+                                    <p><strong>Error:</strong> ${{error.message}}</p>
+                                    <p>You can still return to the admin panel and try again later.</p>
+                                </div>
+                            `;
+                            button.textContent = '❌ Retry Fetch Tools';
+                            button.style.backgroundColor = '#dc2626';
+                            button.disabled = false;
+                        }}
+                    }});
+                }} catch (initError) {{
+                    console.error('OAuth success page script initialization failed:', initError);
                 }}
-            }}
+            }})();
             </script>
         </body>
         </html>
-        """)
+        """
+        response = HTMLResponse(content=html_content)
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        max_age = max(300, settings.csrf_token_expiry)
+        response.set_cookie(
+            key=ADMIN_CSRF_COOKIE_NAME,
+            value=csrf_token,
+            max_age=max_age,
+            path=root_path or "/",
+            httponly=False,
+            secure=use_secure,
+            samesite="strict",
+        )
+        return response
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
@@ -825,7 +925,7 @@ async def get_oauth_status(
         raise
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get OAuth status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
@@ -833,6 +933,7 @@ async def get_oauth_status(
 async def fetch_tools_after_oauth(
     gateway_id: str,
     request: Request,
+    _: None = Depends(enforce_fetch_tools_csrf),
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
@@ -872,10 +973,10 @@ async def fetch_tools_after_oauth(
     except GatewayConnectionError as e:
         # Configuration or token claim mismatch — 400 so operators know to fix oauth_config
         logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to fetch tools")
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch tools")
 
 
 # ============================================================================
@@ -932,7 +1033,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 
     except Exception as e:
         logger.error(f"Failed to list registered OAuth clients: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list registered clients: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list registered clients")
 
 
 @oauth_router.get("/registered-clients/{gateway_id}")
@@ -985,7 +1086,7 @@ async def get_registered_client_for_gateway(
         raise
     except Exception as e:
         logger.error(f"Failed to get registered client for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get registered client: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get registered client")
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
@@ -1038,4 +1139,4 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     except Exception as e:
         logger.error(f"Failed to delete registered client {client_id}: {e}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete registered client: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete registered client")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/observability_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -71,7 +71,7 @@ _TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9
 
 # Context variable for tracking the current trace_id across async calls.
 # NOTE: The plugin framework maintains a separate ContextVar in
-# mcpgateway.plugins.framework.observability.current_trace_id.
+# cpex.framework.observability.current_trace_id.
 # ObservabilityMiddleware bridges both — any new code path that sets this
 # variable must also set the framework copy to keep plugin tracing in sync.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
@@ -117,7 +117,7 @@ def parse_traceparent(traceparent: str) -> Optional[Tuple[str, str, str]]:
 
     Examples:
         >>> parse_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")  # doctest: +SKIP
-        ('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', '01')
+        ('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', '01')  # pragma: allowlist secret
     """
     # W3C Trace Context format: 00-trace_id(32hex)-parent_id(16hex)-flags(2hex)
     # Uses precompiled regex for performance
@@ -182,7 +182,7 @@ def format_traceparent(trace_id: str, span_id: str, sampled: bool = True) -> str
         W3C traceparent header value
 
     Examples:
-        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")  # doctest: +SKIP
+        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")   # pragma: allowlist secret  # doctest: +SKIP
         '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
     """
     flags = "01" if sampled else "00"
@@ -510,7 +510,7 @@ class ObservabilityService:
 
                 # Apply attribute name mapping (renaming) using centralized helper
                 # First-Party
-                from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+                from mcpgateway.plugins.utils import apply_attribute_mapping
 
                 attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
                 if attribute_mapping:

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_postgresql_schema_config.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for PostgreSQL schema configuration support (Issue #1535).
 
@@ -19,7 +20,7 @@ class TestPostgreSQLSchemaConfiguration:
     def test_url_parsing_with_options(self):
         """Test that options parameter is correctly extracted from DATABASE_URL."""
         # Test URL with search_path option
-        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
+        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"  # pragma: allowlist secret
         url = make_url(url_string)
 
         # Verify options parameter is present
@@ -28,7 +29,7 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_url_parsing_without_options(self):
         """Test that URLs without options parameter work correctly."""
-        url_string = "postgresql://user:pass@host:5432/db"
+        url_string = "postgresql://user:pass@host:5432/db"  # pragma: allowlist secret
         url = make_url(url_string)
 
         # Verify no options parameter
@@ -36,7 +37,7 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_url_parsing_multiple_schemas(self):
         """Test URL with multiple schemas in search_path."""
-        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway,public"
+        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway,public"  # pragma: allowlist secret
         url = make_url(url_string)
 
         assert "options" in url.query
@@ -55,7 +56,7 @@ class TestPostgreSQLSchemaConfiguration:
     def test_connect_args_generation_postgresql(self):
         """Test that connect_args includes options for PostgreSQL."""
         # Simulate the logic from db.py - must use postgresql+psycopg:// for psycopg3
-        url_string = "postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
+        url_string = "postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"  # pragma: allowlist secret
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
@@ -99,11 +100,11 @@ class TestPostgreSQLSchemaConfiguration:
         """Test various URL encoding formats for options parameter."""
         test_cases = [
             # URL encoded space
-            "postgresql://user:pass@host/db?options=-c%20search_path=test",
+            "postgresql://user:pass@host/db?options=-c%20search_path=test",  # pragma: allowlist secret
             # Plus sign for space (alternative encoding)
-            "postgresql://user:pass@host/db?options=-c+search_path=test",
+            "postgresql://user:pass@host/db?options=-c+search_path=test",  # pragma: allowlist secret
             # No encoding (may work in some contexts)
-            "postgresql://user:pass@host/db?options=-c search_path=test",
+            "postgresql://user:pass@host/db?options=-c search_path=test",  # pragma: allowlist secret
         ]
 
         for url_string in test_cases:
@@ -113,7 +114,7 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_multiple_query_parameters(self):
         """Test URL with multiple query parameters including options."""
-        url_string = "postgresql://user:pass@host/db?sslmode=require&options=-c%20search_path=mcp_gateway&connect_timeout=10"
+        url_string = "postgresql://user:pass@host/db?sslmode=require&options=-c%20search_path=mcp_gateway&connect_timeout=10"  # pragma: allowlist secret
         url = make_url(url_string)
 
         # Verify all parameters are present
@@ -122,15 +123,18 @@ class TestPostgreSQLSchemaConfiguration:
         assert "connect_timeout" in url.query
         assert url.query["options"] == "-c search_path=mcp_gateway"
 
-    @pytest.mark.parametrize("schema_name", [
-        "mcp_gateway",
-        "custom_schema",
-        "app_schema_v2",
-        "schema_123",
-    ])
+    @pytest.mark.parametrize(
+        "schema_name",
+        [
+            "mcp_gateway",
+            "custom_schema",
+            "app_schema_v2",
+            "schema_123",
+        ],
+    )
     def test_various_schema_names(self, schema_name):
         """Test that various valid schema names work correctly."""
-        url_string = f"postgresql://user:pass@host/db?options=-c%20search_path={schema_name}"
+        url_string = f"postgresql://user:pass@host/db?options=-c%20search_path={schema_name}"  # pragma: allowlist secret
         url = make_url(url_string)
 
         assert "options" in url.query
@@ -139,7 +143,7 @@ class TestPostgreSQLSchemaConfiguration:
     def test_backward_compatibility_no_options(self):
         """Test that existing deployments without options continue to work."""
         # Standard PostgreSQL URL without options - must use postgresql+psycopg:// for psycopg3
-        url_string = "postgresql+psycopg://user:pass@host:5432/db"
+        url_string = "postgresql+psycopg://user:pass@host:5432/db"  # pragma: allowlist secret
         url = make_url(url_string)
         backend = url.get_backend_name()
         driver = url.get_driver_name() or "default"
@@ -164,7 +168,7 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_complex_options_parameter(self):
         """Test options parameter with multiple PostgreSQL settings."""
-        url_string = "postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway%20-c%20statement_timeout=30000"
+        url_string = "postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway%20-c%20statement_timeout=30000"  # pragma: allowlist secret
         url = make_url(url_string)
 
         assert "options" in url.query

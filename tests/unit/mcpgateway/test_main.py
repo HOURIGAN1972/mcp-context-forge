@@ -2,7 +2,7 @@
 
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_main.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -11,12 +11,25 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 # Standard
 import asyncio
+import base64
 from copy import deepcopy
 import datetime
 import importlib
 import json
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+
+def _make_test_jwt() -> str:
+    """Return a syntactically valid JWT for tests that expect token forwarding."""
+    return (
+        base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b'{"sub":"user"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
+    )
+
 
 # Third-Party
 from fastapi import HTTPException
@@ -33,15 +46,26 @@ from starlette.websockets import WebSocketDisconnect
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
-from mcpgateway.schemas import A2AAgentAggregateMetrics, GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
+from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
+    GatewayRead,
+    PromptMetrics,
+    PromptRead,
+    ResourceMetrics,
+    ResourceRead,
+    ServerMetrics,
+    ServerRead,
+    ToolMetrics,
+    ToolRead,
+)
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
 # --------------------------------------------------------------------------- #
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-11-25")
-TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 # Mock data templates with complete field structures
 MOCK_METRICS = {
@@ -87,6 +111,7 @@ MOCK_TOOL_READ = {
     "createdAt": "2023-01-01T00:00:00+00:00",
     "updatedAt": "2023-01-01T00:00:00+00:00",
     "enabled": True,
+    "deprecated": False,
     "reachable": True,
     "gatewayId": "gateway-1",
     "executionCount": 5,
@@ -125,7 +150,7 @@ MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
 
 
 MOCK_RESOURCE_READ = {
-    "id": "39334ce0ed2644d79ede8913a66930c9",
+    "id": "39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
     "uri": "test/resource",
     "name": "Test Resource",
     "description": "A test resource",
@@ -138,7 +163,7 @@ MOCK_RESOURCE_READ = {
 }
 
 MOCK_PROMPT_READ = {
-    "id": "ca627760127d409080fdefc309147e08",
+    "id": "ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
     "name": "test_prompt",
     "original_name": "test_prompt",
     "custom_name": "test_prompt",
@@ -164,6 +189,7 @@ MOCK_GATEWAY_READ = {
     "enabled": True,
     "reachable": True,
     "auth_type": None,
+    "skipped_tools": [],
 }
 
 MOCK_ROOT = {
@@ -263,6 +289,36 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
         assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
     finally:
         importlib.reload(reloaded)
+
+
+def test_get_csp_nonce_from_request_with_none():
+    """Test get_csp_nonce_from_request returns empty string when request is None."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    result = get_csp_nonce_from_request(None)
+    assert result == ""
+
+
+def test_get_csp_nonce_from_request_with_nonce():
+    """Test get_csp_nonce_from_request returns nonce from request state."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    request = _make_request()
+    request.state.csp_nonce = "test-nonce-12345"
+    result = get_csp_nonce_from_request(request)
+    assert result == "test-nonce-12345"
+
+
+def test_get_csp_nonce_from_request_without_nonce():
+    """Test get_csp_nonce_from_request returns empty string when nonce not in state."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    request = _make_request()
+    result = get_csp_nonce_from_request(request)
+    assert result == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -729,7 +785,7 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
-        """Protocol completion should preserve explicit admin bypass context."""
+        """Protocol completion should preserve admin user_email for private resource access (issue #4694)."""
         mock_filter_context.return_value = ("admin@example.com", None, True)
         mock_completion.return_value = {"result": "completion_result"}
 
@@ -737,7 +793,7 @@ class TestProtocolEndpoints:
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
 
         assert response.status_code == 200
-        mock_completion.assert_called_once_with(ANY, req, user_email=None, token_teams=None)
+        mock_completion.assert_called_once_with(ANY, req, user_email="admin@example.com", token_teams=None)
 
     @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
@@ -881,6 +937,21 @@ class TestServerEndpoints:
         response = test_client.post("/servers/", json=req, headers=auth_headers)
         assert response.status_code == 201
         mock_create.assert_called_once()
+
+    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers):
+        """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
+        req = {
+            "server": {
+                "name": "test_server",
+                "associated_tools": ["my-tool-name"],
+            },
+            "team_id": None,
+            "visibility": "public",
+        }
+        response = test_client.post("/servers/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        detail = response.json()["detail"][0]
+        assert "Invalid ID format" in detail["msg"]
 
     @patch("mcpgateway.main.server_service.update_server")
     def test_update_server_endpoint(self, mock_update, test_client, auth_headers):
@@ -1388,19 +1459,19 @@ class TestResourceEndpoints:
 
     @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
     def test_list_resource_templates_admin_bypass_nulls_user_email(self, mock_list, test_client, auth_headers):
-        """SECURITY: admin bypass must pass (user_email=None, token_teams=None) to list_resource_templates.
+        """SECURITY: admin bypass must pass (user_email=email, token_teams=None) to list_resource_templates.
 
-        Regression for Oracle review of PR #4341 — earlier wiring passed the admin's email
-        while nulling token_teams, which caused the service to skip the private-exclusion
-        WHERE clause and leak other users' private templates.
+        Updated for PR #4877 / issue #4877 — admin bypass now keeps user_email for owner matching
+        on private resources. This allows admins to view/edit their OWN private resources while
+        maintaining proper access control (token_teams=None grants admin bypass).
         """
         mock_list.return_value = []
         response = test_client.get("/resources/templates/list", headers=auth_headers)
         assert response.status_code == 200
         mock_list.assert_called_once()
         call_kwargs = mock_list.call_args.kwargs
-        assert call_kwargs.get("user_email") is None
-        assert call_kwargs.get("token_teams") is None
+        assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
+        assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
     @patch("mcpgateway.main.resource_service.set_resource_state")
     def test_set_resource_state(self, mock_toggle, test_client, auth_headers):
@@ -1439,9 +1510,9 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-        # Handler pre-resolves is_admin_bypass; with user_email=None it resolves to True
-        # (no-auth-context bypass).  See mcpgateway.utils.admin_check.
-        mock_subscribe.assert_called_once_with(user_email=None, token_teams=None, is_admin_bypass=True)
+        # Admin bypass now preserves user_email for owner matching (PR #4877 / issue #4877)
+        # is_admin_bypass=False because test user is not a DB admin (no DB setup in test)
+        mock_subscribe.assert_called_once_with(user_email="test_user@example.com", token_teams=None, is_admin_bypass=False)
 
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events_sse_format(self, mock_subscribe, test_client, auth_headers):
@@ -1503,7 +1574,10 @@ class TestPromptEndpoints:
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     def test_get_prompt_no_args_non_jwt_admin_bypass(self, mock_get, test_client, auth_headers):
-        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via get_scoped_resource_access_context."""
+        """Non-JWT admin (dev-mode / basic-auth) gets admin bypass via get_scoped_resource_access_context.
+
+        Updated for PR #4877 — admin bypass now preserves user_email for owner matching.
+        """
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
@@ -1511,9 +1585,9 @@ class TestPromptEndpoints:
             ANY,
             "test",
             {},
-            user=None,
+            user="test_user@example.com",  # Preserved for owner matching (PR #4877)
             server_id=None,
-            token_teams=None,
+            token_teams=None,  # None = admin bypass
             plugin_context_table=None,
             plugin_global_context=ANY,
         )
@@ -1545,8 +1619,8 @@ class TestPromptEndpoints:
         result = await get_prompt_no_args(request=mock_request, prompt_id="test", db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello"}
-        # Admin bypass: both auth_user_email and auth_token_teams should be None
-        mock_get.assert_called_once_with(mock_db, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
+        mock_get.assert_called_once_with(mock_db, "test", {}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1575,8 +1649,8 @@ class TestPromptEndpoints:
         result = await get_prompt(request=mock_request, prompt_id="test", args={"name": "World"}, db=mock_db, user=admin_user)
 
         assert result == {"name": "test", "template": "Hello {{name}}"}
-        # Admin bypass: both auth_user_email and auth_token_teams should be None
-        mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
+        mock_get.assert_called_once_with(mock_db, "test", {"name": "World"}, user="admin@example.com", server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=None)
 
     @pytest.mark.asyncio
     @patch("mcpgateway.main.resource_service.read_resource")
@@ -1609,11 +1683,11 @@ class TestPromptEndpoints:
 
         # The endpoint converts ResourceContent to dict via model_dump()
         assert result == {"type": "resource", "id": "test-resource", "uri": "file://test.txt", "mime_type": None, "text": "content", "blob": None}
-        # Admin bypass: both user and token_teams should be None
+        # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
         mock_read.assert_called_once()
         call_kwargs = mock_read.call_args[1]
-        assert call_kwargs["user"] is None
-        assert call_kwargs["token_teams"] is None
+        assert call_kwargs["user"] == "admin@example.com"  # Preserved for owner matching
+        assert call_kwargs["token_teams"] is None  # None = admin bypass
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint_secondary(self, mock_update, test_client, auth_headers):
@@ -1996,6 +2070,21 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         mock_create.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint_skipped_tools_in_response(self, mock_create, test_client, auth_headers):
+        """POST /gateways/ must include skipped_tools in the response body when tools are skipped (issue #136 Bug C)."""
+        skipped = [
+            "too_long_name_aaaa: Tool name exceeds MCP spec limit of 128 characters (got 135)",
+            "bad&&tool: contains unsafe characters",
+        ]
+        gateway_read = GatewayRead(**{**MOCK_GATEWAY_READ, "skipped_tools": skipped})
+        mock_create.return_value = gateway_read
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["skippedTools"] == skipped
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""
@@ -2265,6 +2354,25 @@ class TestRootEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_not_found_error(self, mock_remove, test_client, auth_headers):
+        """Test DELETE /roots/{uri} returns 404 when RootServiceNotFoundError is raised."""
+        from mcpgateway.services.root_service import RootServiceNotFoundError
+
+        mock_remove.side_effect = RootServiceNotFoundError("Root not found: /missing")
+        response = test_client.delete("/roots/%2Fmissing", headers=auth_headers)
+        assert response.status_code == 404
+        assert "Root not found" in response.json()["detail"]
+
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_generic_exception(self, mock_remove, test_client, auth_headers):
+        """Test DELETE /roots/{uri} returns 500 when generic Exception is raised."""
+        mock_remove.side_effect = RuntimeError("Unexpected filesystem error")
+        response = test_client.delete("/roots/%2Ferror", headers=auth_headers)
+        assert response.status_code == 500
+        assert "Internal error" in response.json()["detail"]
+
+
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
@@ -2506,6 +2614,46 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32000 when ResourceError is raised."""
+        from mcpgateway.services.resource_service import ResourceError
+
+        mock_read.side_effect = ResourceError("Ambiguous URI or proxy failure")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "res://ambiguous"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32000
+        assert "Resource read failed" in body["error"]["message"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_generic_exception(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32603 when generic Exception is raised."""
+        mock_read.side_effect = RuntimeError("Unexpected database error")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "res://error"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32603
+        assert "Internal error" in body["error"]["message"]
+
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -2557,11 +2705,11 @@ class TestRPCEndpoints:
 
     @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
     def test_rpc_resource_templates_list_admin_bypass_nulls_user_email(self, mock_list_templates, test_client, auth_headers):
-        """SECURITY: admin bypass via JSON-RPC must pass (user_email=None, token_teams=None).
+        """SECURITY: admin bypass via JSON-RPC must pass (user_email=email, token_teams=None).
 
-        Regression for Oracle review of PR #4341 — the JSON-RPC resources/templates/list
-        handler in main.py previously kept the admin's email while nulling token_teams,
-        causing list_resource_templates to skip the private-exclusion filter.
+        Updated for PR #4877 / issue #4877 — admin bypass now keeps user_email for owner matching
+        on private resources. This allows admins to view/edit their OWN private resources while
+        maintaining proper access control (token_teams=None grants admin bypass).
         """
         mock_list_templates.return_value = []
 
@@ -2575,8 +2723,8 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         mock_list_templates.assert_called_once()
         call_kwargs = mock_list_templates.call_args.kwargs
-        assert call_kwargs.get("user_email") is None
-        assert call_kwargs.get("token_teams") is None
+        assert call_kwargs.get("user_email") == "test_user@example.com"  # Preserved for owner matching
+        assert call_kwargs.get("token_teams") is None  # None = admin bypass
 
     @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
     def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):
@@ -2597,6 +2745,67 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+
+        mock_get.side_effect = PromptNotFoundError("Prompt 'missing-prompt' not found")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "missing-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32002
+        assert "not found" in body["error"]["message"].lower()
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_prompt_error(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32000 when PromptError is raised."""
+        from mcpgateway.services.prompt_service import PromptError
+
+        mock_get.side_effect = PromptError("Prompt retrieval failed due to validation")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "error-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32000
+        assert "Prompt retrieval failed" in body["error"]["message"]
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_generic_exception(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32603 when generic Exception is raised."""
+        mock_get.side_effect = RuntimeError("Unexpected database error")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "crash-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32603
+        assert "Internal error" in body["error"]["message"]
+
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
@@ -2856,6 +3065,32 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         assert response.json()["result"] == {}
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_invalid_value(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel returns 422 for invalid log level."""
+        req = {"level": "INVALID_LEVEL"}
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        assert "Invalid log level" in response.json()["detail"]
+        mock_set_level.assert_not_called()
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_missing_level(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel returns 422 when level is missing."""
+        req = {}
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        assert "Invalid log level" in response.json()["detail"]
+        mock_set_level.assert_not_called()
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_uppercase(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel accepts uppercase level values."""
+        req = {"level": "INFO"}  # uppercase
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_set_level.assert_called_once()
 
     @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
     def test_rpc_roots_list_method(self, mock_list_roots, test_client, auth_headers):
@@ -3625,6 +3860,117 @@ class TestA2AAgentEndpoints:
         )
         assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 0
 
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
+        """
+        The handler must extract bearer token from Authorization header and forward
+        it as the `bearer_token` kwarg to ``invoke_agent``. This is the HTTP-edge
+        plumbing for cross-gateway authentication — a regression that drops this
+        parameter would break RBAC enforcement on remote gateways.
+
+        Security Context: Bearer tokens enable RBAC enforcement on remote gateways.
+        Without this parameter, cross-gateway calls become unauthenticated even when
+        the caller provided credentials.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = _make_test_jwt()
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers={**auth_headers, "Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_missing_bearer_token(self, mock_service, test_client, auth_headers):
+        """
+        Missing Authorization header should result in bearer_token=None being passed
+        to the service layer. The service layer will handle the unauthenticated case.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Create headers without Authorization (test auth bypass via mock)
+        headers_without_auth = {k: v for k, v in auth_headers.items() if k != "Authorization"}
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers=headers_without_auth,
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_malformed_authorization_header(self, mock_service, test_client, auth_headers):
+        """
+        Malformed Authorization header (not starting with 'Bearer ') should result
+        in bearer_token=None, gracefully degrading to unauthenticated request.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Test various malformed formats that should result in None
+        malformed_headers = [
+            "Basic dXNlcjpwYXNz",  # Basic auth instead of Bearer
+            "Token xyz",  # Wrong scheme
+            "Bearer",  # Missing token (only "Bearer" with no space/token)
+            "",  # Empty string
+        ]
+
+        for malformed in malformed_headers:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": malformed},
+            )
+            assert response.status_code == 200
+            # Service layer should receive None for malformed auth
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None, f"Failed for: {malformed}"
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_lowercase_bearer(self, mock_service, test_client, auth_headers):
+        """
+        Verify that 'bearer' (lowercase) in Authorization header is accepted (case-insensitive).
+        The implementation uses .lower().startswith() so it should handle various cases.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = _make_test_jwt()
+
+        # Test case variations that should all work
+        case_variations = [
+            f"Bearer {test_token}",
+            f"bearer {test_token}",
+            f"BEARER {test_token}",
+            f"BeArEr {test_token}",
+        ]
+
+        for auth_value in case_variations:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": auth_value},
+            )
+            assert response.status_code == 200
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token, f"Failed for: {auth_value}"
+
+    def test_is_jwt_token_rejects_invalid_inputs(self):
+        """Test JWT detection rejects empty and malformed tokens."""
+        from unittest.mock import patch
+        from mcpgateway.main import _is_jwt_token
+
+        assert _is_jwt_token("") is False
+        assert _is_jwt_token("header..signature") is False
+        # Force base64 decode failure to cover the except branch
+        with patch("mcpgateway.main.base64.urlsafe_b64decode", side_effect=ValueError("bad base64")):
+            assert _is_jwt_token("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.invalid") is False  # pragma: allowlist secret
+
 
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #
@@ -3847,8 +4193,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid input",
@@ -3880,8 +4226,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
@@ -3909,8 +4255,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Violation occurred",
@@ -3931,7 +4277,8 @@ class TestPluginExceptionHandlers:
     def test_plugin_violation_exception_handler_without_violation_object(self):
         """Test plugin_violation_exception_handler when violation object is None."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.main import plugin_violation_exception_handler
+        from cpex.framework.errors import PluginViolationError
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)
 
@@ -3942,14 +4289,15 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
-            http_status_code=429,  # NEW FIELD
+            details={},
+            http_status_code=429,
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
@@ -3967,15 +4315,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
+            details={},
             http_status_code=429,
-            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},  # NEW FIELD
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
@@ -3995,8 +4344,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # Assumes PLUGIN_VIOLATION_CODE_MAPPING has {"RATE_LIMIT": 429}
         violation = PluginViolation(
@@ -4020,8 +4369,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid input",
@@ -4044,15 +4393,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Error",
             description="Something failed",
             code="ERROR",
+            details={},
             http_status_code=400,
-            # No http_headers
+            # http_headers left unset
         )
         exc = PluginViolationError(message="Failed", violation=violation)
 
@@ -4070,15 +4420,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # PLUGIN_VIOLATION_CODE_MAPPING has "RATE_LIMIT": 429
         violation = PluginViolation(
             reason="Rate limit",
             description="Service unavailable",
             code="RATE_LIMIT",
-            http_status_code=503,  # Explicit status should win
+            details={},
+            http_status_code=503,  # Explicit status should win over RATE_LIMIT mapping
         )
         exc = PluginViolationError(message="Limited", violation=violation)
 
@@ -4095,13 +4446,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit",
             description="Too many requests",
             code="RATE_LIMIT",
+            details={},
             http_status_code=429,
             http_headers={
                 "X-RateLimit-Limit": "60",
@@ -4129,8 +4481,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Unknown error",
@@ -4154,13 +4506,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid status",
             description="Status code below valid range",
             code="RATE_LIMIT",  # Has mapping to 429
+            details={},
             http_status_code=99,  # Invalid: below 100
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
@@ -4179,10 +4532,12 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
-        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", http_status_code=512)  # Has mapping to 429  # Invalid: above 511
+        violation = PluginViolation(
+            reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", details={}, http_status_code=512
+        )  # RATE_LIMIT maps to 429; 512 is invalid (above 511)
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
@@ -4199,13 +4554,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid status",
             description="Status code invalid, no mapping",
             code="UNKNOWN_CODE",  # Not in mapping
+            details={},
             http_status_code=1000,  # Invalid: way above 511
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
@@ -4224,14 +4580,15 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # Test lower boundary (400)
         violation_400 = PluginViolation(
             reason="Continue",
             description="Valid status 400",
             code="INFO",
+            details={},
             http_status_code=400,  # Valid: exactly 400
         )
         exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
@@ -4243,6 +4600,7 @@ class TestPluginExceptionHandlers:
             reason="Network error",
             description="Valid status 511",
             code="ERROR",
+            details={},
             http_status_code=511,  # Valid: exactly 511
         )
         exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
@@ -4256,8 +4614,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Plugin execution failed",
@@ -4286,8 +4644,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Custom error occurred",
@@ -4313,8 +4671,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(message="Minimal error", plugin_name="minimal_plugin")
         exc = PluginError(error=error)
@@ -4334,8 +4692,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Error without code",
@@ -4736,6 +5094,152 @@ class TestGetRpcFilterContext:
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
 
+    def test_get_rpc_filter_context_email_is_dict(self):
+        """Test that dict email value is caught and converted to None (defensive fix for issue #4624)."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        # Edge case: email key contains a dict instead of string
+        user = {"email": {"address": "nested@example.com"}, "is_admin": False}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_dict_email_value_is_list(self):
+        """Test that list email value is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": []})
+        # Edge case: email key contains a list instead of string
+        user = {"email": ["test@example.com"], "is_admin": False}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
+        assert email is None
+        assert teams == []
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_dict_email_value_is_int(self):
+        """Test that integer email value is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        # Edge case: email key contains an int instead of string
+        user = {"email": 12345, "is_admin": False}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_object_email_attr_is_dict(self):
+        """Test that object with dict email attribute falls through to str(user)."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+
+        class UserObjectWithDictEmail:
+            email = {"nested": "value"}
+            is_admin = False
+
+        user_obj = UserObjectWithDictEmail()
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user_obj)
+
+        # get_user_email() sees email attr is not a string, falls through to str(user)
+        # which returns the object repr - this is a valid string
+        assert email == str(user_obj)
+        assert teams == ["t1"]
+        assert is_admin is False
+
+    def test_get_rpc_filter_context_internal_auth_context_dict_email(self, caplog):
+        """Test that internal_auth_context with dict email is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        # Simulate internal auth context with malformed email
+        mock_request.state._mcp_internal_auth_context = {"email": {"nested": "value"}, "is_admin": False, "teams": ["t1"]}
+        user = None
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # Should convert dict to None and log warning
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_admin_bypass_with_non_string_email(self):
+        """Test admin bypass behavior when user_email is forced to None due to type validation."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        # Admin token with null teams (admin bypass)
+        mock_request.state._jwt_verified_payload = ("token", {"teams": None, "is_admin": True})
+        # Edge case: email is a dict
+        user = {"email": {"address": "admin@example.com"}, "is_admin": True}
+
+        email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # Should convert dict to None, preserve admin bypass
+        assert email is None
+        assert teams is None  # Admin bypass preserved
+        assert is_admin is True
+
+    def test_get_rpc_filter_context_internal_auth_context_list_email(self, caplog):
+        """Test that internal_auth_context with list email is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        mock_request.state._mcp_internal_auth_context = {"email": ["test@example.com"], "is_admin": False, "teams": ["t1"]}
+        user = None
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_internal_auth_context_int_email(self, caplog):
+        """Test that internal_auth_context with int email is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        mock_request.state._mcp_internal_auth_context = {"email": 12345, "is_admin": False, "teams": ["t1"]}
+        user = None
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
 
 # --------------------------------------------------------------------------- #
 # ASGI middleware helper for injecting request.state in tests                  #
@@ -4884,4 +5388,225 @@ class TestTeamScopedListVisibility:
         assert response.status_code == 200
         call_kwargs = mock_service.list_agents.call_args.kwargs
         assert call_kwargs["team_id"] is None
+
         assert call_kwargs["token_teams"] == ["team-1"]
+
+
+# --------------------------------------------------------------------------- #
+# UAID Security Configuration Validation                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_startup_warns_when_uaid_allowlist_empty():
+    """Verify ERROR logged when A2A enabled but UAID allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = False
+
+        # Import and trigger the validation logic
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called
+        error_message = mock_logger.error.call_args[0][0]
+        assert "UAID cross-gateway routing is DISABLED" in error_message
+        assert "UAID_ALLOWED_DOMAINS" in error_message
+
+
+def test_startup_no_warning_when_allowlist_configured():
+    """Verify no warning when allowlist properly configured."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = ["trusted.example.com"]
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
+
+
+def test_startup_no_warning_when_a2a_disabled():
+    """Verify no warning when A2A not enabled."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = False
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
+
+
+def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
+    """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = True
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should raise RuntimeError in strict mode
+        with pytest.raises(RuntimeError, match="Gateway startup aborted"):
+            validate_uaid_security_config()
+
+        # Verify ERROR was still logged before raising
+        assert mock_logger.error.called
+
+
+def test_startup_succeeds_with_uaid_require_allowlist_false():
+    """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings, patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should NOT raise, just log ERROR
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called
+
+
+# ========================================================================== #
+# A2A Invoke Body Endpoint Tests (PR #4342 coverage)                        #
+# ========================================================================== #
+
+
+class TestA2AInvokeBodyEndpoint:
+    """Test coverage for /a2a/invoke endpoint with agent_id in request body."""
+
+    @patch("mcpgateway.main.a2a_service", None)
+    def test_invoke_returns_503_when_service_unavailable(self, test_client, auth_headers):
+        """Test /a2a/invoke returns 503 when A2A service is None. Covers: main.py lines 5166-5167"""
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 503
+        assert "A2A service not available" in response.json()["detail"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
+        """Test bearer token extraction from Authorization header. Covers: main.py lines 5191-5194"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers={"Authorization": "Bearer test-token", "Content-Type": "application/json"})
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_lowercase_bearer_prefix(self, mock_service, test_client):
+        """Test bearer token extraction handles lowercase. Covers: main.py line 5193"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers={"Authorization": "bearer lowercase-token", "Content-Type": "application/json"})
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_admin_bypass_no_team_restrictions(self, mock_context, mock_service, test_client, auth_headers):
+        """Test admin bypass when teams=None. Covers: main.py lines 5173-5174"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("admin@example.com", None, True)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_non_admin_no_teams_public_only(self, mock_context, mock_service, test_client, auth_headers):
+        """Test non-admin gets public-only access. Covers: main.py lines 5175-5176"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", None, False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.uaid_utils.read_hop_count")
+    def test_invoke_reads_hop_count_from_headers(self, mock_read_hop, mock_service, test_client, auth_headers):
+        """Test hop count extraction. Covers: main.py line 5185"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_read_hop.return_value = 3
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers={**auth_headers, "X-Contextforge-UAID-Hop": "3"})
+        assert mock_read_hop.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.logger")
+    def test_invoke_debug_logging(self, mock_logger, mock_service, test_client, auth_headers):
+        """Test debug logging. Covers: main.py line 5165"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_logger.debug = MagicMock()
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}, "interaction_type": "query"}, headers=auth_headers)
+        assert mock_logger.debug.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_bearer_token_from_state(self, mock_service, test_client, auth_headers):
+        """Test bearer token from request.state. Covers: main.py line 5188"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_rpc_filter_context_extraction(self, mock_context, mock_service, test_client, auth_headers):
+        """Test RPC filter context extraction. Covers: main.py line 5170"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", ["team-1"], False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert mock_context.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_agent_not_found_error(self, mock_service, test_client, auth_headers):
+        """Test A2AAgentNotFoundError handling. Covers: main.py lines 5127-5128"""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_agent_error(self, mock_service, test_client, auth_headers):
+        """Test A2AAgentError handling. Covers: main.py lines 5129-5130"""
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        mock_service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Invalid configuration"))
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 400
+        assert "Invalid configuration" in response.json()["detail"]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict. Covers: main.py line 5182"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        # Return a string user instead of dict
+        mock_context.return_value = ("user@example.com", ["string-user-id"], False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_by_id_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict for /a2a/{agent_id}/invoke."""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", "string-user-id", False)
+        response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called

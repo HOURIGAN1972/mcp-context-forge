@@ -1,6 +1,7 @@
 import { MASKED_AUTH_VALUE } from "./constants.js";
 import { getAuthToken } from "./tokens.js";
 import {
+  getCookie,
   safeGetElement,
   showSuccessMessage,
   showErrorMessage,
@@ -196,6 +197,11 @@ export async function getAuthHeaders(includeJsonContentType = false) {
   const token = await getAuthToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+
+  const csrfToken = getCookie("mcpgateway_csrf_token");
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
   }
 
   return headers;
@@ -403,9 +409,10 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
     "inline-block bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm mr-2";
 
   try {
+    const headers = await getAuthHeaders(false);
     const response = await fetch(
       `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
-      { method: "POST", credentials: "include" }, // pragma: allowlist secret
+      { method: "POST", credentials: "include", headers }, // pragma: allowlist secret
     );
 
     const result = await response.json();

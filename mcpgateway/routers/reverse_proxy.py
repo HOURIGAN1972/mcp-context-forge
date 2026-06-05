@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -415,10 +415,12 @@ async def send_request_to_session(
     try:
         response = await service.forward_request_to_session(session_id, mcp_request)
         return response
-    except asyncio.TimeoutError as e:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=f"Failed to send request: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
+    except asyncio.TimeoutError:
+        LOGGER.error("TimeoutError to send request to session %s", session_id, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=f"Failed to send request")
+    except Exception:
+        LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request")
 
 
 @router.get("/sse/{session_id}")

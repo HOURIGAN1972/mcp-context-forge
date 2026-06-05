@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add explicit team read and token self-management permissions to default roles.
+"""Location: ./mcpgateway/alembic/versions/b2d9c6e4f1a7_add_explicit_team_and_token_permissions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add explicit team read and token self-management permissions to default roles.
 
 Revision ID: b2d9c6e4f1a7
 Revises: a4f1c7d8e9b0
@@ -22,8 +27,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "b2d9c6e4f1a7"
-down_revision: Union[str, Sequence[str], None] = "a4f1c7d8e9b0"
+revision: str = "b2d9c6e4f1a7"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "a4f1c7d8e9b0"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

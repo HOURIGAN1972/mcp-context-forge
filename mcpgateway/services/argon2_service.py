@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/argon2_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -47,7 +47,7 @@ class Argon2PasswordService:
 
     Examples:
         >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
-        >>> password = "secure_password_123"
+        >>> password = "secure_password_123"  # pragma: allowlist secret
         >>> hash_value = service.hash_password(password)
         >>> service.verify_password(password, hash_value)
         True

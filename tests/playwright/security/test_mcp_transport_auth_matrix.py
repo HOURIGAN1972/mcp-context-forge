@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Transport authentication matrix for Streamable HTTP, SSE paths, and WebSocket."""
+"""Location: ./tests/playwright/security/test_mcp_transport_auth_matrix.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Transport authentication matrix for Streamable HTTP, SSE paths, and WebSocket.
+"""
 
 # Future
 from __future__ import annotations
@@ -20,24 +26,18 @@ from websockets.sync.client import connect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL
 
 
 def _make_admin_jwt() -> str:
-    return _create_jwt_token(
-        {"sub": "admin@example.com"},
-        user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
-    )
+    return make_test_jwt("admin@example.com", is_admin=True)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 def _ws_url(path: str) -> str:
@@ -78,8 +78,8 @@ class TestMCPTransportAuthMatrix:
             pytest.skip("Streamable HTTP endpoint unavailable in this environment")
 
         if settings.mcp_require_auth:
-            assert response.status == 401, f"Strict mode must reject unauthenticated MCP calls, got {response.status}: {response.text()}"
-            assert "authentication required" in response.text().lower()
+            assert response.status in (401, 403), f"Strict mode must reject unauthenticated MCP calls, got {response.status}: {response.text()}"
+            assert "authentication required" in response.text().lower() or "csrf" in response.text().lower()
         else:
             assert response.status != 401, f"Permissive mode should not return 401, got {response.status}: {response.text()}"
 

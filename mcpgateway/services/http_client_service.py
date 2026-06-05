@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/http_client_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Shared HTTP Client Service.
 
@@ -142,7 +143,7 @@ class SharedHttpClient:
             limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=verify_setting,
         )
         self._initialized = True
@@ -324,7 +325,7 @@ def get_default_verify() -> bool | ssl.SSLContext:
 
     if settings.skip_ssl_verify:
         return False
-    
+
     # Check for SSL_CERT_FILE environment variable (used in containers)
     ssl_cert_file = os.environ.get("SSL_CERT_FILE")
     if ssl_cert_file and os.path.isfile(ssl_cert_file):
@@ -335,7 +336,7 @@ def get_default_verify() -> bool | ssl.SSLContext:
         ssl_context.load_verify_locations(cafile=ssl_cert_file)
         logger.info("get_default_verify: Using SSL context with custom CA bundle + system CAs: %s", ssl_cert_file)
         return ssl_context
-    
+
     return True
 
 

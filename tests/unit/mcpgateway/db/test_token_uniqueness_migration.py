@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/db/test_token_uniqueness_migration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -22,8 +22,8 @@ from alembic.operations import Operations
 import sqlalchemy as sa
 
 MODULE_NAME = "mcpgateway.alembic.versions.d9e0f1a2b3c4_change_token_uniqueness_to_per_team"
-REVISION = "d9e0f1a2b3c4"
-DOWN_REVISION = "b2d9c6e4f1a7"
+REVISION = "d9e0f1a2b3c4"  # pragma: allowlist secret
+DOWN_REVISION = "b2d9c6e4f1a7"  # pragma: allowlist secret
 
 
 class TestTokenUniquenessModuleStructure:

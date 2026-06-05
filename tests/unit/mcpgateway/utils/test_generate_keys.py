@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for generate_keys utilities."""
+"""Location: ./tests/unit/mcpgateway/utils/test_generate_keys.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for generate_keys utilities.
+"""
 
 # Standard
 from pathlib import Path
@@ -14,7 +20,7 @@ from mcpgateway.utils import generate_keys
 def test_generate_ed25519_private_key_and_derive_public():
     """Generate a private key and derive a public key from it."""
     private_pem = generate_keys.generate_ed25519_private_key()
-    assert "BEGIN PRIVATE KEY" in private_pem
+    assert "BEGIN PRIVATE KEY" in private_pem  # pragma: allowlist secret
 
     public_pem = generate_keys.derive_public_key_from_private(private_pem)
     assert "BEGIN PUBLIC KEY" in public_pem
@@ -29,7 +35,7 @@ def test_generate_ed25519_keypair_writes_files(tmp_path: Path):
 
     assert private_path.exists()
     assert public_path.exists()
-    assert "BEGIN PRIVATE KEY" in private_path.read_text()
+    assert "BEGIN PRIVATE KEY" in private_path.read_text()  # pragma: allowlist secret
     assert "BEGIN PUBLIC KEY" in public_path.read_text()
 
 

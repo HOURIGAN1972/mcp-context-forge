@@ -4,56 +4,6 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ---
 
-## ⚠️ New in 1.0.0-RC3
-
-**Breaking Changes:** Several security defaults have been strengthened in RC3. Review these changes before upgrading:
-
-### Changed Defaults
-
-| Variable | 0.9.x Default | 1.0.0-RC3 Default | Impact |
-|----------|---------------|-------------------|--------|
-| `SSRF_ALLOW_LOCALHOST` | `true` | `false` | Blocks connections to localhost/127.0.0.1 |
-| `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | `false` | Blocks RFC1918 private networks (10.x, 172.16.x, 192.168.x) |
-| `SSRF_DNS_FAIL_CLOSED` | `false` | `true` | Rejects requests when DNS resolution fails |
-| `MCPGATEWAY_WS_RELAY_ENABLED` | `true` (implicit) | `false` | WebSocket relay disabled by default |
-| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | `true` (implicit) | `false` | Reverse proxy disabled by default |
-| `PROTECT_ALL_ADMINS` | N/A | `true` | Prevents admin demotion/deactivation via API/UI |
-
-### New Variables
-
-**SSRF Protection:**
-- `SSRF_ALLOWED_NETWORKS` - Explicit CIDR allowlist when private networks are blocked
-
-**Transport Feature Flags:**
-- `MCPGATEWAY_WS_RELAY_ENABLED` - Must be explicitly enabled for WebSocket relay
-- `MCPGATEWAY_REVERSE_PROXY_ENABLED` - Must be explicitly enabled for reverse proxy
-
-**SSO/OAuth:**
-- `SSO_GENERIC_JWKS_URI` - JWKS endpoint for ID token signature verification
-- `SSO_KEYCLOAK_PUBLIC_BASE_URL` - Public-facing Keycloak URL for issuer mismatch fix
-
-**Team Governance:**
-- `ALLOW_TEAM_CREATION` - Control user ability to create organizational teams
-- `ALLOW_TEAM_JOIN_REQUESTS` - Control join request functionality
-- `ALLOW_TEAM_INVITATIONS` - Control team invitation functionality
-- `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` - Require email verification for invites
-- `PERSONAL_TEAM_PREFIX` - Customize personal team naming
-- `AUTO_CREATE_PERSONAL_TEAMS` - Control automatic personal team creation
-
-**Database Connection Pool:**
-- `DB_POOL_SIZE` - Connection pool size (default: 200)
-- `DB_MAX_OVERFLOW` - Extra connections beyond pool (default: 10)
-
-**Observability:**
-- `LANGFUSE_OTEL_ENDPOINT` - Langfuse OTLP/HTTP endpoint override
-- `LANGFUSE_PUBLIC_KEY` - Langfuse project public key
-- `LANGFUSE_SECRET_KEY` - Langfuse project secret key
-- `LANGFUSE_OTEL_AUTH` - Base64-encoded OTLP auth override
-
-**See Also:** [Upgrade Guide to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md) for detailed migration instructions.
-
----
-
 ## 🔐 Required: Change Before Use
 
 These variables have insecure defaults and **must be changed** before production deployment:
@@ -83,6 +33,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
 | `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
+|`REQUIRE_STRONG_SECRETS`|Enforces strong secret validation. Automatically defaults to true in production to ensure fail-safe deployments.|`true` (prod) / `false` (dev)|
 
 ### ⚙️ Project Defaults (Dev Setup)
 
@@ -1010,9 +961,74 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`       | int > 0                  |
 | `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |
+| `REDIS_SSL`               | Enable TLS for Redis       | `false`    | bool                     |
+| `REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
+| `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
+| `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
+| `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 !!! tip "Cache Backend Selection"
+
+
+#### Rate Limiter Redis
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATELIMITER_REDIS_URL` | `None` | Optional Redis URL for rate limiting. Falls back to `REDIS_URL` when unset. Must start with `redis://` or `rediss://`. |
+| `RATELIMITER_REDIS_MAX_CONNECTIONS` | `50` | Connection pool size for rate limiter Redis. |
+| `RATELIMITER_REDIS_SOCKET_TIMEOUT` | `2.0` | Socket timeout in seconds. |
+| `RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Connection timeout in seconds. |
+| `RATELIMITER_REDIS_SSL`               | Enable TLS for Redis       | `false`    | bool                     |
+| `RATELIMITER_REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
+| `RATELIMITER_REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+**Migration:** Existing deployments continue using main Redis. Set `RATELIMITER_REDIS_URL` to enable dedicated instance.
+
+!!! note "Rate Limiter Redis Behavior"
+    - **Independent of CACHE_TYPE:** Rate limiter Redis operates independently of the `CACHE_TYPE` setting. It does not require `CACHE_TYPE=redis` to function.
+    - **Fallback:** When `RATELIMITER_REDIS_URL` is unset, rate limiting uses the main Redis instance via `REDIS_URL` (backward compatible).
+
+#### Rate Limiter Redis Fallback Behavior During Runtime
+
+When `RATELIMITER_REDIS_URL` is configured but the dedicated Redis instance becomes unavailable mid-runtime:
+
+- Each worker process falls back to **independent in-memory rate limiting**
+- Rate limits are **no longer enforced globally** across workers
+- A client can effectively multiply their rate limit by the number of worker processes
+- This is a **degraded service state** that operators must monitor
+
+**Example:** With 4 workers and a 100 req/min limit:
+
+- Normal: 100 req/min enforced globally via Redis
+- Degraded: Each worker enforces 100 req/min independently = 400 req/min effective limit
+
+**Monitoring:** Watch for WARNING logs: `"Rate limiter Redis unavailable: ..."`
+
+**Recovery:** The gateway does not automatically reconnect to Redis after initial failure. Restart the gateway to restore shared rate limiting.
+
+#### Connection Pool Sizing
+
+When using a dedicated rate limiter Redis (`RATELIMITER_REDIS_URL`), the gateway maintains **two separate connection pools**:
+
+- **Main Redis pool:** `REDIS_MAX_CONNECTIONS` (default: 50)
+- **Rate limiter Redis pool:** `RATELIMITER_REDIS_MAX_CONNECTIONS` (default: 50)
+
+**Total Redis connections:** 100 (with defaults)
+
+**Planning:** Ensure your Redis `maxclients` setting accommodates:
+
+```
+maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_REDIS_MAX_CONNECTIONS))
+```
+
+**Example:** 3 gateway instances with defaults = 300 total connections needed
+
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
+
+!!! note "Redis TLS"
+    For TLS, set `REDIS_URL` to use the `rediss://` scheme (note the double `s`) and set `REDIS_SSL=true`. Supply `REDIS_SSL_CA_CERTS` to verify the server certificate. For mutual TLS (mTLS), also set `REDIS_SSL_CERTFILE` and `REDIS_SSL_KEYFILE`. Enable `REDIS_SSL_CHECK_HOSTNAME=true` only when Redis presents a valid CA-signed certificate with a matching hostname.
 
 ### Tool Lookup Cache
 

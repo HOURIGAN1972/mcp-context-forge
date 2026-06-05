@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Extra tests for main helpers."""
+"""Location: ./tests/unit/mcpgateway/test_main_helpers_extra.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extra tests for main helpers.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -62,8 +68,126 @@ def test_validate_security_configuration(monkeypatch: pytest.MonkeyPatch):
     main.validate_security_configuration()
 
 
+def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    from pydantic import SecretStr
+
+    fake_settings = SimpleNamespace(
+        get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
+        require_user_in_db=False,
+        require_strong_secrets=False,
+        jwt_issuer="mcpgateway",
+        jwt_audience="mcpgateway-api",
+        environment="production",
+        uaid_allowed_domains=["trusted.example.com"],
+        auth_required=True,
+        database_url="sqlite:///./mcp.db",
+        jwt_secret_key=SecretStr("strong-jwt-secret-value-xyz"),  # pragma: allowlist secret
+        auth_encryption_secret=SecretStr("strong-enc-secret-value-xyz"),  # pragma: allowlist secret
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+
+
+    caplog.set_level("WARNING", logger="mcpgateway")
+
+    main.validate_security_configuration()
+
+    assert any("Using default JWT_ISSUER" in record.message for record in caplog.records)
+    assert any("Using default JWT_AUDIENCE" in record.message for record in caplog.records)
+
+
+def test_validate_security_configuration_logs_insecure_uaid_config(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    from pydantic import SecretStr
+
+    fake_settings = SimpleNamespace(
+        get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
+        require_user_in_db=False,
+        require_strong_secrets=False,
+        jwt_issuer="custom-issuer",
+        jwt_audience="custom-audience",
+        environment="production",
+        uaid_allowed_domains=[],
+        auth_required=False,
+        database_url="sqlite:///./mcp.db",
+        jwt_secret_key=SecretStr("strong-jwt-secret-value-xyz"),  # pragma: allowlist secret
+        auth_encryption_secret=SecretStr("strong-enc-secret-value-xyz"),  # pragma: allowlist secret
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+
+    caplog.set_level("ERROR", logger="mcpgateway")
+
+    main.validate_security_configuration()
+
+    assert any("UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false" in record.message for record in caplog.records)
+
+
 def test_log_critical_issues_enforced(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main.settings, "require_strong_secrets", True)
 
     with pytest.raises(SystemExit):
         main.log_critical_issues(["issue"])
+
+
+def test_validate_security_configuration_security_error_exits(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    def _raise_security_error():
+        raise main.SecurityConfigurationError("boom")
+
+    monkeypatch.setattr(main, "get_settings", _raise_security_error)
+    monkeypatch.setattr(main.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+
+    caplog.set_level("CRITICAL", logger="mcpgateway")
+
+    with pytest.raises(SystemExit) as excinfo:
+        main.validate_security_configuration()
+
+    assert excinfo.value.code == 1
+    assert any("FAIL-CLOSED: boom" in record.message for record in caplog.records)
+
+
+class TestValidateSecurityConfigurationPlaceholder:
+    """validate_security_configuration() must handle __REPLACE_ME__ placeholders."""
+
+    def _make_fake_settings(self, environment: str, jwt_val: str):
+        from pydantic import SecretStr
+
+        return SimpleNamespace(
+            get_security_status=lambda: {"warnings": [], "secure_secrets": True, "auth_enabled": True},
+            require_user_in_db=True,
+            require_strong_secrets=False,
+            jwt_issuer="custom-issuer",
+            jwt_audience="custom-audience",
+            environment=environment,
+            uaid_allowed_domains=["trusted.example.com"],
+            auth_required=True,
+            database_url="sqlite:///./mcp.db",
+            jwt_secret_key=SecretStr(jwt_val),
+            auth_encryption_secret=SecretStr("strong-secret-value-abc123"),  # pragma: allowlist secret
+        )
+
+    def test_placeholder_in_production_exits(self, monkeypatch, caplog):
+        """validate_security_configuration() calls sys.exit(1) with FAIL-CLOSED log
+        when jwt_secret_key is __REPLACE_ME__ in production."""
+        import logging
+
+        fake = self._make_fake_settings("production", "__REPLACE_ME__placeholder")
+        monkeypatch.setattr(main, "get_settings", lambda: fake)
+        monkeypatch.setattr(main.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+
+        with caplog.at_level(logging.CRITICAL, logger="mcpgateway"):
+            with pytest.raises(SystemExit) as excinfo:
+                main.validate_security_configuration()
+
+        assert excinfo.value.code == 1
+        assert any("placeholder" in r.message.lower() or "replace_me" in r.message.lower() for r in caplog.records)
+
+    def test_placeholder_in_development_warns(self, monkeypatch, caplog):
+        """validate_security_configuration() warns but does not raise
+        when jwt_secret_key is __REPLACE_ME__ in development."""
+        import logging
+
+        fake = self._make_fake_settings("development", "__REPLACE_ME__placeholder")
+        monkeypatch.setattr(main, "get_settings", lambda: fake)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway"):
+            main.validate_security_configuration()  # must not raise
+
+        assert any("replace_me" in r.message.lower() or "placeholder" in r.message.lower() for r in caplog.records)

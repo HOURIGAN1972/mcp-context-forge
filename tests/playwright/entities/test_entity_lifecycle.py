@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Entity Lifecycle E2E Tests (REST API).
+"""Location: ./tests/playwright/entities/test_entity_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Entity Lifecycle E2E Tests (REST API).
 
 Tests full CRUD lifecycle + activate/deactivate for tools, resources, prompts,
 and servers via the REST API. Complements the existing browser-based entity tests.
@@ -20,8 +25,8 @@ import uuid
 from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
+# Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +34,7 @@ BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 
 
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams)
 
 
 @pytest.fixture(scope="module")
@@ -45,10 +46,7 @@ def admin_api(playwright: Playwright):
     back to a locally-signed JWT only when ``MCP_AUTH`` is unset.
     """
     token = os.getenv("MCP_AUTH", "") or _make_jwt("admin@example.com", is_admin=True)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -58,10 +56,7 @@ def viewer_api(playwright: Playwright):
     """Viewer (non-admin, no RBAC roles) API context for permission checks."""
     email = f"viewer-entity-{uuid.uuid4().hex[:8]}@example.com"
     token = _make_jwt(email, is_admin=False)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -225,7 +220,7 @@ class TestToolLifecycle:
                 "tool": {
                     "name": name,
                     "url": "https://httpbin.org/post",
-                    "description": "Delete test",
+                    "description": "Deletion test",
                     "integration_type": "REST",
                     "request_type": "POST",
                 },
@@ -600,7 +595,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Lifecycle test server",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -627,7 +621,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Get test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -651,7 +644,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Original",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -675,7 +667,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Deactivate test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -701,7 +692,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Reactivate test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -728,7 +718,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Delete test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -757,7 +746,7 @@ class TestEntityRBACPermissions:
             ("tools", {"tool": {"name": "deny-tool", "url": "https://httpbin.org/post", "integration_type": "REST", "request_type": "POST"}, "team_id": None}),
             ("resources", {"resource": {"uri": "file:///deny.txt", "name": "deny-res", "mimeType": "text/plain", "content": "denied"}, "team_id": None}),
             ("prompts", {"prompt": {"name": "deny-prompt", "description": "denied", "template": "denied", "arguments": []}, "team_id": None}),
-            ("servers", {"server": {"name": "deny-srv", "icon": "https://example.com/icon.png"}, "team_id": None}),
+            ("servers", {"server": {"name": "deny-srv"}, "team_id": None}),
         ],
     )
     def test_unprivileged_user_cannot_create(self, viewer_api: APIRequestContext, entity: str, body: dict):

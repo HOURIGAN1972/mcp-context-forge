@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for encoded exfiltration detector plugin."""
+"""Location: ./tests/unit/plugins/test_encoded_exfil_detector.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for encoded exfiltration detector plugin.
+"""
 
 # Standard
 import base64
@@ -9,8 +15,10 @@ import logging
 from pydantic import ValidationError
 import pytest
 
+pytest.importorskip("cpex_encoded_exfil_detection", reason="cpex-encoded-exfil-detection plugin not installed")
+
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -20,14 +28,10 @@ from mcpgateway.plugins.framework import (
     ToolHookType,
     ToolPostInvokePayload,
 )
-from mcpgateway.plugins.framework.hooks.resources import ResourceHookType
+from cpex.framework.hooks.resources import ResourceHookType
 from cpex_encoded_exfil_detection.encoded_exfil_detection import (
-    _decode_candidate,
-    _has_egress_context,
-    _normalize_padding,
     _scan_container,
     _scan_text,
-    _shannon_entropy,
     EncodedExfilDetectorConfig,
     EncodedExfilDetectorPlugin,
 )
@@ -133,7 +137,7 @@ class TestEncodedDetectionScan:
         cfg = EncodedExfilDetectorConfig()
 
         # Long alphanumeric string that's not valid base64/hex
-        payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}
+        payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}  # pragma: allowlist secret
 
         count, _, findings = _scan_container(payload, cfg)
         # Should not detect since it won't decode properly or meet suspicion criteria
@@ -284,42 +288,7 @@ class TestEncodedExfilPluginHooks:
 
 
 class TestEncodedExfilHelpers:
-    """Unit tests for internal helper functions to ensure full coverage."""
-
-    def test_shannon_entropy_empty_data(self):
-        assert _shannon_entropy(b"") == 0.0
-
-    def test_normalize_padding_already_aligned(self):
-        candidate = "YWJj"  # len == 4, already aligned
-        assert _normalize_padding(candidate) == candidate
-
-    def test_normalize_padding_adds_padding(self):
-        candidate = "YWJj" + "a"  # len == 5, needs padding
-        result = _normalize_padding(candidate)
-        assert len(result) % 4 == 0
-
-    def test_decode_candidate_hex_odd_length(self):
-        assert _decode_candidate("hex", "aabbccdde") is None  # 9 chars, odd
-
-    def test_decode_candidate_escaped_hex_no_chunks(self):
-        assert _decode_candidate("escaped_hex", "nothex") is None
-
-    def test_decode_candidate_unknown_encoding(self):
-        assert _decode_candidate("rot13", "hello") is None
-
-    def test_decode_candidate_base64_invalid(self):
-        assert _decode_candidate("base64", "!!!invalid!!!base64!!") is None
-
-    def test_decode_candidate_base64url_invalid_charset(self):
-        assert _decode_candidate("base64url", "has+slash/chars!") is None
-
-    def test_has_egress_context_detects_curl(self):
-        text = "curl -d 'payload' https://example.com"
-        assert _has_egress_context(text, 10, 20) is True
-
-    def test_has_egress_context_no_hints(self):
-        text = "normal text without any network hints at all"
-        assert _has_egress_context(text, 0, 10) is False
+    """Unit tests for scanner behavior via public API (_scan_text, _scan_container)."""
 
     def test_scan_text_skips_oversized_strings(self):
         cfg = EncodedExfilDetectorConfig(max_scan_string_length=1000)
@@ -348,26 +317,6 @@ class TestEncodedExfilHelpers:
         encoded = base64.b64encode(b"password=my-secret-value").decode()
         count, result, findings = _scan_container([f"curl {encoded} webhook"], cfg)
         assert count >= 1
-
-    def test_printable_ratio_empty_data(self):
-        # First-Party
-        from cpex_encoded_exfil_detection.encoded_exfil_detection import _printable_ratio
-
-        assert _printable_ratio(b"") == 0.0
-
-    def test_evaluate_candidate_decoded_too_short(self):
-        """Candidate decodes but result is shorter than min_decoded_length."""
-        # First-Party
-        from cpex_encoded_exfil_detection.encoded_exfil_detection import _evaluate_candidate
-
-        cfg = EncodedExfilDetectorConfig(min_decoded_length=100, min_encoded_length=8)
-        # Candidate is long enough to pass min_encoded_length but decodes to < 100 bytes
-        candidate = base64.b64encode(b"short-but-decodable").decode()
-        assert len(candidate) >= 8
-        text = "prefix " + candidate + " suffix"
-        start = 7
-        result = _evaluate_candidate(text, "", "base64", candidate, start, start + len(candidate), cfg)
-        assert result is None
 
     def test_scan_text_max_findings_limit(self):
         """Verify per-value finding limit is enforced."""
@@ -501,7 +450,7 @@ class TestConfigurableKeywords:
         """A custom sensitive keyword (not in defaults) should boost the suspicion score."""
         # Use a keyword NOT in the built-in _SENSITIVE_KEYWORDS list
         # "watsonx_cred" is custom; the payload contains no built-in keywords
-        encoded = base64.b64encode(b"watsonx_cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
+        encoded = base64.b64encode(b"watsonx_cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_sensitive_keywords=["watsonx_cred"],
             min_suspicion_score=1,
@@ -518,7 +467,7 @@ class TestConfigurableKeywords:
         # Use "mq_publish" which is NOT in the built-in _EGRESS_HINTS list
         # Avoid ALL built-in hints: curl, wget, http://, https://, upload, webhook,
         # beacon, dns, exfil, pastebin, socket, send
-        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
+        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_egress_hints=["mq_publish"],
             min_suspicion_score=1,
@@ -545,7 +494,7 @@ class TestConfigurableKeywords:
 
     def test_mixed_case_extra_keyword_matches(self):
         """Extra sensitive keywords with mixed case must still match (case-insensitive)."""
-        encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
+        encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_sensitive_keywords=["WatsonX_Cred"],
             min_suspicion_score=1,
@@ -558,7 +507,7 @@ class TestConfigurableKeywords:
 
     def test_mixed_case_extra_egress_hint_matches(self):
         """Extra egress hints with mixed case must still match (case-insensitive)."""
-        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
+        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_egress_hints=["MQ_Publish"],
             min_suspicion_score=1,
@@ -927,7 +876,7 @@ class TestErrorHandling:
     def test_detection_logging_no_sensitive_content(self, caplog):
         """When detection occurs, log output must not contain decoded payload content."""
         cfg = EncodedExfilDetectorConfig()
-        secret = "super-secret-password-value-1234"
+        secret = "super-secret-password-value-1234"  # pragma: allowlist secret
         encoded = base64.b64encode(f"password={secret}".encode()).decode()
         payload = {"data": f"curl {encoded} webhook"}
 
@@ -1176,7 +1125,7 @@ class TestDocumentedLimitations:
         """
         # \u0063 is JSON-escaped 'c' — raw scan sees literal '\u0063GFzc...' (broken base64),
         # JSON parse resolves it to 'cGFzc...' (valid base64 with 'password' keyword)
-        json_str = '{"secret": "\\u0063GFzc3dvcmQ9c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU="}'
+        json_str = '{"secret": "\\u0063GFzc3dvcmQ9c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU="}'  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": json_str}
 

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for toolops utility helpers."""
+"""Location: ./tests/unit/mcpgateway/test_toolops_utils.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for toolops utility helpers.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -132,7 +138,7 @@ def test_get_llm_instance_openai_sets_default_headers(monkeypatch: pytest.Monkey
     llm_instance, llm_config = llm_util.get_llm_instance("completion")
 
     assert llm_instance == "llm-completion"
-    assert llm_config.default_headers == {"RITS_API_KEY": "key"}
+    assert llm_config.default_headers == {"RITS_API_KEY": "key"}  # pragma: allowlist secret
 
 
 def test_get_llm_instance_anthropic(monkeypatch: pytest.MonkeyPatch):

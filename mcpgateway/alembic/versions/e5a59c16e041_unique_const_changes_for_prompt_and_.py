@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""unique const changes for prompt and resource
+"""Location: ./mcpgateway/alembic/versions/e5a59c16e041_unique_const_changes_for_prompt_and_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+unique const changes for prompt and resource
 
 Revision ID: e5a59c16e041
 Revises: 8a2934be50c0
 Create Date: 2025-10-15 11:20:53.888488
-
 """
 
 # Standard
@@ -15,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "e5a59c16e041"
-down_revision: Union[str, Sequence[str], None] = "8a2934be50c0"
+revision: str = "e5a59c16e041"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "8a2934be50c0"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

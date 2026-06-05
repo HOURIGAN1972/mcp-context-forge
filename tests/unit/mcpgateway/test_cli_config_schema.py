@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/test_cli_config_schema.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 import json
 import subprocess
 import sys
@@ -98,6 +107,25 @@ def test_handle_validate_config_failure(monkeypatch, capsys):
 
     err = capsys.readouterr().err
     assert "Invalid configuration in bad.env" in err
+
+
+def test_handle_validate_config_security_error(monkeypatch, capsys):
+    """SecurityConfigurationError raises SystemExit and writes to stderr."""
+    # First-Party
+    import mcpgateway.cli as cli
+    from mcpgateway.config import SecurityConfigurationError
+
+    def raise_security_error(*args, **kwargs):
+        raise SecurityConfigurationError("weak secret detected")
+
+    monkeypatch.setattr(cli, "Settings", raise_security_error)
+
+    with pytest.raises(SystemExit):
+        cli._handle_validate_config("bad.env")
+
+    err = capsys.readouterr().err
+    assert "Security configuration error in bad.env" in err
+    assert "weak secret detected" in err
 
 
 def test_handle_config_schema_outputs_json(monkeypatch, capsys):

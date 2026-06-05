@@ -1,9 +1,20 @@
 # -*- coding: utf-8 -*-
-import pytest
+"""Module Description.
+Location: ./tests/unit/mcpgateway/services/test_plugin_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 from unittest.mock import AsyncMock, MagicMock
-from mcpgateway.services.plugin_service import PluginService, get_plugin_service
+
+import pytest
+from cpex.framework.models import PluginMode
+
 import mcpgateway.services.plugin_service as plugin_service_module
-from mcpgateway.plugins.framework.models import PluginMode
+from mcpgateway.services.plugin_service import PluginService, get_plugin_service
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +29,7 @@ def mock_manager():
     m = MagicMock()
     plugin_ref = MagicMock()
     plugin_ref.name = "sample"
-    plugin_ref.mode = PluginMode.ENFORCE
+    plugin_ref.mode = PluginMode.SEQUENTIAL
     plugin_ref.priority = 10
     plugin_ref.hooks = ["hookA"]
     plugin_ref.tags = ["tag1", "tag2"]
@@ -109,7 +120,7 @@ def test_search_plugins(mock_manager):
     all_p = service.search_plugins()
     assert all_p
     assert service.search_plugins(query="sample")
-    assert service.search_plugins(mode=PluginMode.ENFORCE)
+    assert service.search_plugins(mode=PluginMode.SEQUENTIAL)
     assert service.search_plugins(hook="hookA")
     assert service.search_plugins(tag="tag1")
 
@@ -150,7 +161,7 @@ def test_get_all_plugins_enabled_without_config_has_empty_summary():
 
     class _PluginRef:
         name = "sample-no-config"
-        mode = PluginMode.ENFORCE
+        mode = PluginMode.SEQUENTIAL
         priority = 1
         hooks = []
         tags = []
@@ -166,13 +177,16 @@ def test_get_all_plugins_enabled_without_config_has_empty_summary():
     plugins = service.get_all_plugins()
 
     assert plugins[0]["name"] == "sample-no-config"
+    assert plugins[0]["description"] == ""
+    assert plugins[0]["author"] == "Unknown"
+    assert plugins[0]["version"] == "0.0.0"
     assert plugins[0]["config_summary"] == {}
 
 
 def test_get_all_plugins_skips_disabled_config_already_registered():
     plugin_ref = MagicMock()
     plugin_ref.name = "dup-plugin"
-    plugin_ref.mode = PluginMode.ENFORCE
+    plugin_ref.mode = PluginMode.SEQUENTIAL
     plugin_ref.priority = 1
     plugin_ref.hooks = []
     plugin_ref.tags = []
@@ -244,7 +258,7 @@ def test_get_plugin_by_name_without_manifest_branch():
 
     class _PluginRef:
         name = "nomani"
-        mode = PluginMode.ENFORCE
+        mode = PluginMode.SEQUENTIAL
         priority = 1
         hooks = []
         tags = []

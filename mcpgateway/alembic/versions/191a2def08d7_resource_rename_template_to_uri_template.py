@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""resource_rename_template_to_uri_template
+"""Location: ./mcpgateway/alembic/versions/191a2def08d7_resource_rename_template_to_uri_template.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+resource_rename_template_to_uri_template
 
 Revision ID: 191a2def08d7
 Revises: f3a3a3d901b8
@@ -14,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "191a2def08d7"
-down_revision: Union[str, Sequence[str], None] = "f3a3a3d901b8"
+revision: str = "191a2def08d7"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "f3a3a3d901b8"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

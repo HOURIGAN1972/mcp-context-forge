@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Metrics Cleanup Service for automatic deletion of old metrics.
+"""Location: ./mcpgateway/services/metrics_cleanup_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Metrics Cleanup Service for automatic deletion of old metrics.
 This service provides automatic and manual cleanup of old metrics data to prevent
 unbounded table growth and maintain query performance.
-
 Features:
 - Batched deletion to prevent long locks
 - Configurable retention period
 - Background task for periodic cleanup
 - Manual cleanup trigger via admin API
 - Per-table cleanup with statistics
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
@@ -167,6 +167,7 @@ class MetricsCleanupService:
         """
         self.retention_days = retention_days or getattr(settings, "metrics_retention_days", 7)
         self.batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
+        self.batch_sleep_ms = getattr(settings, "metrics_cleanup_batch_sleep_ms", 50)
         self.cleanup_interval_hours = cleanup_interval_hours or getattr(settings, "metrics_cleanup_interval_hours", 1)
         self.enabled = enabled if enabled is not None else getattr(settings, "metrics_cleanup_enabled", True)
 
@@ -378,6 +379,9 @@ class MetricsCleanupService:
                     if batch_deleted < self.batch_size:
                         break
 
+                    if self.batch_sleep_ms > 0:
+                        time.sleep(self.batch_sleep_ms / 1000.0)
+
                 # Get remaining count
                 remaining_count = db.execute(select(func.count()).select_from(model_class)).scalar() or 0  # pylint: disable=not-callable
 
@@ -456,6 +460,7 @@ class MetricsCleanupService:
             "retention_days": self.retention_days,
             "rollup_retention_days": self.rollup_retention_days,
             "batch_size": self.batch_size,
+            "batch_sleep_ms": self.batch_sleep_ms,
             "cleanup_interval_hours": self.cleanup_interval_hours,
             "total_cleaned": self._total_cleaned,
             "cleanup_runs": self._cleanup_runs,

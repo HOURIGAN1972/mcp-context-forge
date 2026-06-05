@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/transports/streamablehttp_transport.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
@@ -72,7 +72,6 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework.models import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -88,6 +87,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
@@ -96,7 +96,14 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials, verify_oauth_access_token
+from mcpgateway.utils.verify_credentials import (
+    _resolve_auth_header_name,
+    get_auth_header_value,
+    is_proxy_auth_trust_active,
+    require_auth_header_first,
+    verify_credentials,
+    verify_oauth_access_token,
+)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1647,9 +1654,10 @@ def _truthy_is_error(result: Any) -> bool:
     lives in one place. Semantics:
 
     - A real ``mcpgateway.common.models.ToolResult`` has ``is_error`` as a
-      typed ``bool`` with default ``False`` — ``result.is_error is True``
-      and ``bool(result.is_error)`` agree, so either form is correct in
-      production.
+      typed ``bool`` with default ``False``. MCP SDK ``CallToolResult``
+      instances expose the same flag as camelCase ``isError``. Both must
+      be recognised so error responses with declared output schemas bypass
+      server-side structured-output validation.
     - A ``unittest.mock.MagicMock`` auto-materialises attributes as truthy
       ``MagicMock`` objects. ``bool(mock.is_error)`` reports ``True``
       even when the test author didn't explicitly set the attribute,
@@ -1667,9 +1675,10 @@ def _truthy_is_error(result: Any) -> bool:
             MagicMock, or any duck-typed carrier).
 
     Returns:
-        ``True`` only when ``result.is_error`` is literally ``True``.
+        ``True`` only when ``result.is_error`` or ``result.isError`` is
+        literally ``True``.
     """
-    return getattr(result, "is_error", False) is True
+    return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
 @mcp_app.call_tool(validate_input=False)
@@ -1725,18 +1734,11 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
-    # Extract authorization parameters from user context (same pattern as list_tools)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2090,8 +2092,27 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     s_id = server_id_var.get()
 
     # Check if context vars are populated with real data (not defaults)
+    # Only use ContextVars if they contain the enriched headers with session ID
+    # If session ID is missing, fall through to ASGI scope (Path 2) which has enriched headers
     if s_id != "default_server_id":
-        return s_id, request_headers_var.get(), user_context_var.get()
+        headers = request_headers_var.get()
+        session_id = headers.get("x-mcp-session-id") if headers else None
+
+        # If we have a server_id but no session ID in headers, the ContextVars were captured
+        # before enrichment. Fall through to ASGI scope which has the enriched headers.
+        if not session_id:
+            logger.debug(
+                "[CONTEXT_RESOLUTION] Path 1 skipped (no session ID) | server_id=%s | falling through to ASGI scope",
+                s_id[:8] if s_id else None,
+            )
+            # Don't return - fall through to Path 2 (ASGI scope)
+        else:
+            logger.debug(
+                "[CONTEXT_RESOLUTION] Path 1 (ContextVars) | server_id=%s | has_session_id=%s",
+                s_id[:8] if s_id else None,
+                bool(session_id),
+            )
+            return s_id, headers, user_context_var.get()
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
@@ -2101,9 +2122,16 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
             if isinstance(gw_ctx, dict):
+                headers = gw_ctx.get("request_headers", {})
+                session_id = headers.get("x-mcp-session-id") if headers else None
+                logger.debug(
+                    "[CONTEXT_RESOLUTION] Path 2 (ASGI scope) | server_id=%s | has_session_id=%s",
+                    (gw_ctx.get("server_id") or s_id)[:8] if (gw_ctx.get("server_id") or s_id) else None,
+                    bool(session_id),
+                )
                 return (
                     gw_ctx.get("server_id") or s_id,
-                    gw_ctx.get("request_headers", {}),
+                    headers,
                     gw_ctx.get("user_context", {}),
                 )
     except LookupError:
@@ -2134,8 +2162,11 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
 
         # Extract and verify user context
         # Use require_auth_header_first to match streamable_http_auth token precedence:
-        # Authorization header > request cookies > jwt_token parameter
-        auth_header = req_headers.get("authorization")
+        # configured auth header (default Authorization) > request cookies > jwt_token parameter.
+        # When AUTH_HEADER_NAME is customized, the gateway token is read from that
+        # header so a downstream-bound Authorization header cannot be misvalidated
+        # as the gateway token.
+        auth_header = get_auth_header_value(req_headers)
         cookie_token = request.cookies.get("jwt_token")
 
         try:
@@ -2178,10 +2209,23 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
     email = payload.get("sub") or payload.get("email")
-    is_admin = payload.get("is_admin", False)
-    if not is_admin:
+    jwt_is_admin = payload.get("is_admin", False)
+    if not jwt_is_admin:
         user_info = payload.get("user", {})
-        is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+        jwt_is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+
+    # SECURITY: Check for effective admin status (DB is_admin OR RBAC platform_admin).
+    # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
+    # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
+    db_user_is_admin = False
+    if email:
+        # First-Party
+        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            db_user_is_admin = is_user_admin(db, email)
+
+    effective_is_admin = db_user_is_admin or jwt_is_admin
 
     token_use = payload.get("token_use")
     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
@@ -2189,7 +2233,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         # First-Party
         from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-        final_teams = await resolve_session_teams(payload, email, {"is_admin": is_admin})
+        final_teams = await resolve_session_teams(payload, email, {"is_admin": effective_is_admin})
     else:
         # API token or legacy: use embedded teams from JWT
         # First-Party
@@ -2200,7 +2244,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     user_ctx: dict[str, Any] = {
         "email": email,
         "teams": final_teams,
-        "is_admin": is_admin,
+        "is_admin": effective_is_admin,
         "is_authenticated": True,
         "token_use": token_use,
     }
@@ -2244,19 +2288,11 @@ async def list_tools() -> List[types.Tool]:
         if not _check_scoped_permission(user_context, "tools.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2373,19 +2409,11 @@ async def list_prompts() -> List[types.Prompt]:
         if not _check_scoped_permission(user_context, "prompts.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2447,17 +2475,11 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         if not _check_scoped_permission(user_context, "prompts.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract authorization parameters from user context (same pattern as list_prompts)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2530,19 +2552,11 @@ async def list_resources() -> List[types.Resource]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2644,17 +2658,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract authorization parameters from user context (same pattern as list_resources)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2774,17 +2782,11 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2924,15 +2926,11 @@ async def complete(
         await _check_server_oauth_enforcement(server_id, user_context)
 
     try:
-        user_email = user_context.get("email") if user_context else None
-        token_teams = user_context.get("teams") if user_context else None
-        is_admin = user_context.get("is_admin", False) if user_context else False
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-        # Admin bypass only for explicit unrestricted context; otherwise secure default.
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []  # Non-admin without explicit teams -> public-only
+        # Extract Layer-1 visibility filter from user context
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
         async with get_db() as db:
             params = {
@@ -3195,6 +3193,40 @@ async def _maybe_short_circuit_notification(receive: Receive) -> _BodyPeekResult
     if "method" not in payload or "id" in payload:
         return _BodyPeekResult(body=body, intercepted=False)
     return _BodyPeekResult(body=body, intercepted=True)
+
+
+_MCP_KNOWN_REQUEST_METHODS = frozenset(
+    {
+        "initialize",
+        "tools/list",
+        "list_tools",
+        "list_gateways",
+        "list_roots",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "resources/templates/list",
+        "prompts/list",
+        "prompts/get",
+        "ping",
+        "tools/call",
+        "roots/list",
+        "notifications/initialized",
+        "notifications/cancelled",
+        "notifications/message",
+        "sampling/createMessage",
+        "elicitation/create",
+        "completion/complete",
+        "logging/setLevel",
+    }
+)
+_MCP_KNOWN_REQUEST_PREFIXES = ("roots/", "notifications/", "sampling/", "elicitation/", "completion/", "logging/")
+
+
+def _is_known_mcp_request_method(method: str) -> bool:
+    """Return whether ``method`` is handled by the gateway's MCP JSON-RPC dispatcher."""
+    return method in _MCP_KNOWN_REQUEST_METHODS or method.startswith(_MCP_KNOWN_REQUEST_PREFIXES)
 
 
 def _make_replay_receive(
@@ -4214,9 +4246,13 @@ class SessionManagerWrapper:
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                         "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                     }
-                    # Copy auth header if present
-                    if "authorization" in headers:
-                        rpc_headers["authorization"] = headers["authorization"]
+                    # Forward the inbound gateway auth header (default: Authorization,
+                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
+                    # the same caller. Hardcoding "authorization" here would silently
+                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                    if _gw_auth_lower in headers:
+                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                     # Forward passthrough headers for upstream MCP servers (see #3640).
                     # First-Party
                     from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4382,8 +4418,9 @@ class SessionManagerWrapper:
                                 "x-mcp-session-id": mcp_session_id,
                                 "x-forwarded-internally": "true",
                             }
-                            if "authorization" in headers:
-                                rpc_headers["authorization"] = headers["authorization"]
+                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                            if _gw_auth_lower in headers:
+                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                             # Forward passthrough headers for upstream MCP servers (see #3640).
                             # First-Party
                             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4429,7 +4466,10 @@ class SessionManagerWrapper:
                 logger.debug("Session affinity check failed, proceeding locally: %s", e)
 
         # Store headers in context for tool invocations
-        request_headers_var.set(headers)
+        # Enrich with session ID BEFORE SDK handling so tool invocations can access it
+        # Set request_headers_var BEFORE server_id_var to ensure ContextVars are captured together
+        enriched_headers = dict(headers)
+        request_headers_var.set(enriched_headers)
 
         server_id_var.set(validated)
 
@@ -4463,7 +4503,7 @@ class SessionManagerWrapper:
         # the startup context rather than the per-request context).
         scope[_MCPGATEWAY_CONTEXT_KEY] = {
             "server_id": server_id_var.get(),
-            "request_headers": headers,
+            "request_headers": enriched_headers,
             "user_context": user_context,
         }
 
@@ -4504,6 +4544,7 @@ class SessionManagerWrapper:
         # Only triggered when there's at least one pending request — the
         # common case (zero pending) takes the streaming-receive fast path.
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
+        is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -4542,6 +4583,45 @@ class SessionManagerWrapper:
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
+        # JSON-RPC method dispatch should still be able to report a true
+        # "method not found" error when a client probes an unknown method
+        # without a usable Streamable HTTP session. The SDK validates the
+        # missing Mcp-Session-Id before method dispatch and would otherwise
+        # collapse this case to -32600 "Missing session ID". Peek only small,
+        # single-message JSON-RPC requests; known methods and malformed/large
+        # bodies fall through to the SDK's normal transport/session checks.
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+            peek = await _drain_request_body(receive)
+            if peek.disconnected:
+                logger.debug("POST %s aborted by client mid-body (unknown-method peek); not replaying", path)
+                return
+            if peek.body is None:  # type-narrow for mypy; invariant rules this out unless disconnected
+                return
+            if not peek.too_large:
+                try:
+                    payload = orjson.loads(peek.body)
+                except orjson.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict):
+                    rpc_method = payload.get("method")
+                    if isinstance(rpc_method, str) and "id" in payload and "/" in rpc_method and not _is_known_mcp_request_method(rpc_method):
+                        await _send_streamable_http_json_response(
+                            send,
+                            status_code=200,
+                            payload={
+                                "jsonrpc": "2.0",
+                                "error": {"code": -32601, "message": f"Method not found: {rpc_method}"},
+                                "id": payload.get("id"),
+                            },
+                        )
+                        return
+            receive = _make_replay_receive(
+                peek.body,
+                receive,
+                replay_tail=peek.replay_tail,
+                replay_tail_more_body=peek.replay_tail_more_body,
+            )
+
         # Spec-mandated notification short-circuit. JSON-RPC 2.0 + MCP
         # Streamable HTTP: a notification (a request without an ``id``) is
         # fire-and-forget — the server MUST NOT respond to it, and the spec
@@ -4555,7 +4635,6 @@ class SessionManagerWrapper:
         # (and may legitimately have no body / non-JSON body). Single-message
         # bodies only; batches fall through to the SDK in case it ever grows
         # proper batch handling.
-        is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         # Skip when the affinity-forwarded path has already consumed the
         # receive (it reads the body itself for the /rpc forward and
         # falls through to the SDK on failure). Re-reading would observe
@@ -4880,7 +4959,7 @@ class _StreamableHttpAuthHandler:
             if origin and headers.get("access-control-request-method"):
                 return True
 
-        authorization = headers.get("authorization")
+        authorization = get_auth_header_value(headers)
         proxy_trusted = is_proxy_auth_trust_active(settings)
         proxy_user = headers.get(settings.proxy_user_header) if proxy_trusted else None
 
@@ -5131,19 +5210,25 @@ class _StreamableHttpAuthHandler:
                         except Exception as cache_set_error:
                             logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
 
+            # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
+            # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
+            # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
+            effective_is_admin = db_user_is_admin or is_admin
+
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
                 # First-Party
                 from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
                 if cached_team_ids is not None:
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                    preresolved = None if effective_is_admin else cached_team_ids
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 elif batched_auth_ctx is not None:
-                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
+                    preresolved = None if effective_is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 else:
                     _record_mcp_auth_cache_event("teams_db_resolve")
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin})
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -5207,9 +5292,9 @@ class _StreamableHttpAuthHandler:
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
-                "is_admin": is_admin,
+                "is_admin": effective_is_admin,
                 "auth_method": "jwt",
-                "permission_is_admin": db_user_is_admin or is_admin,
+                "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             trace_team_name = await resolve_trace_team_name(user_payload, final_teams, preresolved_team_names=batched_auth_ctx.get("team_names") if batched_auth_ctx else None)
@@ -5228,7 +5313,7 @@ class _StreamableHttpAuthHandler:
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,
-                is_admin=bool(db_user_is_admin or is_admin),
+                is_admin=bool(effective_is_admin),
                 auth_method="jwt",
                 team_name=trace_team_name,
             )

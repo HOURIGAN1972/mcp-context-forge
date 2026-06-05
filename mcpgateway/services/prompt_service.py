@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/prompt_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -24,6 +24,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
+from cpex.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 import httpx
 from jinja2 import meta, select_autoescape, Template
 from jinja2.exceptions import SecurityError as JinjaSecurityError
@@ -49,7 +50,6 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -63,7 +63,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -191,6 +191,20 @@ async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: 
             types.GetPromptResult,
         )
     return await session.get_prompt(name, arguments=arguments)
+
+
+def _prompt_result_to_plugin_payload(result: PromptResult) -> dict[str, Any]:
+    """Return a plain payload for CPEX prompt post hooks."""
+    return result.model_dump()
+
+
+def _coerce_plugin_prompt_result(value: Any) -> PromptResult:
+    """Convert CPEX prompt post hook output back to the gateway PromptResult model."""
+    if isinstance(value, PromptResult):
+        return value
+    if hasattr(value, "model_dump"):
+        return PromptResult.model_validate(value.model_dump())
+    return PromptResult.model_validate(value)
 
 
 class PromptError(Exception):
@@ -440,14 +454,14 @@ class PromptService(BaseService):
                 # First-Party
                 from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
                 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
-                
+
                 # Handle gateway CA certificate if present
                 if gateway.ca_certificate:
                     ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
                     verify_setting = ctx
                 else:
                     verify_setting = get_default_verify()
-                
+
                 return httpx.AsyncClient(
                     verify=verify_setting,
                     follow_redirects=True,
@@ -458,7 +472,7 @@ class PromptService(BaseService):
                         keepalive_expiry=settings.httpx_keepalive_expiry,
                     ),
                 )
-            
+
             if transport == "sse":
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=create_prompt_client) as streams:
                     async with ClientSession(*streams) as session:
@@ -2117,13 +2131,13 @@ class PromptService(BaseService):
                 if has_post_fetch:
                     post_result, _ = await plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
-                        payload=PromptPosthookPayload(prompt_id=prompt.name, result=result),
+                        payload=PromptPosthookPayload(prompt_id=prompt.name, result=_prompt_result_to_plugin_payload(result)),
                         global_context=global_context,
                         local_contexts=context_table,
                         violations_as_exceptions=True,
                     )
                     # Use modified payload if provided
-                    result = post_result.modified_payload.result if post_result.modified_payload else result
+                    result = _coerce_plugin_prompt_result(post_result.modified_payload.result) if post_result.modified_payload else result
 
                 arguments_supplied = bool(arguments)
 
@@ -2774,7 +2788,7 @@ class PromptService(BaseService):
                 user_email=user_email,
                 custom_fields={
                     "visibility": getattr(prompt, "visibility", None),
-                    "admin_bypass": user_email is None and token_teams is None,
+                    "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                 },
             )
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")

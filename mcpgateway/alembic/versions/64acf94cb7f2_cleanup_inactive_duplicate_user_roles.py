@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""cleanup_inactive_duplicate_user_roles
+"""Location: ./mcpgateway/alembic/versions/64acf94cb7f2_cleanup_inactive_duplicate_user_roles.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+cleanup_inactive_duplicate_user_roles
 
 Revision ID: 64acf94cb7f2
 Revises: a3c38b6c2437
@@ -21,8 +27,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "64acf94cb7f2"
-down_revision: Union[str, Sequence[str], None] = "a3c38b6c2437"
+revision: str = "64acf94cb7f2"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "a3c38b6c2437"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

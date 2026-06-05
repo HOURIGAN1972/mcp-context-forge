@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/tools/builder/test_common.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -670,7 +670,7 @@ class TestGenerateKubernetesManifests:
                         "image": "postgres:17",
                         "database": "testdb",
                         "user": "testuser",
-                        "password": "testpass",
+                        "password": "testpass",  # pragma: allowlist secret
                     },
                     "redis": {
                         "enabled": True,
@@ -958,7 +958,7 @@ class TestGenerateComposeManifests:
                         "image": "postgres:17",
                         "database": "mcpdb",
                         "user": "mcpuser",
-                        "password": "secret123",
+                        "password": "secret123",  # pragma: allowlist secret
                     },
                     "redis": {
                         "enabled": True,

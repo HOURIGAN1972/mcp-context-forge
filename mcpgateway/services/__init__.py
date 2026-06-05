@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/__init__.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -16,6 +16,7 @@ from mcpgateway.services.gateway_service import GatewayError, GatewayService
 from mcpgateway.services.prompt_service import PromptError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceService
 from mcpgateway.services.tool_service import ToolError, ToolService
+from mcpgateway.services.server_service import ServerService
 
 __all__ = [
     "ToolService",
@@ -26,4 +27,5 @@ __all__ = [
     "PromptError",
     "GatewayService",
     "GatewayError",
+    "ServerService",
 ]

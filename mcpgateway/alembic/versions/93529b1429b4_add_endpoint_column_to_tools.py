@@ -1,7 +1,7 @@
 """add_endpoint_column_to_tools
 
 Revision ID: 93529b1429b4
-Revises: a145cf277a07
+Revises: d80ddfa65ddb
 Create Date: 2026-04-20 17:38:19.787236
 
 Add endpoint column to tools table to support URL construction from gateway URL + endpoint.
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "93529b1429b4"
-down_revision: Union[str, Sequence[str], None] = "a145cf277a07"
+down_revision: Union[str, Sequence[str], None] = "d80ddfa65ddb"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add password_change_required field to EmailUser
+"""Location: ./mcpgateway/alembic/versions/z1a2b3c4d5e6_add_password_change_required.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add password_change_required field to EmailUser
 
 Revision ID: z1a2b3c4d5e6
 Revises: 191a2def08d7
 Create Date: 2025-11-21 14:16:30.000000
-
 """
 
 # Third-Party
@@ -13,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "z1a2b3c4d5e6"
-down_revision = "191a2def08d7"
+down_revision = "191a2def08d7"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None
 

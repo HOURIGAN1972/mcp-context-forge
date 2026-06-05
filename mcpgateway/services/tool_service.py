@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/tool_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -18,6 +18,7 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
@@ -33,6 +34,17 @@ import uuid
 
 # Third-Party
 import anyio
+from cpex.framework import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
 import jq
 import jsonschema
@@ -61,8 +73,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginContextTable, PluginError, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload, UserContext
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -80,12 +90,14 @@ from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, Ru
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.transports.context import UserContext
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -207,6 +219,76 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
     re.compile(r"^content-type$", re.IGNORECASE),
 )
+
+
+def _mapping_keys(value: Any) -> Optional[list[str]]:
+    """Return sorted mapping keys for diagnostics without exposing values."""
+    if isinstance(value, Mapping):
+        return sorted(sanitize_for_log(key) for key in value.keys())
+    if isinstance(value, BaseModel):
+        fields = getattr(value.__class__, "model_fields", None) or getattr(value, "__fields__", None)
+        if fields:
+            return sorted(sanitize_for_log(key) for key in fields.keys())
+        return sorted(sanitize_for_log(key) for key in value.model_dump().keys())
+    return None
+
+
+def _header_payload_keys(value: Any) -> Optional[list[str]]:
+    """Return sorted header keys from a CPEX header payload or plain mapping."""
+    if value is None:
+        return None
+    root = getattr(value, "root", value)
+    return _mapping_keys(root)
+
+
+def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_headers: Any, pre_result: Any) -> None:
+    """Log sanitized TOOL_PRE_INVOKE output shape for plugin diagnostics."""
+    try:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        sanitized_tool_name = sanitize_for_log(tool_name)
+        modified_payload = getattr(pre_result, "modified_payload", None)
+        before_arg_keys = _mapping_keys(original_args)
+        before_header_keys = _header_payload_keys(original_headers)
+
+        if modified_payload is None:
+            logger.debug(
+                "tool_pre_invoke completed for %s: modified_payload=None, arg_keys_before=%s, header_keys_before=%s",
+                sanitized_tool_name,
+                before_arg_keys,
+                before_header_keys,
+            )
+            return
+
+        after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None))
+        after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None))
+        before_arg_set = set(before_arg_keys or [])
+        after_arg_set = set(after_arg_keys or [])
+        before_header_set = set(before_header_keys or [])
+        after_header_set = set(after_header_keys or [])
+        modified_name = sanitize_for_log(getattr(modified_payload, "name", None))
+
+        logger.debug(
+            "tool_pre_invoke completed for %s: modified_payload=True, modified_name=%s, "
+            "arg_keys_before=%s, arg_keys_after=%s, removed_arg_keys=%s, added_arg_keys=%s, "
+            "header_keys_before=%s, header_keys_after=%s, removed_header_keys=%s, added_header_keys=%s",
+            sanitized_tool_name,
+            modified_name,
+            before_arg_keys,
+            after_arg_keys,
+            sorted(before_arg_set - after_arg_set),
+            sorted(after_arg_set - before_arg_set),
+            before_header_keys,
+            after_header_keys,
+            sorted(before_header_set - after_header_set),
+            sorted(after_header_set - before_header_set),
+        )
+    except Exception:  # noqa: BLE001
+        try:
+            logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:
@@ -451,13 +533,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
         text = str(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # nosec B110
         pass
     try:
         text = repr(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # nosec B110
         pass
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.
@@ -1050,7 +1132,9 @@ class ToolService(BaseService):
             "custom_name_slug": tool.custom_name_slug,
             "display_name": tool.display_name,
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
+            "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
+            "deprecated": bool(tool.deprecated),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
             "team_id": tool.team_id,
@@ -1083,6 +1167,7 @@ class ToolService(BaseService):
                 "gateway_mode": getattr(gateway, "gateway_mode", "cache"),  # Gateway mode for direct proxy support
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
+                "auth_value": getattr(gateway, "auth_value", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -2866,9 +2951,10 @@ class ToolService(BaseService):
             if not include_inactive:
                 query = query.where(DbTool.enabled)
 
-            # Add visibility filtering if user context OR token_teams provided
-            # This ensures unauthenticated requests with token_teams=[] only see public tools
-            if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
+            # Admin bypass: skip visibility filtering entirely for unrestricted admin calls
+            if is_admin_bypass_granted(db, user_email, token_teams):
+                pass  # No visibility filter — admin sees all tools
+            elif user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
                 # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
                 if token_teams is not None:
                     team_ids = token_teams
@@ -4054,13 +4140,15 @@ class ToolService(BaseService):
         # inject credentials and clean arguments before the Rust direct call.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
+            pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
             pre_result, _ = await plugin_manager.invoke_hook(
                 ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=dict(runtime_headers))),
+                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                 global_context=hook_global_context,
                 local_contexts=plugin_context_table,
                 violations_as_exceptions=True,
             )
+            _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
             if pre_result.modified_payload:
                 modified_args = pre_result.modified_payload.args
                 if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
@@ -4180,9 +4268,9 @@ class ToolService(BaseService):
         if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             return (None, False)
 
-        # First-Party
-        from mcpgateway.plugins.framework import PluginMode  # pylint: disable=import-outside-toplevel
-        from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
+        # Third-Party
+        from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
+        from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
@@ -4412,6 +4500,14 @@ class ToolService(BaseService):
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
         # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
+        # This is needed for upstream session registry to work correctly
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+        if request_headers:
+            request_headers_var.set(request_headers)
+        # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -4552,6 +4648,12 @@ class ToolService(BaseService):
                 # Don't reveal tool existence - return generic "not found"
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
+            # Check deprecated status after RBAC to avoid leaking tool existence
+            if tool_payload.get("deprecated") is True:
+                # Cache the deprecated status to avoid repeated DB queries
+                await tool_lookup_cache.set_negative(name, "deprecated")
+                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
             # Tool must be attached to the specified virtual server
@@ -4613,6 +4715,7 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
         if tool_query_mapping is not None:
             tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
@@ -4941,13 +5044,15 @@ class ToolService(BaseService):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -5365,7 +5470,7 @@ class ToolService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
@@ -5641,6 +5746,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5827,6 +5935,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5859,13 +5970,15 @@ class ToolService(BaseService):
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -5933,13 +6046,15 @@ class ToolService(BaseService):
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
                         )
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -6025,6 +6140,35 @@ class ToolService(BaseService):
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                elif tool_integration_type == "gRPC" and tool_grpc_service_id:
+                    # gRPC tool invocation using the registered gRPC service
+                    try:
+                        # First-Party
+                        # NOTE: lazy import to avoid circular dependency
+                        from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
+
+                        grpc_manager = GrpcServiceManager()
+                        with fresh_db_session() as grpc_db:
+                            response = await asyncio.wait_for(
+                                grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {}, timeout=effective_timeout),
+                                timeout=effective_timeout,
+                            )
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                        # Re-raise so the LATER ``except Exception`` below cannot swallow cancellation.
+                        # Removing this clause would re-introduce the swallowed-cancellation bug from
+                        # PR #3202 review B7.
+                        raise
+                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
+                        if plugin_manager:
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
+                    except Exception as grpc_err:
+                        logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -6048,8 +6192,9 @@ class ToolService(BaseService):
                                 # Safely obtain structured content using .get() to avoid KeyError when
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
+                                is_error = modified_result.get("isError") if "isError" in modified_result else modified_result.get("is_error", tool_result.is_error)
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:
@@ -6107,6 +6252,9 @@ class ToolService(BaseService):
                         skip_pre_invoke,
                         "timeout",
                     )
+                raise
+            except asyncio.CancelledError:
+                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)

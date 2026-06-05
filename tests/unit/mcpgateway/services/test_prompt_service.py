@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_prompt_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -30,7 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError, _coerce_plugin_prompt_result
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -208,8 +208,7 @@ class TestPromptServiceInit:
     @pytest.mark.asyncio
     async def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService._get_plugin_manager (PLUGINS_ENABLED)."""
-        # First-Party
-        from mcpgateway.plugins.framework import enable_plugins, reset_plugin_manager_factory
+        from mcpgateway.plugins import enable_plugins, reset_plugin_manager_factory
 
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
         enable_plugins(False)
@@ -224,6 +223,24 @@ class TestPromptService:
     # ──────────────────────────────────────────────────────────────────
     #   register_prompt
     # ──────────────────────────────────────────────────────────────────
+
+    def test_coerce_plugin_prompt_result_accepts_plain_dict(self):
+        """Covers CPEX prompt post-hook payloads returned as plain dictionaries."""
+        result = _coerce_plugin_prompt_result(
+            {
+                "description": "plain",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {"type": "text", "text": "plain body"},
+                    }
+                ],
+            }
+        )
+
+        assert result.description == "plain"
+        assert len(result.messages) == 1
+        assert result.messages[0].content.text == "plain body"
 
     @pytest.mark.asyncio
     async def test_register_prompt_success(self, prompt_service, test_db):
@@ -889,7 +906,7 @@ class TestPromptService:
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+        from cpex.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
 
@@ -941,13 +958,49 @@ class TestPromptService:
         assert global_ctx.tenant_id == "tenant-1"
 
     @pytest.mark.asyncio
+    async def test_get_prompt_post_hook_policy_does_not_duplicate_prompt_messages(self, prompt_service, test_db):
+        """Covers prompt_post_fetch with CPEX hook policies and nested prompt messages."""
+        # Standard
+        from contextlib import contextmanager
+
+        # First-Party
+        from cpex.framework.manager import PluginManager
+
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
+
+        db_prompt = _build_db_prompt(name="mcp-plugin-parity-db-direct", desc="DB-backed MCP parity prompt", template="DB direct prompt body")
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        plugin_mgr = PluginManager("plugins/plugin_parity_config.yaml", hook_policies=HOOK_PAYLOAD_POLICIES)
+        await plugin_mgr.initialize()
+
+        @contextmanager
+        def _no_span(*_a, **_kw):
+            yield None
+
+        try:
+            with (
+                patch("mcpgateway.services.prompt_service.create_span", _no_span),
+                patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
+                patch.object(prompt_service, "_get_plugin_manager", AsyncMock(return_value=plugin_mgr)),
+            ):
+                mock_get_buf.record_prompt_metric = Mock()
+                result = await prompt_service.get_prompt(test_db, "mcp-plugin-parity-db-direct")
+        finally:
+            await plugin_mgr.shutdown()
+
+        assert len(result.messages) == 1
+        assert result.messages[0].content.text == "DB direct prompt body\n[PROMPT-POST-FETCH-SENTINEL]"
+
+    @pytest.mark.asyncio
     async def test_get_prompt_plugin_hooks_create_global_context_when_missing(self, prompt_service, test_db):
         """Covers GlobalContext creation fallback when middleware didn't provide one."""
         # Standard
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import PromptHookType, PromptPrehookPayload
+        from cpex.framework import PromptHookType, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))

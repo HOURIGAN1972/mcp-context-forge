@@ -12,6 +12,16 @@
 import htmx from 'htmx.org';
 window.htmx = htmx;
 
+// Configure HTMX to use CSP nonce for inline event handlers
+// The nonce is set in the template via window.htmxConfig before this bundle loads
+if (window.htmxConfig && window.htmxConfig.inlineScriptNonce) {
+  htmx.config.inlineScriptNonce = window.htmxConfig.inlineScriptNonce;
+}
+
+// Import Alpine (registers components/magics; start() is called after all Admin setup)
+import Alpine from './alpine-setup.js';
+window.Alpine = Alpine;
+
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
 
@@ -34,6 +44,7 @@ import {
   showErrorMessage,
   showNotification,
   showSuccessMessage,
+  updateInactiveUrlState,
 } from "./utils.js";
 
 Admin.buildTableUrl = buildTableUrl;
@@ -47,6 +58,8 @@ Admin.safeGetElement = safeGetElement;
 Admin.showErrorMessage = showErrorMessage;
 Admin.showNotification = showNotification;
 Admin.showSuccessMessage = showSuccessMessage;
+Admin.updateInactiveUrlState = updateInactiveUrlState;
+window.updateInactiveUrlState = updateInactiveUrlState;
 
 // AppState
 import { AppState } from "./appState.js";
@@ -524,6 +537,9 @@ Admin.hideUserEditModal = hideUserEditModal;
 // Import IIFE modules - they self-register on window.Admin
 import "./app.js";
 import "./events.js";
+
+// Start Alpine after all Admin methods are assigned so components can call them safely
+Alpine.start();
 
 console.log("🚀 ContextForge AI Gateway Admin API initialized");
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Additional coverage tests for tool_service.py.
+"""Location: ./tests/unit/mcpgateway/services/test_tool_service_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Additional coverage tests for tool_service.py.
 
 Targets uncovered lines identified in coverage report to improve overall
 branch coverage beyond the current 63%.
@@ -164,6 +169,7 @@ def mock_tool(mock_gateway):
     tool.gateway = mock_gateway
     tool.gateway_slug = "test-gateway"
     tool.enabled = True
+    tool.deprecated = False
     tool.reachable = True
     tool.team_id = None
     tool.owner_email = "admin@example.com"
@@ -2967,7 +2973,7 @@ class TestCallA2AAgent:
         agent.protocol_version = "1.0"
         agent.auth_type = "query_param"
         agent.auth_value = None
-        agent.auth_query_params = {"api_key": "encrypted_value"}
+        agent.auth_query_params = {"api_key": "encrypted_value"}  # pragma: allowlist secret
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -2978,7 +2984,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.example.com/?api_key=real_key"),
             patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.example.com/?api_key=***"),
         ):
@@ -3639,7 +3645,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),  # pragma: allowlist secret
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3664,7 +3670,7 @@ class TestCallA2AAgentCoverage:
 
     @pytest.mark.asyncio
     async def test_query_param_auth(self, tool_service):
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})  # pragma: allowlist secret
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {}
@@ -3673,7 +3679,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),  # pragma: allowlist secret
             patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
             patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
         ):
@@ -4057,7 +4063,7 @@ class TestConvertToolToReadMetrics:
         """convert_tool_to_read with include_metrics=True populates metrics."""
         now = datetime.now(timezone.utc)
         tool = SimpleNamespace(
-            id="abcdef1234567890abcdef1234567890",
+            id="abcdef1234567890abcdef1234567890",  # pragma: allowlist secret
             name="test_tool",
             original_name="test_tool",
             custom_name="test_tool",
@@ -4078,6 +4084,7 @@ class TestConvertToolToReadMetrics:
             pre_tool_code=None,
             post_tool_code=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             created_at=now,
             updated_at=now,
@@ -4123,7 +4130,7 @@ class TestConvertToolToReadMetrics:
         """convert_tool_to_read with include_metrics=False gives None metrics."""
         now = datetime.now(timezone.utc)
         tool = SimpleNamespace(
-            id="abcdef1234567890abcdef1234567890",
+            id="abcdef1234567890abcdef1234567890",  # pragma: allowlist secret
             name="test_tool",
             original_name="test_tool",
             custom_name="test_tool",
@@ -4144,6 +4151,7 @@ class TestConvertToolToReadMetrics:
             pre_tool_code=None,
             post_tool_code=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             created_at=now,
             updated_at=now,
@@ -4901,6 +4909,7 @@ class TestListToolsBranches:
             "input_schema": {},
             "annotations": {},
             "enabled": True,
+            "deprecated": False,
             "reachable": True,
             "gateway_id": None,
             "gateway_slug": "test-gw",
@@ -5358,6 +5367,7 @@ class TestInvokeToolCachePaths:
         tool = MagicMock(spec=DbTool)
         tool.name = "unreachable"
         tool.enabled = True
+        tool.deprecated = False
         tool.reachable = False
         tool.gateway = None
 
@@ -6165,7 +6175,7 @@ class TestInvokeToolRestTimeout:
     async def test_rest_timeout_triggers_cb_and_post_hook_and_metrics_counter_failure(self, tool_service):
         """REST tool timeout should trigger cb timeout state and post-invoke hook; metrics counter failures are swallowed."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
@@ -6216,7 +6226,7 @@ class TestInvokeToolRestTimeout:
     async def test_rest_timeout_with_plugin_manager_no_context_and_no_post_hook(self, tool_service):
         """Covers branches where plugin manager is present but no context_table and no TOOL_POST_INVOKE hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
@@ -6325,7 +6335,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
     async def test_rest_pre_invoke_modified_payload_with_headers_none(self, tool_service):
         """Pre-invoke hook that modifies args but provides headers=None should not overwrite headers."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", jsonpath_filter="")
         db = MagicMock()
@@ -6747,9 +6757,9 @@ class TestInvokeToolRestSuccess:
         # isError=true upstream responses, symmetric with the REST fix.
         assert metrics_record.called, "record_tool_metric was not invoked"
         recorded_success = metrics_record.call_args.kwargs.get("success")
-        assert recorded_success is False, (
-            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
-        )
+        assert (
+            recorded_success is False
+        ), f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
 
 
 # ---------------------------------------------------------------------------
@@ -7050,7 +7060,7 @@ class TestInvokeToolGatewayQueryParams:
     async def test_gateway_query_param_auth_decryption(self, tool_service):
         """Gateway query params are decrypted and applied to URL."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
-        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "encrypted_value"})
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "encrypted_value"})  # pragma: allowlist secret
         db = MagicMock()
 
         mock_response = MagicMock()
@@ -7068,7 +7078,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "secret123"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "secret123"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=secret123"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7092,7 +7102,7 @@ class TestInvokeToolGatewayQueryParams:
         mock_gateway.url = "http://gateway:9000"
         mock_gateway.auth_type = "query_param"
         mock_gateway.auth_value = None
-        mock_gateway.auth_query_params = {"api_key": "runtime_encrypted"}
+        mock_gateway.auth_query_params = {"api_key": "runtime_encrypted"}  # pragma: allowlist secret
         mock_gateway.oauth_config = None
         mock_gateway.ca_certificate = None
         mock_gateway.ca_certificate_sig = None
@@ -7140,7 +7150,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=runtime-secret") as mock_apply,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7156,7 +7166,7 @@ class TestInvokeToolGatewayQueryParams:
             result = await tool_service.invoke_tool(db, "test_tool", {})
 
         assert result is not None
-        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "runtime-secret"})
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "runtime-secret"})  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_gateway_query_param_auth_hydrates_gateway_dict_from_db(self, tool_service):
@@ -7167,7 +7177,7 @@ class TestInvokeToolGatewayQueryParams:
 
         hydrated_gateway = SimpleNamespace(
             auth_value=None,
-            auth_query_params={"api_key": "hydrated_encrypted"},
+            auth_query_params={"api_key": "hydrated_encrypted"},  # pragma: allowlist secret
             oauth_config=None,
         )
         hydrated_tool = SimpleNamespace(
@@ -7192,7 +7202,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "hydrated-secret"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "hydrated-secret"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=hydrated-secret") as mock_apply,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7208,13 +7218,13 @@ class TestInvokeToolGatewayQueryParams:
             result = await tool_service.invoke_tool(db, "test_tool", {})
 
         assert result is not None
-        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "hydrated-secret"})
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "hydrated-secret"})  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_gateway_query_param_decryption_failure(self, tool_service):
         """Failed decryption of query params is silently skipped."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
-        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "bad_encrypted"})
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "bad_encrypted"})  # pragma: allowlist secret
         db = MagicMock()
 
         mock_response = MagicMock()
@@ -7297,7 +7307,7 @@ class TestInvokeToolPluginContext:
     async def test_global_context_updated_with_server_id_and_email(self, tool_service):
         """Plugin global context is updated with gateway_id and user email."""
         # First-Party
-        from mcpgateway.plugins.framework.models import GlobalContext
+        from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-42")
         db = MagicMock()
@@ -7346,7 +7356,7 @@ class TestInvokeToolPluginContext:
     async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
         """Covers the false branches for global_context.server_id/user propagation."""
         # First-Party
-        from mcpgateway.plugins.framework.models import GlobalContext
+        from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id=None, jsonpath_filter="")
         db = MagicMock()
@@ -7557,6 +7567,7 @@ class TestInvokeToolPluginMetadataFromOrm:
         db_tool = MagicMock(spec=DbTool)
         db_tool.id = "tool-db-1"
         db_tool.enabled = True
+        db_tool.deprecated = False
         db_tool.reachable = True
         db_tool.gateway = None
 
@@ -7985,7 +7996,7 @@ class TestInvokeToolA2A:
     async def test_a2a_pre_invoke_modifies_payload_headers_and_custom_format_without_trailing_slash(self, tool_service):
         """A2A custom agents without trailing slash use custom format; pre-invoke can rewrite headers/args."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8412,7 +8423,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),  # pragma: allowlist secret
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8463,7 +8474,7 @@ class TestInvokeToolA2A:
     async def test_a2a_timeout_triggers_cb_context_and_post_hook(self, tool_service):
         """A2A timeout should mark cb_timeout_failure on contexts and invoke TOOL_POST_INVOKE hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8648,8 +8659,8 @@ class TestInvokeToolMcpSse:
         plugin-injected value.
         """
         # First-Party
-        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
-        from mcpgateway.plugins.framework.models import PluginResult
+        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from cpex.framework import PluginResult
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -8680,7 +8691,7 @@ class TestInvokeToolMcpSse:
                 return False
 
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
@@ -9304,7 +9315,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
     async def test_mcp_sse_timeout_triggers_post_hook_and_cb_context(self, tool_service):
         """Timeout during MCP SSE invocation should mark cb_timeout_failure and invoke TOOL_POST_INVOKE."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9432,7 +9443,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_pool_not_initialized_falls_back_and_plugin_pre_invoke_no_metadata_no_modified_payload(self, tool_service):
         """Covers pool-not-initialized fallback + MCP pre-invoke branches for missing metadata/modified_payload."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9501,8 +9512,8 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_uses_registry_and_modified_payload_with_headers_none(self, tool_service):
         """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+        from cpex.framework import ToolHookType
+        from mcpgateway.transports.context import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9563,7 +9574,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_timeout_triggers_post_hook_without_context(self, tool_service):
         """Covers StreamableHTTP timeout handler plugin branches when context_table is falsy."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9686,6 +9697,7 @@ class TestInvokeToolLookupLogic:
             t = MagicMock(spec=DbTool)
             t.name = name
             t.enabled = True
+            t.deprecated = False
             t.reachable = True
             t.gateway = None
             t.owner_email = None

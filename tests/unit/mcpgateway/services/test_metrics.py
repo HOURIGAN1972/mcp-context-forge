@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for Metrics service."""
+"""Location: ./tests/unit/mcpgateway/services/test_metrics.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for Metrics service.
+"""
 
 # Standard
 from unittest.mock import MagicMock, patch
@@ -14,7 +20,6 @@ from mcpgateway.services.metrics import (
     setup_metrics,
     tool_timeout_counter,
 )
-
 
 _METRIC_GAUGE_NAMES = ("app_info", "database_info", "http_pool_max_connections", "http_pool_max_keepalive_connections")
 
@@ -80,7 +85,7 @@ def test_setup_metrics_enabled_postgresql():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgresql://user:pass@localhost/db"
+        mock_settings.database_url = "postgresql://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
@@ -97,7 +102,7 @@ def test_setup_metrics_enabled_postgresql_psycopg():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"
+        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
@@ -161,7 +166,7 @@ def test_setup_metrics_postgres_prefix():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgres://user:pass@localhost/db"
+        mock_settings.database_url = "postgres://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst

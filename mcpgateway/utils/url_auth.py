@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""URL authentication helpers for query parameter auth.
+"""Location: ./mcpgateway/utils/url_auth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+URL authentication helpers for query parameter auth.
 Provides utilities for appending decrypted auth query parameters to URLs
 and sanitizing URLs for safe logging (redacting sensitive query params).
-
 Security Note:
     Query parameter authentication is inherently insecure (CWE-598: Use of GET
     Request Method With Sensitive Query Strings). API keys in URLs may appear
     in proxy logs, browser history, and server access logs. Use only when the
     upstream server (e.g., Tavily MCP) requires this authentication method.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
@@ -59,13 +59,13 @@ def apply_query_param_auth(
     Example:
         >>> apply_query_param_auth(
         ...     "https://api.tavily.com/mcp",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'https://api.tavily.com/mcp?tavilyApiKey=secret123'
 
         >>> apply_query_param_auth(
         ...     "https://api.example.com/search?q=test",
-        ...     {"api_key": "abc123"}
+        ...     {"api_key": "abc123"}  # pragma: allowlist secret
         ... )
         'https://api.example.com/search?q=test&api_key=abc123'
     """
@@ -115,7 +115,7 @@ def sanitize_url_for_logging(
     Example:
         >>> sanitize_url_for_logging(
         ...     "https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
 
@@ -200,7 +200,7 @@ def sanitize_exception_message(
     Example:
         >>> sanitize_exception_message(
         ...     "Connection failed: https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'Connection failed: https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
 

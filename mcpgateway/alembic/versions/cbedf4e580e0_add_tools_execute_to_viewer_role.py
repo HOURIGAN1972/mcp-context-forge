@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""Add tools.execute permission to team-scoped viewer role.
+"""Location: ./mcpgateway/alembic/versions/cbedf4e580e0_add_tools_execute_to_viewer_role.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add tools.execute permission to team-scoped viewer role.
 
 Revision ID: cbedf4e580e0
 Revises: a7f3c9e1b2d4
@@ -24,8 +30,8 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "cbedf4e580e0"
-down_revision: Union[str, Sequence[str], None] = "a7f3c9e1b2d4"
+revision: str = "cbedf4e580e0"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "a7f3c9e1b2d4"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

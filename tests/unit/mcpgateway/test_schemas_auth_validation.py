@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Schema auth validation tests to improve coverage."""
+"""Location: ./tests/unit/mcpgateway/test_schemas_auth_validation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schema auth validation tests to improve coverage.
+"""
 
 # Third-Party
 from pydantic import SecretStr, ValidationError
@@ -235,7 +241,7 @@ def test_public_registration_request_valid():
     """Test PublicRegistrationRequest with valid data."""
     request = PublicRegistrationRequest(
         email="test@example.com",
-        password="SecurePass123!",
+        password="SecurePass123!",  # pragma: allowlist secret
         full_name="Test User",
     )
     assert request.email == "test@example.com"
@@ -257,7 +263,7 @@ def test_public_registration_request_password_too_short():
     with pytest.raises(ValueError, match="at least 8 characters"):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="Short1!",
+            password="Short1!",  # pragma: allowlist secret
             full_name="Test User",
         )
 
@@ -267,7 +273,7 @@ def test_public_registration_request_invalid_email():
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="not-an-email",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
             full_name="Test User",
         )
 
@@ -277,21 +283,21 @@ def test_public_registration_request_rejects_admin_fields():
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
             full_name="Test User",
             is_admin=True,
         )
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
             full_name="Test User",
             is_active=False,
         )
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
             full_name="Test User",
             password_change_required=True,
         )
@@ -306,7 +312,7 @@ def test_admin_create_user_request_valid():
     """Test AdminCreateUserRequest with password provided."""
     request = AdminCreateUserRequest(
         email="test@example.com",
-        password="SecurePass123!",
+        password="SecurePass123!",  # pragma: allowlist secret
         full_name="Test User",
     )
     assert request.email == "test@example.com"
@@ -330,7 +336,7 @@ def test_admin_create_user_request_with_all_fields():
     """Test AdminCreateUserRequest with all fields set."""
     request = AdminCreateUserRequest(
         email="complete@example.com",
-        password="CompletePass123!",
+        password="CompletePass123!",  # pragma: allowlist secret
         full_name="Complete User",
         is_admin=True,
         is_active=False,
@@ -349,7 +355,7 @@ def test_admin_create_user_request_password_too_short():
     with pytest.raises(ValueError, match="at least 8 characters"):
         AdminCreateUserRequest(
             email="test@example.com",
-            password="Short1!",
+            password="Short1!",  # pragma: allowlist secret
             full_name="Test User",
         )
 
@@ -359,7 +365,7 @@ def test_admin_create_user_request_invalid_email():
     with pytest.raises(ValueError):
         AdminCreateUserRequest(
             email="not-an-email",
-            password="SecurePass123!",
+            password="SecurePass123!",  # pragma: allowlist secret
             full_name="Test User",
         )
 
@@ -368,7 +374,7 @@ def test_admin_create_user_request_with_is_active_false():
     """Test AdminCreateUserRequest with is_active=False."""
     request = AdminCreateUserRequest(
         email="inactive@example.com",
-        password="SecurePass123!",
+        password="SecurePass123!",  # pragma: allowlist secret
         full_name="Inactive User",
         is_active=False,
     )
@@ -379,7 +385,7 @@ def test_admin_create_user_request_with_pcr_true():
     """Test AdminCreateUserRequest with password_change_required=True."""
     request = AdminCreateUserRequest(
         email="pwchange@example.com",
-        password="TempPass123!",
+        password="TempPass123!",  # pragma: allowlist secret
         full_name="PCR User",
         password_change_required=True,
     )

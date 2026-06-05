@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Extra schema validator tests to cover edge cases."""
+"""Location: ./tests/unit/mcpgateway/test_schemas_validators_extra.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extra schema validator tests to cover edge cases.
+"""
 
 # Standard
 import base64
@@ -149,7 +155,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -171,10 +177,8 @@ class TestToolUpdateDescriptionValidationStrict:
             "run cmd1 && cmd2",
             "try this || that",
             "expand $(cmd)",
-            "Search docs > results",
-            "read < file",
         ],
-        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -211,7 +215,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_patterns_match_tool_create(self, monkeypatch):
         """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        forbidden_patterns = ["&&", "||", "$(", "> ", "< "]
+        forbidden_patterns = ["&&", "||", "$("]
         for pat in forbidden_patterns:
             payload = f"test {pat} injection"
             with pytest.raises(ValueError, match="unsafe characters"):
@@ -384,7 +388,7 @@ def test_gateway_update_query_param_validation():
 
 
 def test_gateway_read_mask_and_populate_auth():
-    masked = GatewayRead._mask_query_param_auth({"auth_query_params": {"api_key": "enc"}})
+    masked = GatewayRead._mask_query_param_auth({"auth_query_params": {"api_key": "enc"}})  # pragma: allowlist secret
     assert masked["auth_query_param_key"] == "api_key"
     assert masked["auth_query_param_value_masked"] == settings.masked_auth_value
 
@@ -393,7 +397,7 @@ def test_gateway_read_mask_and_populate_auth():
 
         def __init__(self):
             self.id = "gw1"
-            self.auth_query_params = {"api_key": "enc"}
+            self.auth_query_params = {"api_key": "enc"}  # pragma: allowlist secret
             self.team = "Team-1"
 
     masked_obj = GatewayRead._mask_query_param_auth(DummyGateway())
@@ -447,7 +451,7 @@ def test_a2a_agent_auth_processing_and_read_masking(monkeypatch):
     )
     assert agent.auth_query_param_key == "api_key"
 
-    masked = A2AAgentRead._mask_query_param_auth({"auth_query_params": {"api_key": "enc"}})
+    masked = A2AAgentRead._mask_query_param_auth({"auth_query_params": {"api_key": "enc"}})  # pragma: allowlist secret
     assert masked["auth_query_param_key"] == "api_key"
 
     encoded_basic = base64.urlsafe_b64encode("user:pass".encode("utf-8")).decode("utf-8")
@@ -772,7 +776,7 @@ def test_a2a_agent_read_masking_and_populate_auth_error_paths():
 
         def __init__(self):
             self.id = "a1"
-            self.auth_query_params = {"api_key": "enc"}
+            self.auth_query_params = {"api_key": "enc"}  # pragma: allowlist secret
             self.team = "Team-1"
 
     masked_obj = A2AAgentRead._mask_query_param_auth(DummyAgent())
@@ -881,11 +885,26 @@ class TestToolDescriptionForbiddenPatterns:
     def test_default_patterns_block_forbidden_chars(self, monkeypatch):
         """Default forbidden patterns reject known unsafe substrings in strict mode."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
-        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "> ", "< "])
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$("])
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
+        for pat in ["&&", ";", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"description with {pat} inside")
+
+    def test_redirect_operators_allowed_by_default(self, monkeypatch):
+        """'> ' and '< ' are NOT in the default forbidden list (issue #136 fix).
+
+        These appear in legitimate tool descriptions:
+          - comparison operators: "returns a if a > b"
+          - Markdown blockquotes: "> See also: ..."
+          - generic type signatures: "List<str>"
+        """
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", "||", "$("])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        assert ToolCreate.validate_description("Returns a if a > b else c") is not None
+        assert ToolCreate.validate_description("read < file.txt") is not None
+        assert ToolCreate.validate_description("> blockquote style description") is not None
 
     def test_non_strict_mode_warns_instead_of_rejecting(self, monkeypatch):
         """When VALIDATION_STRICT=false, forbidden patterns produce a warning, not an error."""
@@ -953,12 +972,12 @@ class TestMaskOauthConfig:
 
     def test_masks_client_secret(self):
         """client_secret is replaced with masked value."""
-        result = _mask_oauth_config({"client_secret": "super-secret"})
+        result = _mask_oauth_config({"client_secret": "super-secret"})  # pragma: allowlist secret
         assert result["client_secret"] == settings.masked_auth_value
 
     def test_masks_password(self):
         """password is replaced with masked value."""
-        result = _mask_oauth_config({"password": "p@ssw0rd"})
+        result = _mask_oauth_config({"password": "p@ssw0rd"})  # pragma: allowlist secret
         assert result["password"] == settings.masked_auth_value
 
     def test_masks_all_sensitive_keys(self):
@@ -984,7 +1003,7 @@ class TestMaskOauthConfig:
 
     def test_handles_nested_dicts(self):
         """Recursive masking works on nested dictionaries."""
-        config = {"nested": {"client_secret": "inner-secret", "safe_key": "ok"}}
+        config = {"nested": {"client_secret": "inner-secret", "safe_key": "ok"}}  # pragma: allowlist secret
         result = _mask_oauth_config(config)
         assert result["nested"]["client_secret"] == settings.masked_auth_value
         assert result["nested"]["safe_key"] == "ok"
@@ -1002,7 +1021,7 @@ class TestMaskOauthConfig:
 
     def test_handles_list_input(self):
         """Lists are recursively processed."""
-        config = [{"client_secret": "s1"}, {"safe_key": "ok"}]
+        config = [{"client_secret": "s1"}, {"safe_key": "ok"}]  # pragma: allowlist secret
         result = _mask_oauth_config(config)
         assert result[0]["client_secret"] == settings.masked_auth_value
         assert result[1]["safe_key"] == "ok"
@@ -1095,7 +1114,7 @@ class TestToolCreateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -1117,10 +1136,8 @@ class TestToolCreateDescriptionValidationStrict:
             "run cmd1 && cmd2",
             "try this || that",
             "expand $(cmd)",
-            "Search docs > results",
-            "read < file",
         ],
-        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -1157,7 +1174,7 @@ class TestToolCreateDescriptionValidationStrict:
 
 def test_a2a_agent_read_populates_auth_headers_single():
     """Test A2AAgentRead populates auth_headers from single custom header."""
-    auth_value = encode_auth({"X-API-Key": "secret123"})
+    auth_value = encode_auth({"X-API-Key": "secret123"})  # pragma: allowlist secret
     agent = A2AAgentRead.model_construct(
         id="test-id",
         name="Test Agent",
@@ -1187,7 +1204,7 @@ def test_a2a_agent_read_populates_auth_headers_single():
 
 def test_a2a_agent_read_populates_auth_headers_multiple():
     """Test A2AAgentRead populates auth_headers from multiple custom headers."""
-    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456", "X-Region": "us-east-1"})
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456", "X-Region": "us-east-1"})  # pragma: allowlist secret
     agent = A2AAgentRead.model_construct(
         id="test-id",
         name="Test Agent",
@@ -1215,7 +1232,7 @@ def test_a2a_agent_read_populates_auth_headers_multiple():
 
 def test_a2a_agent_read_masked_hides_auth_header_values():
     """Test A2AAgentRead.masked() masks auth_headers values."""
-    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456"})
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456"})  # pragma: allowlist secret
     agent = A2AAgentRead.model_construct(
         id="test-id",
         name="Test Agent",
@@ -1331,7 +1348,7 @@ def test_a2a_agent_read_auth_headers_none_values():
 
 def test_a2a_agent_read_masked_preserves_empty_header_values():
     """Test A2AAgentRead.masked() does not mask empty header values."""
-    auth_value = encode_auth({"X-Empty": "", "X-Secret": "real-value"})
+    auth_value = encode_auth({"X-Empty": "", "X-Secret": "real-value"})  # pragma: allowlist secret
     agent = A2AAgentRead.model_construct(
         id="test-id",
         name="Test Agent",
@@ -1501,3 +1518,20 @@ def test_read_schemas_have_visibility_coercion_wired():
     """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
     for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
         assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"
+
+
+class TestToolNameLengthValidation:
+    """Tests for MCP spec tool name length limit (issue #136 Bug B)."""
+
+    def test_tool_name_exactly_128_chars_accepted(self):
+        """Tool name at the MCP spec limit (128 chars) should be accepted."""
+        name = "a" * 128
+        tool = ToolCreate(name=name, inputSchema={})
+        assert tool.name == name
+
+    def test_tool_name_over_128_chars_rejected(self):
+        """Tool name over the MCP spec limit should be rejected with a clear message."""
+        name = "a" * 129
+        with pytest.raises(ValidationError) as exc_info:
+            ToolCreate(name=name, inputSchema={})
+        assert "Tool name exceeds MCP spec limit of 128 characters (got 129)" in str(exc_info.value)

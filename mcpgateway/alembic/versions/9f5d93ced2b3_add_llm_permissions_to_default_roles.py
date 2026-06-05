@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add LLM permissions to default RBAC roles.
+"""Location: ./mcpgateway/alembic/versions/9f5d93ced2b3_add_llm_permissions_to_default_roles.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add LLM permissions to default RBAC roles.
 
 Revision ID: 9f5d93ced2b3
 Revises: y8i9j0k1l2m3
@@ -23,7 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
-revision: str = "9f5d93ced2b3"
+revision: str = "9f5d93ced2b3"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "y8i9j0k1l2m3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

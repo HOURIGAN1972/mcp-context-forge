@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/toolops/utils/db_util.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
@@ -175,7 +175,7 @@ def query_tool_auth(tool_id, db: Session):
 #     from mcpgateway.db import SessionLocal
 #     from mcpgateway.services.tool_service import ToolService
 
-#     tool_id = '36451eb11de64ebf8f224fc41a846ff0'
+#     tool_id = '36451eb11de64ebf8f224fc41a846ff0'  # pragma: allowlist secret
 #     tool_service = ToolService()
 #     db = SessionLocal()
 

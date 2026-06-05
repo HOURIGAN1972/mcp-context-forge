@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.admin helpers and auth flows."""
+"""Location: ./tests/unit/mcpgateway/test_admin_module.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.admin helpers and auth flows.
+"""
 
 # Standard
 import base64
@@ -246,6 +252,8 @@ async def test_rate_limit_enforcement(monkeypatch):
 
 
 def test_user_identity_helpers():
+    # Test email-over-sub precedence (canonical order)
+    assert admin.get_user_email({"email": "primary@example.com", "sub": "secondary@example.com"}) == "primary@example.com"
     assert admin.get_user_email({"sub": "a@example.com"}) == "a@example.com"
     assert admin.get_user_email({"email": "b@example.com"}) == "b@example.com"
     assert admin.get_user_email("c@example.com") == "c@example.com"
@@ -267,35 +275,25 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
     assert admin.validate_password_strength("short") == (True, "")
 
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 8)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", True)
-    monkeypatch.setattr(admin.settings, "password_require_special", True)
+    # PasswordPolicyService uses password_min_length_user=12 and 3-of-4 complexity
 
-    ok, msg = admin.validate_password_strength("Abcdef1!")
+    ok, msg = admin.validate_password_strength("AzxWq1!MnbvC2@")
     assert ok is True and msg == ""
 
     ok, msg = admin.validate_password_strength("abcdef1!")
-    assert ok is False and "uppercase" in msg
+    assert ok is False and "at least 12" in msg
 
 
 @pytest.mark.parametrize(
-    ("required_attr", "password", "expected_fragment"),
+    ("password", "expected_fragment"),
     [
-        ("password_require_lowercase", "ABCDEFGH", "lowercase"),
-        ("password_require_numbers", "Abcdefgh", "number"),
-        ("password_require_special", "Abcdefg1", "special character"),
+        ("ABCDEFGH", "at least 12"),  # Too short, no lowercase/numbers/special
+        ("Abcdefgh", "at least 12"),  # Too short, no numbers/special
+        ("Abcdefg1", "at least 12"),  # Too short, no special
     ],
 )
-def test_validate_password_strength_requirement_failures(monkeypatch, required_attr, password, expected_fragment):
+def test_validate_password_strength_requirement_failures(monkeypatch, password, expected_fragment):
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 1)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", False)
-    monkeypatch.setattr(admin.settings, "password_require_special", False)
-    monkeypatch.setattr(admin.settings, required_attr, True)
 
     ok, msg = admin.validate_password_strength(password)
     assert ok is False
@@ -416,7 +414,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     assert isinstance(response, RedirectResponse)
     assert "missing_fields" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})
+    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})  # pragma: allowlist secret
     auth_service = MagicMock()
     auth_service.authenticate_user = AsyncMock(return_value=None)
     monkeypatch.setattr(admin, "EmailAuthService", lambda db: auth_service)
@@ -450,7 +448,7 @@ async def test_admin_login_handler_default_password(monkeypatch):
     monkeypatch.setattr(admin.settings, "detect_default_password_on_login", True)
     monkeypatch.setattr(admin.settings, "require_password_change_for_default_password", True)
 
-    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})
+    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})  # pragma: allowlist secret
 
     user = SimpleNamespace(email="admin@example.com", password_change_required=False, password_changed_at=None, password_hash="hash")
     auth_service = MagicMock()
@@ -509,7 +507,7 @@ async def test_admin_logout_paths():
     # GET request with admin referer should redirect to login
     get_referer_request = _make_request(root_path="/root")
     get_referer_request.method = "GET"
-    get_referer_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin/users"}
+    get_referer_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/admin/users", "host": "localhost:4444"}
     response = await admin._admin_logout(get_referer_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
@@ -832,7 +830,9 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
 
     response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
-    assert "jwt_token" in response.headers.get("set-cookie", "")
+    # Check that JWT token cookie is set (may be alongside other cookies like csrf_token)
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert "jwt_token=" in set_cookie_header or any("jwt_token=" in cookie for cookie in response.headers.getlist("set-cookie"))
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["selected_team_id"] == "team-1"
     assert len(context["tools"]) == 1
@@ -1095,15 +1095,15 @@ async def test_change_password_required_handler(monkeypatch):
     mock_db = MagicMock()
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
-    request.form = AsyncMock(return_value={"current_password": "old"})
+    request.form = AsyncMock(return_value={"current_password": "old"})  # pragma: allowlist secret
     response = await admin.change_password_required_handler(request, mock_db)
     assert "missing_fields" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "new1", "confirm_password": "new2"})
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "new1", "confirm_password": "new2"})  # pragma: allowlist secret
     response = await admin.change_password_required_handler(request, mock_db)
     assert "mismatch" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "Newpass1!", "confirm_password": "Newpass1!"})
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "Newpass1!", "confirm_password": "Newpass1!"})  # pragma: allowlist secret
     request.cookies = {"jwt_token": "token"}
     request.headers = {"User-Agent": "TestAgent"}
 
@@ -1534,6 +1534,8 @@ async def test_get_user_team_ids_returns_cached_ids_without_service_lookup(monke
 @pytest.mark.asyncio
 async def test_admin_list_servers_returns_paginated(monkeypatch):
     mock_db = MagicMock()
+    mock_request = _make_request()
+    mock_request.state = SimpleNamespace(token_teams=None)
 
     mock_server = MagicMock()
     mock_server.model_dump.return_value = {"id": "server-1"}
@@ -1549,7 +1551,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
 
     monkeypatch.setattr(admin.server_service, "list_servers", _fake_list_servers)
 
-    result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_list_servers(request=mock_request, page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
     assert result["data"] == [{"id": "server-1"}]
     assert result["pagination"] == {"page": 1, "per_page": 10}
     assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}

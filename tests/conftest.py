@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/conftest.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
@@ -89,6 +89,7 @@ def _force_minimal_main_app_features() -> None:
     os.environ.setdefault("MCPGATEWAY_ADMIN_API_ENABLED", "false")
     os.environ.setdefault("MCPGATEWAY_UI_ENABLED", "false")
     os.environ.setdefault("LLMCHAT_ENABLED", "false")
+    os.environ.setdefault("RATE_LIMITING_ENABLED", "false")
 
     # Defensive: if any import above already populated the settings cache,
     # clear it so subsequent reads reflect the values we just set.
@@ -150,7 +151,7 @@ def resolve_test_db_url():
 
     if db == "postgres":
         # Matches GitHub Service container
-        return "postgresql://postgres:test@localhost:5432/test"
+        return "postgresql://postgres:test@localhost:5432/test"  # pragma: allowlist secret
 
     raise ValueError(f"Unsupported test DB type: {db}")
 
@@ -199,7 +200,7 @@ def test_settings():
     return Settings(
         database_url="sqlite:///:memory:",
         basic_auth_user="testuser",
-        basic_auth_password="testpass",
+        basic_auth_password="testpass",  # pragma: allowlist secret
         auth_required=False,
         mcp_client_auth_enabled=False,
     )

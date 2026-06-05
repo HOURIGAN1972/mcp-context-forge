@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Main CLI for REST API data population.
+"""Location: ./tests/populate/populate.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Main CLI for REST API data population.
 
 Usage:
     python -m tests.populate --profile small
@@ -75,14 +80,15 @@ def generate_admin_token() -> str:
     Uses the same utility as the gateway to ensure token compatibility.
     """
     try:
-        # First-Party
-        from mcpgateway.utils.create_jwt_token import _create_jwt_token
+        # Local
+        from tests.helpers.auth import make_test_jwt
 
-        token = _create_jwt_token(
-            data={"sub": "admin@example.com", "username": "admin@example.com"},
+        token = make_test_jwt(
+            "admin@example.com",
+            is_admin=True,
             expires_in_minutes=10080,  # 7 days
-            user_data={"email": "admin@example.com", "full_name": "Admin", "is_admin": True},
             teams=None,  # null teams + is_admin = admin bypass
+            extra_payload={"username": "admin@example.com", "full_name": "Admin"},
         )
         return token
     except ImportError:
@@ -250,7 +256,7 @@ Examples:
     parser.add_argument(
         "--profile",
         type=str,
-        choices=["small", "medium", "large"],
+        choices=["tiny", "small", "medium", "large"],
         default="small",
         help="Population profile (default: small)",
     )

@@ -297,7 +297,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_initialize_gateway_proxy_mode(self, gateway_service, mock_forward_request):
         """Test _initialize_gateway with reverse proxy mode."""
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="ws://proxy",
             authentication={},
             transport="PROXIED",
@@ -328,12 +328,12 @@ class TestGatewayServiceProxy:
         """Test _initialize_gateway falls back to standard mode when proxy params are missing."""
         # Mock the standard connection method since it will fall back to SSE
         gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
         # When gateway_id and forward_request_func are both None, it should NOT use proxy mode
         # Instead it falls back to standard transport
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="ws://proxy",
             authentication={},
             transport="SSE",  # Will use SSE since proxy params are missing
@@ -348,10 +348,10 @@ class TestGatewayServiceProxy:
         """Test _initialize_gateway with standard transport uses SSE."""
         # Mock the standard connection methods
         gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="SSE",
@@ -367,7 +367,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_success(self, gateway_service, mock_forward_request):
         """Test successful connection to proxy server."""
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
             authentication={},
@@ -402,7 +402,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_no_resources(self, gateway_service, mock_forward_request):
         """Test proxy connection with include_resources=False."""
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
             authentication={},
@@ -420,7 +420,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_no_prompts(self, gateway_service, mock_forward_request):
         """Test proxy connection with include_prompts=False."""
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
             authentication={},
@@ -469,7 +469,7 @@ class TestGatewayServiceProxy:
             return {"payload": {}}
 
         # Should not raise, just log warning and return empty tools
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=AsyncMock(side_effect=partial_forward),
             authentication={},
@@ -517,7 +517,7 @@ class TestGatewayServiceProxy:
                 }
             return {"payload": {}}
 
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=AsyncMock(side_effect=forward_with_invalid_resource),
             authentication={},
@@ -545,7 +545,7 @@ class TestGatewayServiceProxy:
         }
 
         # Should return empty lists for authorization_code flow without oauth_auto_fetch_tool_flag
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="SSE",
@@ -573,10 +573,10 @@ class TestGatewayServiceProxy:
         # Mock OAuth manager and SSE connection
         gateway_service.oauth_manager.get_access_token = AsyncMock(return_value="test_access_token")
         gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="SSE",
@@ -618,7 +618,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_connect_to_proxy_server_with_auth_type(self, gateway_service, mock_forward_request):
         """Test proxy connection with auth_type parameter."""
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_proxy_server(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service.connect_to_proxy_server(
             session_id="test-session-123",
             forward_request_func=mock_forward_request,
             authentication={"Authorization": "Bearer test_token"},
@@ -639,10 +639,10 @@ class TestGatewayServiceProxy:
         pre_auth_headers = {"Authorization": "Bearer pre_auth_token"}
 
         gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="SSE",
@@ -657,10 +657,10 @@ class TestGatewayServiceProxy:
     async def test_initialize_gateway_streamablehttp_transport(self, gateway_service):
         """Test _initialize_gateway with StreamableHTTP transport."""
         gateway_service.connect_to_streamablehttp_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication={},
             transport="StreamableHTTP",
@@ -864,13 +864,13 @@ class TestGatewayServiceProxy:
     async def test_initialize_gateway_with_basic_auth_string(self, gateway_service):
         """Test _initialize_gateway with basic auth as string."""
         gateway_service.connect_to_sse_server = AsyncMock(
-            return_value=({"tools": {}}, [], [], [])
+            return_value=({"tools": {}}, [], [], [], [])
         )
 
         from mcpgateway.utils.services_auth import encode_auth
         encoded_auth = encode_auth({"Authorization": "Basic dGVzdDp0ZXN0"})
 
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="http://example.com",
             authentication=encoded_auth,
             transport="SSE",
@@ -883,7 +883,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_initialize_gateway_without_resources(self, gateway_service, mock_forward_request):
         """Test _initialize_gateway with include_resources=False."""
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="ws://proxy",
             authentication={},
             transport="PROXIED",
@@ -900,7 +900,7 @@ class TestGatewayServiceProxy:
     @pytest.mark.asyncio
     async def test_initialize_gateway_without_prompts(self, gateway_service, mock_forward_request):
         """Test _initialize_gateway with include_prompts=False."""
-        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+        capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway(
             url="ws://proxy",
             authentication={},
             transport="PROXIED",

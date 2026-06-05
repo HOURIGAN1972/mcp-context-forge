@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/utils/generate_docker_compose.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Docker Compose Generator for Infrastructure Profiles
 
 Generates docker-compose.yml files from infrastructure profile configurations.
@@ -67,7 +71,7 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway
+      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway  # pragma: allowlist secret
 {redis_url}
       - HOST=0.0.0.0
       - PORT=4444

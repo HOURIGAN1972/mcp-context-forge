@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member,not-callable
 """Location: ./mcpgateway/alembic/versions/cfc3d6aa0fb2_consolidated_multiuser_team_rbac_.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -27,7 +27,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "cfc3d6aa0fb2"
+revision: str = "cfc3d6aa0fb2"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "733159a4fa74"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

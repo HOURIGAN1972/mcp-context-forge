@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for trace payload redaction helpers."""
+"""Location: ./tests/unit/mcpgateway/utils/test_trace_redaction.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for trace payload redaction helpers.
+"""
 
 # Standard
 import json
@@ -43,11 +49,11 @@ def test_redact_sensitive_fields_recurses_through_dicts_lists_and_tuples(monkeyp
     }
 
     assert redact_sensitive_fields(payload) == {
-        "password": "***",
+        "password": "***",  # pragma: allowlist secret
         "nested": [
             {"authorization": "***"},
             {"ok": "value"},
-            ({"api-key": "***"},),
+            ({"api-key": "***"},),  # pragma: allowlist secret
         ],
     }
 

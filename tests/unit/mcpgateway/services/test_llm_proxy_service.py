@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for LLM proxy service."""
+"""Location: ./tests/unit/mcpgateway/services/test_llm_proxy_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for LLM proxy service.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -94,7 +100,7 @@ def test_resolve_model_provider_disabled(service):
 
 
 def test_get_api_key_decode_error(service, monkeypatch: pytest.MonkeyPatch):
-    provider = _make_provider(api_key="encoded")
+    provider = _make_provider(api_key="encoded")  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: (_ for _ in ()).throw(RuntimeError("bad")))
 
     assert service._get_api_key(provider) is None
@@ -269,8 +275,8 @@ def test_transform_anthropic_stream_chunk(service):
     chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model")
     stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model")
 
-    assert "\"content\":\"hi\"" in chunk
-    assert "\"finish_reason\":\"stop\"" in stop_chunk
+    assert '"content":"hi"' in chunk
+    assert '"finish_reason":"stop"' in stop_chunk
     assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model") is None
 
 
@@ -278,8 +284,8 @@ def test_transform_ollama_stream_chunk(service):
     chunk = service._transform_ollama_stream_chunk({"message": {"content": "hi"}, "done": False}, "id", 1, "model")
     stop_chunk = service._transform_ollama_stream_chunk({"message": {"content": ""}, "done": True}, "id", 1, "model")
 
-    assert "\"content\":\"hi\"" in chunk
-    assert "\"finish_reason\":\"stop\"" in stop_chunk
+    assert '"content":"hi"' in chunk
+    assert '"finish_reason":"stop"' in stop_chunk
 
 
 @pytest.mark.asyncio
@@ -358,7 +364,7 @@ async def test_chat_completion_stream_openai(service):
             for line in self._lines:
                 yield line
 
-    stream_response = DummyStreamResponse(["data: {\"choices\": []}", "data: [DONE]"])
+    stream_response = DummyStreamResponse(['data: {"choices": []}', "data: [DONE]"])
     service._client = MagicMock()
     service._client.stream = MagicMock(return_value=stream_response)
 
@@ -366,7 +372,7 @@ async def test_chat_completion_stream_openai(service):
     async for chunk in service.chat_completion_stream(MagicMock(), request):
         chunks.append(chunk)
 
-    assert "data: {\"choices\": []}\n\n" in chunks
+    assert 'data: {"choices": []}\n\n' in chunks
     assert "data: [DONE]\n\n" in chunks
 
 
@@ -431,7 +437,7 @@ def test_resolve_model_by_alias(service):
 
 def test_get_api_key_success(service, monkeypatch: pytest.MonkeyPatch):
     """Successful API key decode (line 153)."""
-    provider = _make_provider(api_key="encoded")
+    provider = _make_provider(api_key="encoded")  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "secret"})
     assert service._get_api_key(provider) == "secret"
 
@@ -444,7 +450,7 @@ def test_get_api_key_none(service):
 
 def test_build_openai_request_all_optional_params(service, monkeypatch: pytest.MonkeyPatch):
     """OpenAI request with all optional params set (lines 183, 193-216)."""
-    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "key123"})
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.decode_auth", lambda _: {"api_key": "key123"})  # pragma: allowlist secret
     request = ChatCompletionRequest(
         model="gpt-4",
         messages=[ChatMessage(role="user", content="hi")],
@@ -457,7 +463,7 @@ def test_build_openai_request_all_optional_params(service, monkeypatch: pytest.M
         presence_penalty=0.2,
         stop=["END"],
     )
-    provider = _make_provider(api_key="enc", api_base=None)
+    provider = _make_provider(api_key="enc", api_base=None)  # pragma: allowlist secret
     model = _make_model()
 
     url, headers, body = service._build_openai_request(request, provider, model)

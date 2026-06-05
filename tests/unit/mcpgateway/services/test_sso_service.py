@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_sso_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for SSOService.
 """
@@ -155,7 +156,7 @@ class TestProviderCRUD:
             "display_name": "GitHub",
             "provider_type": "oauth2",
             "client_id": "cid",
-            "client_secret": "sec",
+            "client_secret": "sec",  # pragma: allowlist secret
             "authorization_url": "https://auth",
             "token_url": "https://token",
             "userinfo_url": "https://userinfo",
@@ -173,7 +174,7 @@ class TestProviderCRUD:
             "display_name": "GitHub",
             "provider_type": "oidc",
             "client_id": "cid",
-            "client_secret": "sec",
+            "client_secret": "sec",  # pragma: allowlist secret
             "authorization_url": "https://auth",
             "token_url": "https://token",
             "userinfo_url": "https://userinfo",
@@ -194,7 +195,7 @@ class TestProviderCRUD:
     async def test_update_provider(self, sso_service, mock_db):
         existing = _make_provider()
         sso_service.get_provider = lambda _id: existing
-        result = await sso_service.update_provider("github", {"client_id": "new-cid", "client_secret": "new-sec"})
+        result = await sso_service.update_provider("github", {"client_id": "new-cid", "client_secret": "new-sec"})  # pragma: allowlist secret
         assert result.client_id == "new-cid"
         assert result.client_secret_encrypted == "encrypted"
 
@@ -331,7 +332,7 @@ class TestAuthFlow:
 
     def test_get_state_binding_secret_falls_back_to_string_encoding(self, sso_service):
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "plain-secret"
+            mock_settings.auth_encryption_secret = "plain-secret"  # pragma: allowlist secret
             secret_bytes = sso_service._get_state_binding_secret()
 
         assert secret_bytes == b"plain-secret"

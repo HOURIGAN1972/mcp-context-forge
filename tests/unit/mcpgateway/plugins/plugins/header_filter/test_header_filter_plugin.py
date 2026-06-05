@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/header_filter/test_header_filter_plugin.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Adrian Popa
 
@@ -11,7 +11,7 @@ Unit tests for Header Filter Plugin functionality.
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     AgentPreInvokePayload,
     GlobalContext,
     HttpHeaderPayload,
@@ -40,7 +40,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test", "header_filter"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key"],
@@ -113,7 +113,7 @@ class TestHeaderFilterPluginFunctionality:
                     "Content-Type": "application/json",
                     "Authorization": "Bearer token",
                     "Cookie": "session=xyz",
-                    "X-API-Key": "secret_key",
+                    "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "User-Agent": "TestClient/1.0",
                 }
             ),
@@ -164,7 +164,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie"],
@@ -276,7 +276,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie"],
@@ -324,7 +324,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config=None,
         )
@@ -353,7 +353,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={"filter_headers": "not-a-list", "log_filtered_headers": "not-a-bool"},
         )
@@ -414,7 +414,7 @@ class TestHeaderFilterPluginFunctionality:
     def test_filter_headers_all_removed(self, plugin_config):
         """Test _filter_headers when all headers are sensitive."""
         plugin = HeaderFilter(plugin_config)
-        headers = {"Authorization": "Bearer token", "Cookie": "session=xyz", "X-API-Key": "key"}
+        headers = {"Authorization": "Bearer token", "Cookie": "session=xyz", "X-API-Key": "key"}  # pragma: allowlist secret
 
         filtered, removed = plugin._filter_headers(headers, "test:context")
 
@@ -444,7 +444,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key"],
@@ -459,7 +459,7 @@ class TestHeaderFilterPluginFunctionality:
                 {
                     "Authorization": "Bearer vault_token",
                     "Cookie": "session=abc",
-                    "X-API-Key": "secret_key",
+                    "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "Content-Type": "application/json",
                 }
             ),
@@ -485,7 +485,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key", "X-Custom-Header"],
@@ -525,7 +525,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization", "Cookie"],
@@ -574,7 +574,7 @@ class TestHeaderFilterPluginFunctionality:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=20,
             config={
                 "filter_headers": ["Authorization"],

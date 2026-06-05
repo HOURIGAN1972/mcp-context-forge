@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -496,7 +496,7 @@ class TestHTTPEndpoints:
         # Use a valid UUID format for session_id
         import uuid
         session_id = uuid.uuid4().hex
-        
+
         # Add a test session
         session = ReverseProxySession(session_id, mock_websocket, "test-user")
         manager.sessions[session_id] = session
@@ -520,7 +520,7 @@ class TestHTTPEndpoints:
         # Use a valid UUID format for session_id
         import uuid
         session_id = uuid.uuid4().hex
-        
+
         response = client.delete(f"/reverse-proxy/sessions/{session_id}")
 
         assert response.status_code == 404
@@ -606,7 +606,7 @@ class TestHTTPEndpoints:
             dummy_request = DummyRequest()
 
             async def _run():
-                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")
+                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
                 first = await agen.__anext__()
                 second = await agen.__anext__()
@@ -637,7 +637,7 @@ class TestHTTPEndpoints:
                     return False
 
             async def _run():
-                response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")
+                response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
                 first = await agen.__anext__()
                 with pytest.raises(asyncio.CancelledError):
@@ -731,6 +731,159 @@ class TestIntegration:
 # Helper function tests                                                       #
 # --------------------------------------------------------------------------- #
 
+
+class TestGetUserFromCredentials:
+    """Test _get_user_from_credentials function."""
+
+    def test_get_websocket_bearer_token_accepts_lowercase_scheme(self):
+        """Reverse-proxy WebSocket token parser should accept lowercase bearer scheme."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "bearer lower-case-token"}
+
+        assert rp._get_websocket_bearer_token(websocket) == "lower-case-token"
+
+    def test_get_websocket_bearer_token_ignores_query_token(self):
+        """Reverse-proxy WebSocket token parser should ignore query-string tokens."""
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {"token": "legacy-token"}
+        websocket.headers = {}
+
+        assert rp._get_websocket_bearer_token(websocket) is None
+
+    @pytest.mark.asyncio
+    async def test_authenticate_reverse_proxy_websocket_denies_without_permissions(self):
+        """Authenticated users without server-management permissions should be rejected."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        websocket = Mock(spec=WebSocket)
+        websocket.query_params = {}
+        websocket.headers = {"authorization": "Bearer valid-token"}
+        websocket.client = Mock(host="127.0.0.1")
+        websocket.state = Mock(team_id=None, token_teams=None, token_use=None)
+
+        mock_user = Mock(email="user@example.com", full_name="Test User", is_admin=False)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings,
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=mock_user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker.has_any_permission", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = True
+            mock_settings.trust_proxy_auth = False
+
+            with pytest.raises(HTTPException) as exc_info:
+                await rp._authenticate_reverse_proxy_websocket(websocket)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Insufficient permissions"
+
+    def test_dict_with_sub(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials({"sub": "user@test.com", "is_admin": False})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_with_email_fallback(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials({"email": "user@test.com"})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_nested_admin(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials({"sub": "admin@test.com", "user": {"is_admin": True}})
+        assert user == "admin@test.com"
+        assert is_admin is True
+
+    def test_dict_top_level_admin(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials({"sub": "admin@test.com", "is_admin": True})
+        assert user == "admin@test.com"
+        assert is_admin is True
+
+    def test_string_credentials(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials("user@test.com")
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_anonymous_credentials(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials("anonymous")
+        assert user is None
+        assert is_admin is False
+
+    def test_none_credentials(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials(None)
+        assert user is None
+        assert is_admin is False
+
+    def test_empty_string_credentials(self):
+        from mcpgateway.services.reverse_proxy_service import get_user_from_credentials
+
+        user, is_admin = get_user_from_credentials("")
+        assert user is None
+        assert is_admin is False
+
+
+class TestValidateSessionOwnership:
+    """Test _validate_session_ownership function."""
+
+    def test_no_session_user_allows_access(self, mock_websocket):
+        from mcpgateway.services.reverse_proxy_service import validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, None)
+        # Should not raise - session without user allows any access
+        result = validate_session_ownership(session, "any-user", False, "test")
+        assert result is True
+
+    def test_admin_bypasses_ownership(self, mock_websocket):
+        from mcpgateway.services.reverse_proxy_service import validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
+        # Admin should be allowed to access any session
+        result = validate_session_ownership(session, "admin@test.com", True, "test")
+        assert result is True
+
+    def test_owner_match_allows_access(self, mock_websocket):
+        from mcpgateway.services.reverse_proxy_service import validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
+        # Owner should be allowed to access their own session
+        result = validate_session_ownership(session, "owner@test.com", False, "test")
+        assert result is True
+
+    def test_owner_match_dict_user(self, mock_websocket):
+        from mcpgateway.services.reverse_proxy_service import validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, {"sub": "owner@test.com"})
+        # Owner should be allowed when session user is dict
+        result = validate_session_ownership(session, "owner@test.com", False, "test")
+        assert result is True
+
+    def test_non_owner_denied(self, mock_websocket):
+        from mcpgateway.services.reverse_proxy_service import validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
+        # Non-owner should be denied
+        result = validate_session_ownership(session, "other@test.com", False, "disconnect")
+        assert result is False
 
 
 class TestWebSocketAuthEdgeCases:
@@ -863,9 +1016,12 @@ class TestListSessionsFiltering:
     @pytest.fixture
     def admin_client(self):
         from fastapi import FastAPI
+
         app = FastAPI()
+
         def mock_require_auth():
             return {"sub": "admin@test.com", "is_admin": True}
+
         app.dependency_overrides[require_auth] = mock_require_auth
         app.include_router(router)
         return TestClient(app)
@@ -873,9 +1029,12 @@ class TestListSessionsFiltering:
     @pytest.fixture
     def user_client(self):
         from fastapi import FastAPI
+
         app = FastAPI()
+
         def mock_require_auth():
             return {"sub": "user@test.com", "is_admin": False}
+
         app.dependency_overrides[require_auth] = mock_require_auth
         app.include_router(router)
         return TestClient(app)

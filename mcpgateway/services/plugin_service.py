@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/plugin_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -14,9 +14,9 @@ from collections import defaultdict
 import logging
 from typing import Any, Dict, List, Optional
 
-# First-Party
-from mcpgateway.plugins.framework import PluginManager
-from mcpgateway.plugins.framework.models import PluginMode
+# Third-Party
+from cpex.framework import PluginManager
+from cpex.framework.models import PluginMode
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +103,6 @@ class PluginService:
                 "namespace": plugin_config.namespace if plugin_config and plugin_config.namespace else "",
                 "status": "enabled" if plugin_ref.mode != PluginMode.DISABLED else "disabled",
             }
-
-            # Add implementation type if available (e.g., Rust vs Python for PII filter)
-            plugin_instance = plugin_ref.plugin if hasattr(plugin_ref, "plugin") else plugin_ref._plugin if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
-            if plugin_instance and hasattr(plugin_instance, "implementation"):
-                plugin_dict["implementation"] = plugin_instance.implementation
 
             # Add config summary (first few keys only for list view)
             if plugin_config and hasattr(plugin_config, "config") and plugin_config.config:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # tests/integration/test_integration.py
 """Location: ./tests/integration/test_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -189,6 +189,7 @@ MOCK_TOOL = ToolRead(
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
     enabled=True,
+    deprecated=False,
     reachable=True,
     gateway_id=None,
     execution_count=0,
@@ -215,7 +216,7 @@ MOCK_SERVER = ServerRead(
 )
 
 MOCK_RESOURCE = ResourceRead(
-    id="39334ce0ed2644d79ede8913a66930c9",
+    id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
     uri="file:///tmp/hello.txt",
     name="Hello",
     description="demo text",
@@ -363,7 +364,9 @@ class TestIntegrationScenarios:
         resp = test_client.post("/rpc/", json=rpc_body, headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["result"]["content"][0]["text"] == "ok"
-        mock_invoke.assert_awaited_once_with(db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY, app_user_email="integration-test-user@example.com", plugin_context_table=None, plugin_global_context=None)
+        mock_invoke.assert_awaited_once_with(
+            db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY, app_user_email="integration-test-user@example.com", plugin_context_table=None, plugin_global_context=None
+        )
 
     # --------------------------------------------------------------------- #
     # 5. Metrics aggregation endpoint                                       #

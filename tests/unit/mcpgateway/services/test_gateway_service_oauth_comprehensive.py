@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -75,7 +75,13 @@ def mock_oauth_gateway():
     gw.transport = "sse"
     gw.auth_type = "oauth"
     gw.auth_value = {}
-    gw.oauth_config = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
+    gw.oauth_config = {
+        "grant_type": "client_credentials",
+        "client_id": "test_client",
+        "client_secret": "test_secret",  # pragma: allowlist secret
+        "token_url": "https://oauth.example.com/token",
+        "scopes": ["read", "write"],
+    }  # pragma: allowlist secret
     gw.ca_certificate = ""
     return gw
 
@@ -99,7 +105,7 @@ def mock_oauth_auth_code_gateway():
     gw.oauth_config = {
         "grant_type": "authorization_code",
         "client_id": "auth_code_client",
-        "client_secret": "auth_code_secret",
+        "client_secret": "auth_code_secret",  # pragma: allowlist secret
         "authorization_url": "https://oauth.example.com/authorize",
         "token_url": "https://oauth.example.com/token",
         "redirect_uri": "http://localhost:8000/oauth/callback",
@@ -500,6 +506,7 @@ class TestGatewayServiceOAuthComprehensive:
                     [mock_tool],  # tools
                     [],  # resources
                     [],  # prompts
+                    [],  # validation_errors
                 )
             )
 
@@ -612,7 +619,7 @@ class TestGatewayServiceOAuthComprehensive:
         oauth_config = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "scopes": [],  # Empty scopes
         }
@@ -634,7 +641,7 @@ class TestGatewayServiceOAuthComprehensive:
         oauth_config = {
             "grant_type": "client_credentials",
             "client_id": "custom_client",
-            "client_secret": "custom_secret",
+            "client_secret": "custom_secret",  # pragma: allowlist secret
             "token_url": "https://custom-oauth.example.com/oauth2/token",
             "scopes": ["custom:read", "custom:write"],
         }
@@ -715,7 +722,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
-            mock_connect.return_value = ({}, [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [])
 
             with pytest.raises(GatewayConnectionError, match="audience"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
@@ -734,7 +741,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token-not-jwt")
-            mock_connect.return_value = ({}, [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [])
 
             await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
 

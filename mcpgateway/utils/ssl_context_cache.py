@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SSL context caching utilities for ContextForge services.
+"""Location: ./mcpgateway/utils/ssl_context_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+SSL context caching utilities for ContextForge services.
 
 This module provides caching for SSL contexts to avoid repeatedly creating
 them for the same CA certificates, improving performance for services that
@@ -116,14 +121,14 @@ def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: s
 
 
 def get_cached_ssl_context(
-    ca_certificate: str,
+    ca_certificate: str | bytes | None,
     client_cert: str | None = None,
     client_key: str | None = None,
 ) -> ssl.SSLContext:
     """Get or create cached SSL context for a CA certificate.
 
     Args:
-        ca_certificate: CA certificate in PEM format (str or bytes)
+        ca_certificate: Optional CA certificate in PEM format (str or bytes)
         client_cert: Optional client cert path or PEM for mTLS
         client_key: Optional client key path or PEM for mTLS
 
@@ -154,7 +159,9 @@ def get_cached_ssl_context(
         avoid repeated expensive SSL setup operations.
     """
     # Ensure CA certificate is normalized to bytes for hash calculation
-    if isinstance(ca_certificate, bytes):
+    if ca_certificate is None:
+        ca_cert_bytes = b""
+    elif isinstance(ca_certificate, bytes):
         ca_cert_bytes = ca_certificate
     elif isinstance(ca_certificate, str):
         ca_cert_bytes = ca_certificate.encode()
@@ -184,13 +191,18 @@ def get_cached_ssl_context(
         _ssl_context_cache.pop(cache_key, None)
         _ssl_context_cache_timestamps.pop(cache_key, None)
 
+    # Validate mTLS: require both or neither
+    if bool(client_cert) != bool(client_key):
+        raise ValueError("mTLS requires both client_cert and client_key; got only one")
+
     # Create new SSL context and configure CA cert
     # ssl.create_default_context() automatically loads system CAs
     ctx = ssl.create_default_context()
     
     # Load the provided CA certificate (from gateway/server config)
-    ctx.load_verify_locations(cadata=ca_certificate)
-    
+    if ca_certificate:
+        ctx.load_verify_locations(cadata=ca_certificate)
+
     # Also load SSL_CERT_FILE if set (for custom CAs like OpenShift)
     # This allows both the gateway-specific CA AND custom environment CAs to work
     ssl_cert_file = os.environ.get("SSL_CERT_FILE")
@@ -200,10 +212,6 @@ def get_cached_ssl_context(
             logger.debug("Loaded additional CA certificates from SSL_CERT_FILE: %s", ssl_cert_file)
         except Exception as e:
             logger.warning("Failed to load SSL_CERT_FILE %s: %s", ssl_cert_file, e)
-
-    # Validate mTLS: require both or neither
-    if bool(client_cert) != bool(client_key):
-        raise ValueError("mTLS requires both client_cert and client_key; got only one")
 
     # Load client certificates for mTLS when provided
     if client_cert and client_key:

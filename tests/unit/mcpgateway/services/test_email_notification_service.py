@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/services/test_email_notification_service.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for auth email notification service.
 """
@@ -126,7 +127,7 @@ class TestAuthEmailNotificationService:
             mock_settings.smtp_from_email = "noreply@example.com"
             mock_settings.smtp_from_name = "ContextForge"
             mock_settings.smtp_user = "smtp-user"
-            mock_settings.smtp_password = "smtp-pass"
+            mock_settings.smtp_password = "smtp-pass"  # pragma: allowlist secret
             mock_settings.smtp_host = "smtp.example.com"
             mock_settings.smtp_port = 465
             mock_settings.smtp_timeout_seconds = 5
@@ -151,7 +152,7 @@ class TestAuthEmailNotificationService:
             mock_settings.smtp_from_email = "noreply@example.com"
             mock_settings.smtp_from_name = "ContextForge"
             mock_settings.smtp_user = "smtp-user"
-            mock_settings.smtp_password = "smtp-pass"
+            mock_settings.smtp_password = "smtp-pass"  # pragma: allowlist secret
             mock_settings.smtp_host = "smtp.example.com"
             mock_settings.smtp_port = 587
             mock_settings.smtp_timeout_seconds = 5

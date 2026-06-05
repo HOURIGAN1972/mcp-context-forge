@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/u5f6g7h8i9j0_add_provider_metadata_to_sso_providers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Add provider_metadata column to sso_providers table.
 
@@ -25,7 +26,7 @@ from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.
 revision: str = "u5f6g7h8i9j0"
-down_revision: Union[str, Sequence[str], None] = "5f3c681b05e1"
+down_revision: Union[str, Sequence[str], None] = "5f3c681b05e1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

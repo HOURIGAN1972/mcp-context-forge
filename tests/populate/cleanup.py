@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Clean up populated test data via REST API DELETE endpoints.
+"""Location: ./tests/populate/cleanup.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Clean up populated test data via REST API DELETE endpoints.
 
 Usage:
     python -m tests.populate.cleanup --confirm
@@ -39,7 +44,7 @@ DELETION_ORDER = [
 ]
 
 # Teams and users require special handling (ownership, cascading deps)
-LOADTEST_PASSWORD = "LoadTest1234!"
+LOADTEST_PASSWORD = "LoadTest1234!"  # pragma: allowlist secret
 
 
 async def cleanup_entities(
@@ -54,14 +59,15 @@ async def cleanup_entities(
 
     # Generate admin token
     try:
-        # First-Party
-        from mcpgateway.utils.create_jwt_token import _create_jwt_token
+        # Local
+        from tests.helpers.auth import make_test_jwt
 
-        admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN") or _create_jwt_token(
-            data={"sub": "admin@example.com", "username": "admin@example.com"},
+        admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN") or make_test_jwt(
+            "admin@example.com",
+            is_admin=True,
             expires_in_minutes=60,
-            user_data={"email": "admin@example.com", "full_name": "Admin", "is_admin": True},
             teams=None,
+            extra_payload={"username": "admin@example.com", "full_name": "Admin"},
         )
     except ImportError:
         admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN", "")

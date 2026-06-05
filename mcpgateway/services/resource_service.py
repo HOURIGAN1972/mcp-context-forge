@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/resource_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -60,7 +60,6 @@ from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -74,7 +73,7 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -86,6 +85,16 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
+
+# Plugin support imports (conditional)
+try:
+    # Third-Party
+    from cpex.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+
+    PLUGINS_AVAILABLE = True
+except ImportError:
+    PLUGINS_AVAILABLE = False
+
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -354,7 +363,7 @@ class ResourceService(BaseService):
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
             >>> r = SimpleNamespace(
-            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
+            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,  # pragma: allowlist secret
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2],
             ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
             ...                      "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
@@ -1854,7 +1863,7 @@ class ResourceService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ssl_context if ssl_context else get_default_verify(),  # pylint: disable=cell-var-from-loop
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=timeout if timeout else get_http_timeout(),
                             auth=auth,
@@ -1957,7 +1966,7 @@ class ResourceService(BaseService):
                         # Inject identity propagation headers if user_identity is a UserContext
                         if user_identity:
                             # First-Party
-                            from mcpgateway.plugins.framework.models import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
+                            from mcpgateway.transports.context import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
 
                             if isinstance(user_identity, UserCtx):
                                 headers.update(build_identity_headers(user_identity))
@@ -3539,7 +3548,7 @@ class ResourceService(BaseService):
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
+            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))  # pragma: allowlist secret
             'resource_read'
         """
         with create_span("resource.get", {"resource.id": resource_id, "include_inactive": include_inactive}):
@@ -3572,7 +3581,7 @@ class ResourceService(BaseService):
                     user_email=user_email,
                     custom_fields={
                         "visibility": getattr(resource, "visibility", None),
-                        "admin_bypass": user_email is None and token_teams is None,
+                        "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                     },
                 )
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -3717,16 +3726,19 @@ class ResourceService(BaseService):
         """Subscribe to Resource events via the EventService.
 
         Args:
-            user_email: Requesting user email. ``None`` with ``token_teams=None`` indicates unrestricted admin context.
+            user_email: Requesting user email. After PR #4341, admin bypass
+                is ``(email, None)`` not ``(None, None)`` — the email is
+                kept for owner matching. The ``is_admin_bypass`` parameter
+                is the authoritative bypass flag.
             token_teams: Token team scope context:
-                - ``None`` = unrestricted admin
+                - ``None`` = unrestricted (checked via ``is_admin_bypass``)
                 - ``[]`` = public-only
                 - ``[...]`` = team-scoped access
             is_admin_bypass: Pre-resolved DB-admin bypass flag.  Callers
                 that can consult a request-scoped session (e.g. the SSE
                 HTTP handler) should compute this once via
-                :func:`mcpgateway.utils.admin_check.is_user_admin` and
-                pass it in; this avoids a throw-away session spawn per
+                :func:`mcpgateway.utils.admin_check.is_admin_bypass_granted`
+                and pass it in; this avoids a throw-away session spawn per
                 subscription and keeps the bypass check near the auth
                 boundary.
 
@@ -3738,12 +3750,13 @@ class ResourceService(BaseService):
             for the stream lifetime.  A user demoted mid-subscription
             keeps visibility until reconnect — this is an intentional
             trade-off between auth freshness and SSE simplicity.  Callers
-            MUST only pass ``is_admin_bypass=True`` when
-            ``token_teams is None`` (auth-layer bypass); see
-            :mod:`mcpgateway.utils.admin_check`.
+            MUST only pass ``is_admin_bypass=True`` when the caller has
+            been validated via ``is_admin_bypass_granted()``.
         """
         async for event in self._event_service.subscribe_events():
-            if (user_email is None and token_teams is None) or is_admin_bypass:
+            # Rely on is_admin_bypass for admin bypass (PR #4341 / issue #4694)
+            # Admin bypass is now (email, None) not (None, None) for owner matching
+            if is_admin_bypass:
                 yield event
                 continue
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -471,7 +471,7 @@ class ReverseProxyClient:
 
             result = data.get("result")
             LOGGER.info(f"response result {result}  type result {type(result)}")
-            request_id = data["id"]
+            request_id = data.get("id")
 
             if request_id and request_id in self._pending_requests:
                 LOGGER.info("request_id found in _pending_responses")

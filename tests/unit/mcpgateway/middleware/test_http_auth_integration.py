@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_http_auth_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge
 
@@ -22,7 +22,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpHeaderPayload,
     HttpHookType,
     PluginResult,
@@ -123,7 +123,7 @@ class TestHttpAuthMiddlewareIntegration:
             "/protocol/initialize",
             json={},
             headers={
-                "X-API-Key": "test-api-key-123",
+                "X-API-Key": "test-api-key-123",  # pragma: allowlist secret
                 "Content-Type": "application/json",
             },
         )
@@ -156,7 +156,7 @@ class TestHttpAuthMiddlewareIntegration:
             "/protocol/initialize",
             json={},
             headers={
-                "X-API-Key": "blocked-key-456",
+                "X-API-Key": "blocked-key-456",  # pragma: allowlist secret
                 "Content-Type": "application/json",
             },
         )
@@ -177,7 +177,7 @@ class TestHttpAuthMiddlewareIntegration:
 
         response = client.get(
             "/health",
-            headers={"X-API-Key": "test-api-key-123"},
+            headers={"X-API-Key": "test-api-key-123"},  # pragma: allowlist secret
         )
 
         # Check auth status header
@@ -226,7 +226,7 @@ class TestHttpAuthMiddlewareWithoutPlugins:
             # Request without authentication should fail (use POST for initialize)
             response = client.post("/protocol/initialize", json={})
 
-            # Should get 401 because no credentials provided
+            # Should get 401 because no credentials provided (authentication middleware returns 401)
             assert response.status_code == 401
 
     def test_health_endpoint_accessible_without_auth(self, app):
@@ -247,7 +247,7 @@ class TestPluginHookBehavior:
     async def test_header_transformation_preserves_original(self):
         """Test that header transformation preserves the original header."""
         # This would test the plugin logic directly without the full app
-        headers = {"x-api-key": "test-key"}
+        headers = {"x-api-key": "test-key"}  # pragma: allowlist secret
 
         # After transformation
         headers["authorization"] = f"Bearer {headers['x-api-key']}"
@@ -259,7 +259,7 @@ class TestPluginHookBehavior:
     async def test_multiple_header_modifications_merge(self):
         """Test that multiple plugins can modify headers and they merge correctly."""
         # Original headers
-        original = {"x-api-key": "key123", "user-agent": "test-client"}
+        original = {"x-api-key": "key123", "user-agent": "test-client"}  # pragma: allowlist secret
 
         # Plugin 1 adds authorization
         modified1 = {**original, "authorization": "Bearer key123"}
@@ -291,8 +291,7 @@ class TestCustomAuthExamplePlugin:
     @pytest.fixture
     def plugin_config(self):
         """Plugin configuration for testing."""
-        # First-Party
-        from mcpgateway.plugins.framework import PluginConfig
+        from cpex.framework import PluginConfig
 
         return PluginConfig(
             name="custom_auth_example",
@@ -329,8 +328,7 @@ class TestCustomAuthExamplePlugin:
     @pytest.fixture
     def strict_mode_plugin(self):
         """Create plugin instance with strict_mode enabled."""
-        # First-Party
-        from mcpgateway.plugins.framework import PluginConfig
+        from cpex.framework import PluginConfig
         from plugins.examples.custom_auth_example.custom_auth import CustomAuthPlugin
 
         config = PluginConfig(
@@ -355,13 +353,12 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_transforms_x_api_key(self, plugin):
         """Test that X-API-Key header is transformed to Authorization: Bearer."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -378,13 +375,12 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_does_not_override_existing_authorization(self, plugin):
         """Test that existing Authorization header is not overridden by X-API-Key."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -398,8 +394,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_no_transformation_without_x_api_key(self, plugin):
         """Test that no transformation occurs without X-API-Key header."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
@@ -419,11 +414,10 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_valid_api_key(self, plugin):
         """Test successful user authentication with valid API key."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},
+            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -443,11 +437,10 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_admin_api_key(self, plugin):
         """Test admin user authentication with admin API key."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "admin-key-67890"},
+            credentials={"scheme": "Bearer", "credentials": "admin-key-67890"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -465,11 +458,10 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_blocked_api_key(self, plugin):
         """Test that blocked API key raises PluginViolationError."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "blocked-key-99999"},
+            credentials={"scheme": "Bearer", "credentials": "blocked-key-99999"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -485,11 +477,10 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_invalid_api_key_fallback(self, plugin):
         """Test that invalid API key falls back to standard authentication (non-strict mode)."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},
+            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -505,11 +496,10 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_invalid_api_key_strict_mode(self, strict_mode_plugin):
         """Test that invalid API key raises error in strict mode."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},
+            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -526,8 +516,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_no_credentials_fallback(self, plugin):
         """Test that missing credentials falls back to standard authentication."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
             credentials=None,
@@ -545,8 +534,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_correlation_id(self, plugin):
         """Test that correlation ID is propagated from request to response."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
             path="/protocol/initialize",
@@ -567,8 +555,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_status_success(self, plugin):
         """Test that x-auth-status header is set to 'authenticated' on successful requests."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
             path="/protocol/initialize",
@@ -589,8 +576,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_status_failure(self, plugin):
         """Test that x-auth-status header is set to 'failed' on failed requests."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
             path="/protocol/initialize",
@@ -611,8 +597,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_method_from_context(self, plugin):
         """Test that auth method from local context is added to response headers."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
+        from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
             path="/protocol/initialize",
@@ -641,8 +626,7 @@ class TestCustomAuthExamplePlugin:
         2. HTTP_AUTH_RESOLVE_USER: Validate API key and return user
         3. HTTP_POST_REQUEST: Add response headers
         """
-        # First-Party
-        from mcpgateway.plugins.framework import (
+        from cpex.framework import (
             GlobalContext,
             HttpAuthResolveUserPayload,
             HttpHeaderPayload,
@@ -657,7 +641,7 @@ class TestCustomAuthExamplePlugin:
         pre_payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -671,7 +655,7 @@ class TestCustomAuthExamplePlugin:
 
         # Step 2: HTTP_AUTH_RESOLVE_USER - Authenticate user
         auth_payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},
+            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},  # pragma: allowlist secret
             headers=HttpHeaderPayload(transformed_headers),
             client_host="192.168.1.100",
             client_port=54321,

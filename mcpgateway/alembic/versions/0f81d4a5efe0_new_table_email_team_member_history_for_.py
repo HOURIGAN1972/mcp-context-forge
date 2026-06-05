@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""new table email_team_member_history for audit trail of action performed on team members
+"""Location: ./mcpgateway/alembic/versions/0f81d4a5efe0_new_table_email_team_member_history_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+new table email_team_member_history for audit trail of action performed on team members
 
 Revision ID: 0f81d4a5efe0
 Revises: 14ac971cee42
 Create Date: 2025-09-15 14:53:32.682953
-
 """
 
 # Standard
@@ -17,7 +21,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "0f81d4a5efe0"
+revision: str = "0f81d4a5efe0"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "14ac971cee42"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

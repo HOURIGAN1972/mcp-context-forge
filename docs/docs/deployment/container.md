@@ -31,25 +31,29 @@ You can now access the UI at [http://localhost:4444/admin](http://localhost:4444
     The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ### Multi-architecture containers
+
 Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
 points to a manifest so that all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
 
 If the specific image is needed for one architecture on a different architecture use the appropriate arguments for your given container execution tool:
 
 With docker run:
+
 ```
 docker run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
 
 With podman run:
+
 ```
 podman run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
+
 Or
+
 ```
 podman run [... all your options...] --arch arm64 ghcr.io/ibm/mcp-context-forge:VERSION
 ```
-
 
 ## 🐳 Build the Container
 
@@ -66,6 +70,42 @@ docker build -t mcpgateway:latest -f Containerfile.lite .
 ```
 
 > The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
+
+### Build Stages
+
+All container builds include a Node.js stage that compiles Tailwind CSS from source. This removes the need for the Tailwind CDN and eliminates `unsafe-eval` from the Content Security Policy for Tailwind-related assets.
+
+| Stage | Image | Purpose |
+|-------|-------|---------|
+| `frontend-builder` | `node:lts-alpine` | Builds the Admin UI Vite bundle (JS/CSS) |
+| `node-builder` | `ubi10/nodejs-24` | Compiles `tailwind.src.css` → `tailwind.min.css` |
+| `rust-builder` (lite only) | `ubi10/ubi` | Builds optional Rust native extensions |
+| `builder` | `ubi10/ubi` | Installs Python dependencies into a venv |
+| `runtime` | `ubi10-minimal` or `scratch` | Final runtime image |
+
+The Node.js builder uses the official Red Hat UBI10 Node.js 24 image (`registry.access.redhat.com/ubi10/nodejs-24`). It is a temporary build stage and does not affect the final runtime image size.
+
+**Required files for the CSS build:**
+
+- `package.json` / `package-lock.json` — Node.js dependencies
+- `tailwind.config.js` — Tailwind configuration with content paths
+- `postcss.config.js` — PostCSS configuration
+- `mcpgateway/static/css/tailwind.src.css` — Source CSS file
+- `mcpgateway/templates/**/*.html` — Templates scanned for Tailwind classes
+- `mcpgateway/static/**/*.js` — JavaScript files scanned for classes
+
+**Local development (without Docker):**
+
+```bash
+# Install Node.js dependencies
+npm install
+
+# Build CSS once
+make build-css
+
+# Or watch for changes during development
+make watch-css
+```
 
 ---
 
@@ -85,11 +125,11 @@ This downloads and bundles:
 
 - Tailwind CSS (~404KB)
 - HTMX (bundled in main JS via npm/Vite)
+- Alpine.js CSP build (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
-- Alpine.js (~48KB)
 - Chart.js (~208KB)
 
-**Total: ~932KB of UI assets**
+**Total: ~884KB of UI assets**
 
 ### Run in Airgapped Mode
 
@@ -143,8 +183,8 @@ https://localhost:4444
 
 All environment variables can be passed via:
 
-* `docker run -e KEY=value`
-* A mounted `.env` file (`--env-file .env`)
+- `docker run -e KEY=value`
+- A mounted `.env` file (`--env-file .env`)
 
 ---
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/f8c9d3e2a1b4_add_oauth_config_to_gateways.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "f8c9d3e2a1b4"
+revision: str = "f8c9d3e2a1b4"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "34492f99a0c4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

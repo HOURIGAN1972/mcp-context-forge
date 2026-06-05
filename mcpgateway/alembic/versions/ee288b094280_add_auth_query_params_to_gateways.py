@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add auth_query_params column to gateways table.
+"""Location: ./mcpgateway/alembic/versions/ee288b094280_add_auth_query_params_to_gateways.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add auth_query_params column to gateways table.
 
 Revision ID: ee288b094280
 Revises: 43c07ed25a24
@@ -18,7 +23,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "ee288b094280"
-down_revision: Union[str, Sequence[str], None] = "43c07ed25a24"
+down_revision: Union[str, Sequence[str], None] = "43c07ed25a24"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

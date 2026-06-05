@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/tools_telemetry_exporter/test_tools_telemetry_exporter.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for ToolsTelemetryExporterPlugin.
 """
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.tools_telemetry_exporter.telemetry_exporter import ToolsTelemetryExporterPlugin
 
 
@@ -59,7 +60,7 @@ class TestToolsTelemetryExporterPlugin:
                 {
                     "Authorization": "Bearer secret-token",
                     "Cookie": "jwt_token=abc123; theme=dark",
-                    "X-API-Key": "top-secret",
+                    "X-API-Key": "top-secret",  # pragma: allowlist secret
                     "X-Vault-Tokens": "vault-token",
                     "Content-Type": "application/json",
                     "X-Request-Id": "req-123",
@@ -140,7 +141,7 @@ class TestToolsTelemetryExporterPlugin:
         plugin = _create_plugin({"export_full_payload": True, "max_payload_bytes_size": 20})
         payload = ToolPostInvokePayload(
             name="test_tool",
-            result={"content": [{"type": "text", "text": "123456789012345678901234567890"}], "isError": False},
+            result={"content": [{"type": "text", "text": "123456789012345678901234567890"}], "isError": False},  # pragma: allowlist secret
         )
 
         await plugin.tool_post_invoke(payload, _create_context())

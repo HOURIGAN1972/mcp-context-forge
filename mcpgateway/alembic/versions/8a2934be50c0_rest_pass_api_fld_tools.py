@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""rest_pass_api_fld_tools
+"""Location: ./mcpgateway/alembic/versions/8a2934be50c0_rest_pass_api_fld_tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+rest_pass_api_fld_tools
 
 Revision ID: 8a2934be50c0
 Revises: 9aaa90ad26d9
 Create Date: 2025-10-17 12:19:39.576193
-
 """
 
 # Standard
@@ -15,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "8a2934be50c0"
+revision: str = "8a2934be50c0"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "9aaa90ad26d9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add app_user_email column to oauth_states.
+"""Location: ./mcpgateway/alembic/versions/a4f1c7d8e9b0_add_app_user_email_to_oauth_states.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add app_user_email column to oauth_states.
 
 Revision ID: a4f1c7d8e9b0
 Revises: 9f5d93ced2b3
@@ -14,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "a4f1c7d8e9b0"
-down_revision: Union[str, Sequence[str], None] = "9f5d93ced2b3"
+revision: str = "a4f1c7d8e9b0"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "9f5d93ced2b3"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for team collaboration E2E tests."""
+"""Location: ./tests/playwright/teams/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for team collaboration E2E tests.
+"""
 
 # Future
 from __future__ import annotations
@@ -17,31 +23,27 @@ import uuid
 from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
+# Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
     """Create a JWT token for testing."""
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams)
 
 
-def create_test_user(admin_api: APIRequestContext, email: str) -> bool:
-    """Create a test user in the database. Returns True on success or already-exists."""
+def create_test_user(admin_api: APIRequestContext, email: str) -> None:
+    """Create a test user in the database. Raises on failure."""
     resp = admin_api.post(
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": f"Test User {email.split('@')[0]}"},
     )
-    return resp.status in (200, 201, 409)
+    assert resp.status in (200, 201, 409), f"Failed to create user {email}: {resp.status} {resp.text()}"
 
 
 def delete_test_user(admin_api: APIRequestContext, email: str) -> None:
@@ -61,10 +63,7 @@ def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team
 
     # Accept as the invited user
     user_jwt = _make_jwt(email, is_admin=False)
-    user_ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
-    )
+    user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
     accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
     user_ctx.dispose()
     assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status}"
@@ -80,10 +79,7 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
     back to a locally-signed JWT only when ``MCP_AUTH`` is unset.
     """
     token = os.getenv("MCP_AUTH", "") or _make_jwt("admin@example.com", is_admin=True)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_a2a_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -48,6 +48,28 @@ def mock_logging_services():
         yield {"structured_logger": mock_a2a_logger, "tool_logger": mock_tool_logger, "tool_audit": mock_tool_audit}
 
 
+@pytest.fixture(autouse=True)
+def bypass_uaid_security_for_tests(monkeypatch):
+    """Bypass UAID security validation for non-security tests.
+
+    This fixture uses autouse=True to globally disable UAID security checks
+    for all tests in this file. This is necessary because most tests focus on
+    A2A agent functionality rather than security validation, and the fail-closed
+    default (empty UAID_ALLOWED_DOMAINS) would cause all tests to fail.
+
+    Security-focused tests (e.g., TestCrossGatewayRoutingCoverage) override
+    this fixture to re-enable security validation and test allowlist behavior.
+
+    Uses monkeypatch instead of patch() to allow individual tests to override
+    specific settings without conflicts.
+    """
+    # Use monkeypatch to allow individual test overrides
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_max_federation_hops", 5)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_default_timeout", 30)
+
+
 class TestA2AAgentService:
     """Test suite for A2A Agent Service."""
 
@@ -74,7 +96,7 @@ class TestA2AAgentService:
             endpoint_url="https://api.example.com/agent",
             agent_type="custom",
             auth_username="user",
-            auth_password="dummy_pass",
+            auth_password="dummy_pass",  # pragma: allowlist secret
             protocol_version="1.0",
             capabilities={"chat": True, "tools": False},
             config={"max_tokens": 1000},
@@ -192,8 +214,8 @@ class TestA2AAgentService:
             oauth_config={
                 "grant_type": "password",
                 "client_id": "cid",
-                "client_secret": "super-secret",
-                "password": "pw",
+                "client_secret": "super-secret",  # pragma: allowlist secret
+                "password": "pw",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
                 "username": "svc-user",
             },
@@ -388,8 +410,8 @@ class TestA2AAgentService:
                     oauth_config={
                         "grant_type": "password",
                         "client_id": "cid",
-                        "client_secret": "new-secret",
-                        "password": "new-pw",
+                        "client_secret": "new-secret",  # pragma: allowlist secret
+                        "password": "new-pw",  # pragma: allowlist secret
                         "token_url": "https://auth.example.com/token",
                     }
                 )
@@ -425,7 +447,7 @@ class TestA2AAgentService:
         """Masked auth_headers placeholders preserve existing encrypted header values (issue #3637)."""
         sample_db_agent.version = 1
         sample_db_agent.auth_type = "authheaders"
-        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})  # pragma: allowlist secret
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             mock_db.commit = MagicMock()
@@ -452,7 +474,7 @@ class TestA2AAgentService:
         """When some headers are masked and one is changed, only the changed header is updated."""
         sample_db_agent.version = 1
         sample_db_agent.auth_type = "authheaders"
-        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})  # pragma: allowlist secret
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             mock_db.commit = MagicMock()
@@ -674,7 +696,7 @@ class TestA2AAgentService:
         # Create realistic encrypted auth_value using encode_auth
         basic_auth_headers = {"Authorization": "Basic dXNlcm5hbWU6cGFzc3dvcmQ="}  # username:password in base64
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(basic_auth_headers)
 
         # Mock HTTP client
@@ -740,7 +762,7 @@ class TestA2AAgentService:
         # Create realistic encrypted auth_value using encode_auth
         bearer_auth_headers = {"Authorization": "Bearer my-secret-jwt-token-12345"}
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(bearer_auth_headers)
 
         # Mock HTTP client
@@ -804,9 +826,9 @@ class TestA2AAgentService:
         Regression test for issue #2002: A2A agents with X-API-Key header fail with HTTP 401.
         """
         # Create realistic encrypted auth_value with custom headers
-        custom_auth_headers = {"X-API-Key": "test-key-for-unit-test", "X-Custom-Header": "custom-value"}
+        custom_auth_headers = {"X-API-Key": "test-key-for-unit-test", "X-Custom-Header": "custom-value"}  # pragma: allowlist secret
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(custom_auth_headers)
 
         # Mock HTTP client
@@ -1033,7 +1055,7 @@ class TestA2AAgentService:
         assert await service._check_agent_access(mock_db, agent, user_email=None, token_teams=None) is True
         # No user context (user_email=None) denies access to non-public agents
         assert await service._check_agent_access(mock_db, agent, user_email=None, token_teams=["team-1"]) is False
-        # Admin bypass: token_teams=None grants access regardless of user_email
+        # Admin with token_teams=None gets access to team agents
         assert await service._check_agent_access(mock_db, agent, user_email="admin@example.com", token_teams=None) is True
         # With user context, team membership grants access
         assert await service._check_agent_access(mock_db, agent, user_email="someone@example.com", token_teams=["team-1"]) is True
@@ -1610,7 +1632,7 @@ class TestRegisterAgentEdgeCases:
                 await service.register_agent(mock_db, agent_data)
 
         added_agent = mock_db.add.call_args[0][0]
-        assert added_agent.auth_query_params == {"api_key": "encrypted"}
+        assert added_agent.auth_query_params == {"api_key": "encrypted"}  # pragma: allowlist secret
 
     async def test_register_query_param_missing_key_or_value_skips_encryption(self, service, mock_db, monkeypatch):
         """Missing key/value skips auth_query_params encryption and continues."""
@@ -2379,7 +2401,7 @@ class TestInvokeAgentEdgeCases:
             endpoint_url="https://x.com/api",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "encrypted_blob"},
+            auth_query_params={"api_key": "encrypted_blob"},  # pragma: allowlist secret
             visibility="public",
             team_id=None,
             owner_email=None,
@@ -2388,7 +2410,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -2420,7 +2442,7 @@ class TestInvokeAgentEdgeCases:
             endpoint_url="https://x.com/api",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "encrypted_blob"},
+            auth_query_params={"api_key": "encrypted_blob"},  # pragma: allowlist secret
             visibility="public",
             team_id=None,
             owner_email=None,
@@ -2429,7 +2451,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -3289,7 +3311,7 @@ class TestUpdateAgentQueryParamAuth:
 
     async def test_switching_away_from_queryparam_clears_params(self, service, mock_db, monkeypatch):
         """Switching from query_param to bearer clears auth_query_params (lines 1051-1053)."""
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})  # pragma: allowlist secret
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
@@ -3375,7 +3397,7 @@ class TestUpdateAgentQueryParamAuth:
         """Masked placeholder value with same key preserves existing encrypted value (line 1112)."""
         agent = self._make_agent(
             auth_type="query_param",
-            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},  # pragma: allowlist secret
         )
         original_params = dict(agent.auth_query_params)
 
@@ -3450,7 +3472,7 @@ class TestUpdateAgentQueryParamAuth:
         """Key provided without value results in raw_value=None, no update (lines 1105-1106)."""
         agent = self._make_agent(
             auth_type="query_param",
-            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},  # pragma: allowlist secret
         )
         original_params = dict(agent.auth_query_params)
 
@@ -3482,7 +3504,7 @@ class TestUpdateAgentQueryParamAuth:
 
     async def test_queryparam_string_value(self, service, mock_db, monkeypatch):
         """Plain string value (no get_secret_value) is used directly (lines 1103-1104)."""
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "old"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "old"})  # pragma: allowlist secret
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
@@ -3864,6 +3886,22 @@ class TestCancelTask:
 
         result = await service.cancel_task(mock_db, "task-1", user_email="user@test.com", token_teams=[])
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_hidden_when_agent_deleted(self, service, mock_db):
+        """If the owning agent was deleted, cancel_task returns None (fail-closed per PR #4341)."""
+        task = self._make_task("submitted")
+        mock_task_q = self._mock_task_query(task)
+        mock_agent_q = MagicMock()
+        mock_agent_q.filter.return_value = mock_agent_q
+        mock_agent_q.first.return_value = None
+        mock_db.query.side_effect = [mock_task_q, mock_agent_q]
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = await service.cancel_task(mock_db, "task-1", user_email="user@test.com", token_teams=["team-a"])
+        assert result is None
+        mock_db.commit.assert_not_called()
 
 
 class TestPushConfigCRUD:
@@ -4358,11 +4396,11 @@ class TestPushConfigCRUD:
         assert rows[0]["auth_token"] == "live-secret"  # pragma: allowlist secret
         assert rows[0]["webhook_url"] == "https://example.com/webhook"
 
-    def test_list_push_configs_for_dispatch_admin_bypass_skips_visibility_filter(self, service, mock_db):
-        """Admin (user_email=None, token_teams=None) must not scope by ``_visible_agent_ids``.
+    def test_list_push_configs_for_dispatch_admin_bypass_applies_visibility_filter(self, service, mock_db):
+        """Admin bypass now scopes dispatch rows to public + team visibility.
 
-        An admin listing for dispatch should see every row without paying
-        the cost of a preliminary agent-id scan.
+        The admin path still consults ``_visible_agent_ids`` and applies the
+        resulting visibility filter instead of returning every row unscoped.
         """
         cfg = MagicMock()
         cfg.id = "cfg-1"
@@ -4733,10 +4771,19 @@ class TestVisibleAgentIds:
     def mock_db(self):
         return MagicMock(spec=Session)
 
-    def test_admin_bypass_returns_none(self, service, mock_db):
-        """Admin context (user_email=None, token_teams=None) returns None for unrestricted access."""
+    def test_admin_bypass_returns_filtered_list(self, service, mock_db):
+        """Admin context (user_email=None, token_teams=None) returns public+team agents only (PR #4341)."""
+        # Mock the query to return public and team agents (excluding private)
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("id-pub",), ("id-team",)]
+
         result = service._visible_agent_ids(mock_db, user_email=None, token_teams=None)
-        assert result is None
+        # Post-#4341: admin bypass returns a filtered list (not None)
+        assert result is not None
+        assert isinstance(result, list)
+        assert result == ["id-pub", "id-team"]
 
     def test_public_only_user_filters_to_public(self, service, mock_db):
         """Empty token_teams means public-only — query runs with public visibility filter."""
@@ -4771,7 +4818,7 @@ class TestVisibleAgentIds:
         # Not admin (token_teams is not None), no user_email → is_public_only is True
         assert result == []
 
-    def test_admin_with_email_returns_none(self, service, mock_db):
+    def test_admin_with_email_returns_filtered_list(self, service, mock_db):
         """Admin with email context (token_teams=None, user_email set) still gets admin bypass only when both are None."""
         mock_query = MagicMock()
         mock_db.query.return_value = mock_query
@@ -4943,13 +4990,13 @@ class TestGetTask:
         assert result["id"] == "t1"
 
     @pytest.mark.asyncio
-    async def test_task_visible_when_agent_deleted(self, service, mock_db):
-        """If the owning agent was deleted, the task is still returned (agent=None passes the check)."""
+    async def test_task_hidden_when_agent_deleted(self, service, mock_db):
+        """If the owning agent was deleted, the task is hidden (fail-closed per PR #4341)."""
         task = self._wire_task(a2a_agent_id="deleted-agent")
         self._setup_task_query(mock_db, task, agent=None)
 
         result = await service.get_task(mock_db, "t1", user_email="user@test.com", token_teams=["team-a"])
-        assert result["id"] == "t1"
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_public_only_user_sees_public_agent_task(self, service, mock_db):
@@ -4988,8 +5035,8 @@ class TestListTasks:
     def mock_db(self):
         return MagicMock(spec=Session)
 
-    def test_admin_sees_all_tasks(self, service, mock_db):
-        """Admin bypass does not filter by agent IDs."""
+    def test_admin_bypass_applies_visibility_filter(self, service, mock_db):
+        """Admin bypass now applies the visible-agent filter to task listing."""
         mock_query = MagicMock()
         mock_db.query.return_value = mock_query
         mock_query.filter.return_value = mock_query
@@ -4998,14 +5045,12 @@ class TestListTasks:
         mock_query.offset.return_value = mock_query
         mock_query.all.return_value = []
 
-        with patch.object(service, "_visible_agent_ids", return_value=None):
+        with patch.object(service, "_visible_agent_ids", return_value=["agent-1"]):
             result = service.list_tasks(mock_db, user_email=None, token_teams=None)
 
         assert result == []
-        # Verify .in_() was NOT called (no agent ID filter applied)
-        for call in mock_query.filter.call_args_list:
-            for arg in call.args:
-                assert "in_" not in str(arg), "Admin should not have .in_() filter"
+        # Verify .in_() was called (agent ID filter applied)
+        assert any("IN" in str(arg) for call in mock_query.filter.call_args_list for arg in call.args), "Admin should have .in_() filter"
 
     def test_team_scoped_user_gets_filtered_tasks(self, service, mock_db):
         """Team user only sees tasks for visible agents."""
@@ -5039,7 +5084,7 @@ class TestListTasks:
         mock_query.offset.return_value = mock_query
         mock_query.all.return_value = []
 
-        with patch.object(service, "_visible_agent_ids", return_value=None):
+        with patch.object(service, "_visible_agent_ids", return_value=["agent-1"]):
             service.list_tasks(mock_db, state="completed", user_email=None, token_teams=None)
 
         # filter called at least once for state
@@ -5179,9 +5224,59 @@ class TestUAIDGenerationCoverage:
         assert captured_agent is not None
         assert captured_agent.id is None  # Falls back to UUID generation
 
+    async def test_update_agent_with_uaid_validation(self, service, mock_db, sample_db_agent, monkeypatch, caplog):
+        """Test update_agent validates endpoint domain when regenerating UAID.
+
+        Security: Domain validation failures must propagate (not be silently swallowed)
+        to prevent registration of agents pointing to unauthorized domains.
+        """
+        # Standard
+        from unittest.mock import patch
+
+        # Set version attribute
+        sample_db_agent.version = 1
+
+        # Configure UAID allowlist
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["allowed.example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        # Mock get_for_update to return the agent
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+
+            # Mock the convert_agent_to_read method
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                # Try to update agent with UAID generation for a blocked domain
+                agent_update = A2AAgentUpdate(
+                    endpoint_url="https://blocked.example.com/agent",
+                    generate_uaid=True,
+                    uaid_registry="context-forge",
+                )
+
+                # Security: validation failure must raise, not silently continue
+                with pytest.raises(A2AAgentError, match="not in UAID_ALLOWED_DOMAINS"):
+                    await service.update_agent(
+                        mock_db,
+                        agent_id=sample_db_agent.id,
+                        agent_data=agent_update,
+                        modified_by="test-user",
+                    )
+
 
 class TestCrossGatewayRoutingCoverage:
     """Test cross-gateway routing for UAID agents."""
+
+    @pytest.fixture(autouse=True)
+    def override_uaid_settings_for_allowlist_tests(self, monkeypatch):
+        """Override the global mock_uaid_settings to test allowlist validation.
+
+        These tests specifically test allowlist behavior, so they need
+        uaid_allow_all_domains=False (not the bypass=True from the global fixture).
+        """
+        # Don't bypass validation for these tests
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", False)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_max_federation_hops", 5)
 
     @pytest.fixture
     def service(self):
@@ -5214,7 +5309,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         # Call invoke_agent with UAID (will trigger cross-gateway routing)
         result = await service.invoke_agent(
@@ -5225,16 +5320,20 @@ class TestCrossGatewayRoutingCoverage:
             agent_id=uaid,
         )
 
-        # Verify cross-gateway routing was called. The UAID is URL-
-        # encoded in the path as a defence-in-depth measure against
-        # path-segment smuggling.
-        # Standard
-        from urllib.parse import quote  # pylint: disable=import-outside-toplevel
-
+        # Verify cross-gateway routing was called. The UAID is passed in
+        # the request body instead of the URL path to support UAIDs containing
+        # forward slashes (which break FastAPI path parameter matching).
         assert result == {"result": "cross-gateway success"}
         assert mock_client.post.called
         call_args = mock_client.post.call_args
-        assert f"https://agent.example.com/a2a/{quote(uaid, safe='')}/invoke" in str(call_args)
+
+        # Check URL is the body-based invoke endpoint (not path-based)
+        assert "https://agent.example.com/a2a/invoke" in str(call_args)
+
+        # Check UAID is in request body as agent_id
+        sent_json = call_args.kwargs.get("json") or (call_args.args[1] if len(call_args.args) > 1 else {})
+        assert sent_json.get("agent_id") == uaid, f"UAID not in body: {sent_json}"
+
         # Hop counter must be stamped on outbound requests so the
         # receiving gateway can enforce `uaid_max_federation_hops`
         # and break recursion.  First outbound from a direct client
@@ -5306,6 +5405,9 @@ class TestCrossGatewayRoutingCoverage:
         agent.owner_email = None
         agent.team_id = None
         agent.tags = []
+        # UAID fields - set to None to skip UAID validation
+        agent.uaid = None
+        agent.uaid_native_id = None
 
         mock_db = MagicMock(spec=Session)
         result = MagicMock()
@@ -5364,6 +5466,9 @@ class TestCrossGatewayRoutingCoverage:
         agent.owner_email = None
         agent.team_id = None
         agent.tags = []
+        # UAID fields - set to None to skip UAID validation
+        agent.uaid = None
+        agent.uaid_native_id = None
 
         mock_db = MagicMock(spec=Session)
         result = MagicMock()
@@ -5408,7 +5513,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         max_hops = settings.uaid_max_federation_hops
 
@@ -5459,7 +5564,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5484,7 +5589,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5512,7 +5617,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*HTTP 500"):
             await service._invoke_remote_agent(
@@ -5525,7 +5630,7 @@ class TestCrossGatewayRoutingCoverage:
         """Test _invoke_remote_agent domain allowlist enforcement."""
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=blocked.example.com"
 
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["allowed.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["allowed.com"])
 
         with pytest.raises(A2AAgentError, match="not allowed.*UAID_ALLOWED_DOMAINS"):
             await service._invoke_remote_agent(
@@ -5561,7 +5666,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         with pytest.raises(A2AAgentError, match="Cross-gateway routing failed.*Network error"):
             await service._invoke_remote_agent(
@@ -5616,7 +5721,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         # Capture structured_logger.log calls so we can assert the
         # decode path fires the distinct `CrossGatewayDecodeError` event
@@ -5685,7 +5790,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5718,7 +5823,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5736,7 +5841,7 @@ class TestCrossGatewayRoutingCoverage:
         # Attack: Try to bypass allowlist by using domain that ends with allowed domain
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=evilallowed.com"
 
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["allowed.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["allowed.com"])
 
         with pytest.raises(A2AAgentError, match="not allowed.*not in UAID_ALLOWED_DOMAINS"):
             await service._invoke_remote_agent(
@@ -5759,7 +5864,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5783,7 +5888,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5845,34 +5950,20 @@ class TestCrossGatewayRoutingCoverage:
             )
 
     async def test_invoke_remote_agent_ssrf_internal_ip_empty_allowlist(self, service, monkeypatch):
-        """Test internal IP routing when allowlist is empty (unsafe default)."""
-        # When UAID_ALLOWED_DOMAINS is empty, internal IPs are technically allowed
-        # This documents the unsafe default behavior - operators must configure allowlist
+        """Test internal IP routing is blocked when allowlist is empty (fail-closed)."""
+        # When UAID_ALLOWED_DOMAINS is empty, all cross-gateway routing is blocked
+        # This is fail-closed behavior - operators must explicitly configure allowlist
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=127.0.0.1"
 
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": "allowed"}
-        mock_client.post = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", [])  # Empty allowlist
 
-        async def mock_get_http_client():
-            return mock_client
-
-        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])  # Empty allowlist
-
-        # With empty allowlist, the call succeeds (unsafe behavior)
-        result = await service._invoke_remote_agent(
-            uaid=uaid,
-            parameters={"test": "data"},
-            interaction_type="request",
-        )
-
-        assert result == {"result": "allowed"}
-        # Verify the internal IP was used in the URL
-        call_args = mock_client.post.call_args
-        assert "127.0.0.1" in call_args[0][0]
+        # With empty allowlist, the call is blocked (fail-closed behavior)
+        with pytest.raises(A2AAgentError, match="UAID_ALLOWED_DOMAINS is empty"):
+            await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+            )
 
     async def test_invoke_remote_agent_ssrf_internal_ip_blocked_by_allowlist(self, service):
         """Test internal IP routing is blocked when allowlist is configured (safe behavior)."""
@@ -5913,7 +6004,7 @@ class TestCrossGatewayRoutingCoverage:
             return mock_client
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
         result = await service._invoke_remote_agent(
             uaid=uaid,
@@ -5964,7 +6055,7 @@ async def test_invoke_agent_cross_gateway_routing_http_error(module_service, mod
     monkeypatch.setattr("mcpgateway.utils.uaid.extract_routing_info", mock_extract_routing)
 
     # Allow all domains (empty list means no restrictions)
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
     # Mock HTTP client to return 500 error.  The service now reads
     # `.text` for the (redacted, operator-only) error log body, so the
@@ -5999,6 +6090,8 @@ async def test_invoke_agent_uaid_disallowed_domain(module_service, module_mock_d
     from mcpgateway.config import settings
     from mcpgateway.services.a2a_service import A2AAgentError
 
+    # Override the global mock to test allowlist validation
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", False)
     monkeypatch.setattr(settings, "uaid_allowed_domains", ["trusted.com"])
 
     def mock_extract_routing(*args, **kwargs):
@@ -6088,7 +6181,7 @@ async def test_invoke_remote_agent_unsupported_protocol(module_service, monkeypa
     uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=grpc;nativeId=grpc.example.com"
 
     # Mock settings
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
 
     # Should raise A2AAgentError (ValueError is caught and re-raised)
     with pytest.raises(A2AAgentError, match="Invalid UAID or endpoint not allowed"):
@@ -6115,7 +6208,7 @@ async def test_invoke_remote_agent_no_correlation_id(module_service, monkeypatch
         return mock_client
 
     monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
-    monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", [])
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
     # Mock get_correlation_id to return None
     monkeypatch.setattr("mcpgateway.services.a2a_service.get_correlation_id", lambda: None)
 
@@ -6130,3 +6223,208 @@ async def test_invoke_remote_agent_no_correlation_id(module_service, monkeypatch
     call_args = mock_client.post.call_args
     headers = call_args.kwargs.get("headers", {})
     assert "X-Correlation-ID" not in headers
+
+
+class TestListAgentsForUserTypeValidation:
+    """Test suite for list_agents_for_user email type validation (issue #4670)."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2A agent service instance."""
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        db = MagicMock(spec=Session)
+        # Mock the execute chain for query results
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        return db
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_string_email(self, service, mock_db):
+        """Test that string email is handled correctly (legacy path)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info="user@example.com",
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with the string email
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_dict_valid_email(self, service, mock_db):
+        """Test that dict with valid string email is handled correctly."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": "admin@example.com",
+                "full_name": "Admin User",
+                "is_admin": True
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should extract email string and call get_user_teams
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("admin@example.com")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_dict_email_value(self, service, mock_db, caplog):
+        """Test that dict with nested dict email triggers warning and uses empty string (issue #4670)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            # Simulate the bug: email key contains a dict instead of string
+            user_dict = {
+                "email": {"nested": "dict", "value": "admin@example.com"},
+                "full_name": "Admin User",
+                "is_admin": True
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type dict" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string (public-only access)
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_list_email_value(self, service, mock_db, caplog):
+        """Test that dict with list email triggers warning and uses empty string."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            # Email key contains a list instead of string
+            user_dict = {
+                "email": ["admin@example.com", "backup@example.com"],
+                "full_name": "Admin User"
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type list" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_none_email_value(self, service, mock_db):
+        """Test that dict with None email uses empty string (no warning needed)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": None,
+                "full_name": "Anonymous User"
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with empty string (None is not a string)
+            # Note: None.get() would fail, but user_dict.get("email") returns None,
+            # which is then checked by isinstance(email_value, str) and fails
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_missing_email_key(self, service, mock_db):
+        """Test that dict without email key uses empty string."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "full_name": "User Without Email",
+                "is_admin": False
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with empty string (default from .get())
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_integer_email_value(self, service, mock_db, caplog):
+        """Test that dict with integer email triggers warning."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": 12345,
+                "full_name": "User With Integer Email"
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type int" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []

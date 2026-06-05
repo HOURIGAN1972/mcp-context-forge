@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -67,12 +67,16 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
+import time
 from typing import Any, Dict, Generator, List, Never, Optional
+from urllib.parse import urlparse
 import uuid
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
+import redis
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -80,8 +84,10 @@ from starlette.requests import Request
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError, UserContext
+from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.redis_client import _build_ssl_kwargs, build_reatelimiter_ssl_kwargs
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
     set_trace_auth_method,
@@ -90,15 +96,35 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    security,
+    verify_jwt_token_cached,
+)
 
-# Security scheme
-security = HTTPBearer(auto_error=False)
+__all__ = [
+    "ConfigurableHTTPBearer",
+    "TokenValidationError",
+    "security",
+    "get_current_user",
+    "validate_token_user",
+    "get_user_team_roles",
+    "normalize_token_teams",
+    "resolve_session_teams",
+]
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _SYNC_REDIS_LOCK = threading.Lock()
 _SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+# Rate limiter Redis client
+_RATELIMITER_REDIS_CLIENT = None  # pylint: disable=invalid-name
+_RATELIMITER_REDIS_LOCK = threading.Lock()
+_RATELIMITER_REDIS_FAILURE_TIME: Optional[float] = None
 
 # Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
 _LAST_USED_CACHE: dict = {}
@@ -106,7 +132,7 @@ _LAST_USED_CACHE_LOCK = threading.Lock()
 
 
 def _log_auth_event(
-    logger: logging.Logger,
+    logger_handle: logging.Logger,
     message: str,
     level: int = logging.INFO,
     user_id: Optional[str] = None,
@@ -122,7 +148,7 @@ def _log_auth_event(
     correlation ID context, enabling end-to-end tracing of authentication flows.
 
     Args:
-        logger: Logger instance to use
+        logger_handle: Logger instance to use
         message: Log message
         level: Log level (default: INFO)
         user_id: User identifier
@@ -153,7 +179,7 @@ def _log_auth_event(
     extra.update(extra_context)
 
     # Log with structured context
-    logger.log(level, message, extra=extra)
+    logger_handle.log(level, message, extra=extra)
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -710,15 +736,8 @@ def _get_sync_redis_client():
     """
     global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
 
-    # Standard
-    import logging as log  # pylint: disable=import-outside-toplevel,reimported
-    import time  # pylint: disable=import-outside-toplevel
-
-    # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
-
     # Quick check without lock
-    if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+    if _SYNC_REDIS_CLIENT is not None or not (settings.redis_url and settings.redis_url.strip() and settings.cache_type == "redis"):
         return _SYNC_REDIS_CLIENT
 
     # Backoff after recent failure (30 seconds)
@@ -732,20 +751,108 @@ def _get_sync_redis_client():
             return _SYNC_REDIS_CLIENT
 
         try:
-            # Third-Party
-            import redis  # pylint: disable=import-outside-toplevel
+            redis_url = settings.redis_url
+            if redis_url.startswith("rediss://") and not settings.redis_ssl:
+                logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
+            ssl_kwargs = _build_ssl_kwargs(settings)
 
-            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            _SYNC_REDIS_CLIENT = redis.from_url(
+                redis_url,
+                decode_responses=True,
+                max_connections=settings.redis_max_connections,
+                socket_timeout=settings.redis_socket_timeout,
+                socket_connect_timeout=settings.redis_socket_connect_timeout,
+                **ssl_kwargs,
+            )
+
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
-            log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+            logger.debug("Sync Redis client initialized for API token operations")
+        except ValueError as e:
+            logger.error(f"Sync Redis SSL misconfiguration — client not started: {e}")
+            _SYNC_REDIS_CLIENT = None
+            return None
         except Exception as e:
-            log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
+            logger.debug(f"Sync Redis client unavailable: {e}")
             _SYNC_REDIS_CLIENT = None
             _SYNC_REDIS_FAILURE_TIME = time.time()
 
     return _SYNC_REDIS_CLIENT
+
+
+def _get_ratelimiter_redis_client():
+    """Get or create rate limiter Redis client.
+
+    Falls back to main Redis (_get_sync_redis_client) when
+    ratelimiter_redis_url is not configured.
+
+    Known limitation: Once successfully initialized, the client is cached
+    globally. If the Redis instance restarts mid-runtime, subsequent operations
+    will fail and fall back to in-memory rate limiting without reconnection
+    attempts. The 30-second backoff only applies during initialization.
+
+    Consider: Reset _RATELIMITER_REDIS_CLIENT = None in middleware exception
+    handler to trigger re-initialization on next request.
+
+    Returns:
+        Redis client or None if unavailable.
+    """
+    global _RATELIMITER_REDIS_CLIENT, _RATELIMITER_REDIS_FAILURE_TIME  # pylint: disable=global-statement
+
+    # Fallback to main Redis if no dedicated URL configured
+    if not settings.ratelimiter_redis_url:
+        return _get_sync_redis_client()
+
+    # Quick check without lock
+    if _RATELIMITER_REDIS_CLIENT is not None:
+        return _RATELIMITER_REDIS_CLIENT
+
+    # Backoff after recent failure (30 seconds)
+    if _RATELIMITER_REDIS_FAILURE_TIME and (time.time() - _RATELIMITER_REDIS_FAILURE_TIME < 30):
+        return None
+
+    # Lazy initialization with lock
+    with _RATELIMITER_REDIS_LOCK:
+        # Double-check after acquiring lock
+        if _RATELIMITER_REDIS_CLIENT is not None:
+            return _RATELIMITER_REDIS_CLIENT
+
+        try:
+            redis_url = settings.ratelimiter_redis_url
+            pool_size = settings.ratelimiter_redis_max_connections
+            socket_timeout = settings.ratelimiter_redis_socket_timeout
+            socket_connect_timeout = settings.ratelimiter_redis_socket_connect_timeout
+
+            # Warn if rediss:// but SSL disabled (inherits main Redis SSL settings)
+            if redis_url.startswith("rediss://") and not settings.redis_ssl:
+                logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. " "TLS settings from main Redis will be applied.")
+
+            ssl_kwargs = build_reatelimiter_ssl_kwargs(settings)
+
+            _RATELIMITER_REDIS_CLIENT = redis.from_url(
+                redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs
+            )
+
+            # Test connection
+            _RATELIMITER_REDIS_CLIENT.ping()
+            _RATELIMITER_REDIS_FAILURE_TIME = None
+
+            # Sanitize URL for logging (strip credentials)
+            parsed = urlparse(redis_url)
+            safe_url = parsed._replace(netloc=f"***@{parsed.hostname}:{parsed.port}" if parsed.password else parsed.netloc).geturl()
+            logger.info(f"Rate limiter using dedicated Redis: {safe_url}")
+
+        except ValueError as e:
+            logger.error(f"Rate limiter Redis SSL misconfiguration: {e}")
+            _RATELIMITER_REDIS_CLIENT = None
+            return None
+        except Exception as e:
+            logger.warning(f"Rate limiter Redis unavailable: {e}")
+            _RATELIMITER_REDIS_CLIENT = None
+            _RATELIMITER_REDIS_FAILURE_TIME = time.time()
+
+    return _RATELIMITER_REDIS_CLIENT
 
 
 def _update_api_token_last_used_sync(jti: str) -> None:
@@ -765,15 +872,10 @@ def _update_api_token_last_used_sync(jti: str) -> None:
         Called via asyncio.to_thread() to avoid blocking the event loop.
         Uses fresh_db_session() for thread-safe database access.
     """
-    # Standard
-    import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
-
-    # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
 
     # Rate-limiting cache key
     cache_key = f"api_token_last_used:{jti}"
-    update_interval_seconds = config_settings.token_last_used_update_interval_minutes * 60
+    update_interval_seconds = settings.token_last_used_update_interval_minutes * 60
 
     # Try Redis rate-limiting first (if available)
     redis_client = _get_sync_redis_client()
@@ -804,7 +906,6 @@ def _update_api_token_last_used_sync(jti: str) -> None:
             return
         except Exception as exc:
             # Redis failed, fall through to in-memory cache
-            logger = logging.getLogger(__name__)
             logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
 
     # Fallback: In-memory cache (module-level dict with threading.Lock for thread-safety)
@@ -1095,6 +1196,94 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
     )
 
 
+class TokenValidationError(Exception):
+    """Exception raised when token validation fails.
+
+    Used by validate_token_user to wrap HTTPExceptions from get_current_user
+    into a uniform exception type that callers can handle without importing
+    FastAPI-specific classes.
+    """
+
+    def __init__(self, detail: str, *, status_code: int = 401, original: Optional[Exception] = None) -> None:
+        """Initialize with validation failure detail and optional status code.
+
+        Args:
+            detail: Human-readable error message.
+            status_code: HTTP status code to return (default 401).
+            original: The original exception that caused this error, if any.
+        """
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+        self.original = original
+
+
+async def validate_token_user(request: Request, token: str) -> EmailUser:
+    """Validate a bearer token through the full get_current_user() stack.
+
+    This is the single shared validation path for all admin-token checks.
+    Both /admin/login (redirect-to-dashboard) and /admin (dashboard itself)
+    should call this so they agree on whether a token is acceptable.
+
+    Args:
+        request: FastAPI request object (for request-level caching and state).
+        token: Raw JWT token string (from cookie or header).
+
+    Returns:
+        EmailUser: The fully validated, authenticated user.
+
+    Raises:
+        TokenValidationError: If the token is missing, invalid, expired,
+            revoked, or the user is inactive / not found.
+    """
+    if not token:
+        raise TokenValidationError("Authentication token required", status_code=401)
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    try:
+        return await get_current_user(credentials, request=request)
+    except HTTPException as exc:
+        raise TokenValidationError(
+            str(exc.detail),
+            status_code=exc.status_code,
+            original=exc,
+        ) from exc
+    except Exception as exc:
+        raise TokenValidationError(
+            "Token validation failed",
+            status_code=401,
+            original=exc,
+        ) from exc
+
+
+def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
+    """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
+
+    is_admin is derived from the token's own claim (default False) so that
+    the bootstrap path grants login access without unconditional admin elevation.
+    """
+    # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
+    resolved_is_admin = payload.get("is_admin", False)
+    if not resolved_is_admin:
+        user_info = payload.get("user", {})
+        if isinstance(user_info, dict):
+            resolved_is_admin = user_info.get("is_admin", False)
+
+    return EmailUser(
+        email=email,
+        password_hash="",  # nosec B106 - not used for JWT authentication
+        full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
+        is_admin=resolved_is_admin,
+        is_active=True,
+        auth_provider="local",
+        password_change_required=False,
+        email_verified_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1113,7 +1302,6 @@ async def get_current_user(
     Raises:
         HTTPException: If authentication fails
     """
-    logger = logging.getLogger(__name__)
     clear_trace_context()
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
@@ -1550,18 +1738,7 @@ async def get_current_user(
                             f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
-                        _batched_user = EmailUser(
-                            email=email,
-                            password_hash="",  # nosec B106
-                            full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                            is_admin=True,
-                            is_active=True,
-                            auth_provider="local",
-                            password_change_required=False,
-                            email_verified_at=datetime.now(timezone.utc),
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc),
-                        )
+                        _batched_user = _bootstrap_platform_admin_user(email=email, payload=payload)
                     else:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1597,13 +1774,15 @@ async def get_current_user(
 
                 # Idle timeout enforcement.
                 #
+                # Skipped for API tokens (token_use="api") which have their own
+                # expiry and revocation mechanisms via EmailApiToken / TokenRevocation.
+                #
                 # Activity source-of-truth precedence (most-recent first):
                 #   1. Redis key `token:activity:{jti}` written by `update_activity()`.
-                #   2. Optional `last_activity` JWT claim (issuer can set this for first-request bootstrap).
-                #   3. Standard `iat` JWT claim (always present on tokens issued by this gateway).
-                # If none of the three are available we skip the idle check rather than fail-open silently —
+                #   2. JWT `last_activity` claim (issuer sets this for first-request bootstrap).
+                # If neither is available we skip the idle check rather than fail-open silently —
                 # the periodic revocation check above already handles tokens that should be denied outright.
-                if settings.token_idle_timeout > 0:
+                if settings.token_idle_timeout > 0 and payload.get("token_use") != "api":
                     # First-Party
                     from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
 
@@ -1616,7 +1795,7 @@ async def get_current_user(
                         logger.debug(f"Failed to read last activity from cache: {activity_lookup_error}")
 
                     if last_activity is None:
-                        last_activity_ts = payload.get("last_activity") or payload.get("iat")
+                        last_activity_ts = payload.get("last_activity")
                         if last_activity_ts:
                             last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
 
@@ -1669,7 +1848,13 @@ async def get_current_user(
         token_use = payload.get("token_use")
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
-            user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
+            # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
+            resolved_is_admin = payload.get("is_admin", False)
+            if not resolved_is_admin:
+                user_info_nested = payload.get("user", {})
+                if isinstance(user_info_nested, dict):
+                    resolved_is_admin = user_info_nested.get("is_admin", False)
+            user_info = {"is_admin": resolved_is_admin}
             normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
@@ -1780,18 +1965,7 @@ async def get_current_user(
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes
-            user = EmailUser(
-                email=email,
-                password_hash="",  # nosec B106 - Not used for JWT authentication
-                full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                is_admin=True,
-                is_active=True,
-                auth_provider="local",
-                password_change_required=False,
-                email_verified_at=datetime.now(timezone.utc),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
+            user = _bootstrap_platform_admin_user(email=email, payload=payload)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1840,7 +2014,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     """Inject user identity into the plugin_global_context.
 
     Always populates both the legacy ``global_context.user`` dict (for backward
-    compatibility) and the new structured ``global_context.user_context``
+    compatibility) and the structured ``global_context.user_context``
     (:class:`UserContext`).
 
     Args:
@@ -1848,7 +2022,6 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         user: User related information
     """
 
-    logger = logging.getLogger(__name__)
     # Get request ID from correlation ID context (set by CorrelationIDMiddleware)
     request_id = get_correlation_id()
     if not request_id:

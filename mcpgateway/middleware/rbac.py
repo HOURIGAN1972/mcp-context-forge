@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/rbac.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -21,16 +21,16 @@ import uuid
 import warnings
 
 # Third-Party
+from cpex.framework import GlobalContext
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
-from mcpgateway.plugins.framework.models import GlobalContext, UserContext
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
     set_trace_auth_method,
@@ -39,15 +39,16 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
+from mcpgateway.utils.verify_credentials import ConfigurableHTTPBearer, is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
 # Generic 403 message — intentionally vague to avoid leaking permission names to callers
 _ACCESS_DENIED_MSG = "Access denied"
 
-# HTTP Bearer security scheme for token extraction
-security = HTTPBearer(auto_error=False)
+# Bearer security scheme — uses the configured auth header (AUTH_HEADER_NAME)
+# so RBAC token extraction stays aligned with the rest of the auth flow.
+security = ConfigurableHTTPBearer(auto_error=False)
 
 
 def get_db(request: Request = None) -> Generator[Session, None, None]:
@@ -350,11 +351,26 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
-    is_admin_ui_request = "/admin" in referer
-    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
+
+    # Check if referer is from same origin (for admin UI and OAuth callback pages)
+    is_same_origin_referer = False
+    if referer:
+        try:
+            # Standard
+            from urllib.parse import urlparse
+
+            referer_parsed = urlparse(referer)
+            request_host = request.headers.get("host", "")
+            # Match if referer host matches request host and path contains /admin or /oauth/callback
+            if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
+                is_same_origin_referer = True
+        except Exception:
+            pass  # Invalid referer URL, treat as not same-origin
+
+    is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
+    # Cookies should only be used for browser/HTML requests (including admin UI and OAuth callback fetch calls)
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -402,13 +418,10 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
 
     try:
-        # Create credentials object if we got token from cookie
-        if not credentials:
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        # First-Party
+        from mcpgateway.auth import validate_token_user
 
-        # Extract user from token using the email auth function
-        # Pass request to get_current_user so plugins can store auth_method in request.state
-        user = await get_current_user(credentials, request=request)
+        user = await validate_token_user(request, token)
 
         # Read auth_method and request_id from request.state
         # (auth_method set by plugin in get_current_user, request_id set by HTTP middleware)
@@ -681,8 +694,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
             # First, check if any plugins want to handle permission checking
+            # Third-Party
+            from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
+
             # First-Party
-            from mcpgateway.plugins.framework import get_plugin_manager, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
 
             plugin_manager = await get_plugin_manager()
             if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):

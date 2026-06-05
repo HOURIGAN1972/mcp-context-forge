@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for DCR (Dynamic Client Registration) flow.
+"""Location: ./tests/integration/test_dcr_flow_integration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for DCR (Dynamic Client Registration) flow.
 
 These tests validate the complete DCR flow with PKCE, including:
 - Authorization URL generation with PKCE
@@ -141,7 +146,7 @@ class TestDCRFlowIntegration:
         # Mock DCR registration response
         mock_registration = {
             "client_id": "dcr-generated-id-789",
-            "client_secret": "dcr-generated-secret-xyz",
+            "client_secret": "dcr-generated-secret-xyz",  # pragma: allowlist secret
             "client_id_issued_at": int(datetime.now(timezone.utc).timestamp()),
             "redirect_uris": ["http://localhost:4444/oauth/callback"],
             "grant_types": ["authorization_code"],

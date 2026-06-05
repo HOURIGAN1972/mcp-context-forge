@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin_catalog_htmx.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -236,7 +236,7 @@ def test_register_catalog_server_htmx_with_api_key(client):
         response = client.post(
             "/admin/mcp-registry/api-server/register",
             headers={"HX-Request": "true"},
-            json={"server_id": "api-server", "name": "API Server", "api_key": "secret-key"},
+            json={"server_id": "api-server", "name": "API Server", "api_key": "secret-key"},  # pragma: allowlist secret
         )
 
     assert response.status_code == 200

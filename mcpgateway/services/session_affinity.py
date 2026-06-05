@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Multi-worker session affinity for downstream MCP sessions.
+"""Location: ./mcpgateway/services/session_affinity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Multi-worker session affinity for downstream MCP sessions.
 Keeps each downstream MCP session (identified by its ``Mcp-Session-Id``)
 pinned to one gateway worker across the horizontal-scale deployment, so
 the worker-local ``UpstreamSessionRegistry`` can serve subsequent calls
 without rebuilding upstream state. Per-worker upstream ``ClientSession``
 state lives in ``mcpgateway.services.upstream_session_registry``; this
 module owns the cross-worker affinity layer only.
-
 Surface:
-
 * Redis-backed ``(downstream_session_id, url, transport, gateway_id)`` →
   owning-worker mapping so any worker can look up who owns a session.
 * Worker heartbeat (``SET EX``) so dead workers can be reclaimed.
@@ -17,10 +19,6 @@ Surface:
 * Session-owner HTTP/RPC forwarding for cross-worker fanout.
 * Pub/Sub listener for RPC-style cross-worker requests.
 * ``is_valid_mcp_session_id`` validation used by the transport layer.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 """
 
 # ruff: noqa: D417
@@ -47,8 +45,13 @@ import orjson
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.services.upstream_session_registry import MessageHandlerFactory  # re-exported as the single source of truth
-from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.services.upstream_session_registry import (  # re-exported as the single source of truth
+    MessageHandlerFactory,
+)
+from mcpgateway.utils.internal_http import (
+    internal_loopback_base_url,
+    internal_loopback_verify,
+)
 
 # Shared session-id validation (downstream MCP session IDs used for affinity).
 # Intentionally strict: protects Redis key/channel construction and log lines.
@@ -313,7 +316,9 @@ class SessionAffinity:
         # either registers ownership
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -327,14 +332,23 @@ class SessionAffinity:
                     "transport_type": transport_type,
                     "gateway_id": normalized_gateway_id,
                 }
-                await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
+                await redis.setex(
+                    redis_key,
+                    settings.mcpgateway_session_affinity_ttl,
+                    orjson.dumps(pool_key_data),
+                )  # TTL from config
 
                 # CRITICAL: Register ownership atomically with mapping.
                 # This claims ownership BEFORE any session creation attempt, preventing
                 # the race condition where two workers both start creating sessions
                 owner_key = self._session_owner_key(mcp_session_id)
                 # Atomic claim with TTL (avoids the SETNX/EXPIRE crash window).
-                was_set = await redis.set(owner_key, get_worker_id(), nx=True, ex=settings.mcpgateway_session_affinity_ttl)
+                was_set = await redis.set(
+                    owner_key,
+                    get_worker_id(),
+                    nx=True,
+                    ex=settings.mcpgateway_session_affinity_ttl,
+                )
                 if was_set:
                     logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {get_worker_id()}")
                 else:
@@ -358,7 +372,9 @@ class SessionAffinity:
         """
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -431,7 +447,15 @@ class SessionAffinity:
         # redis-py, so the config/protocol bucket has to win the isinstance
         # check before the transient bucket; otherwise a credentials
         # rotation gets silently logged at debug.
-        if isinstance(exc, (redis_exc.AuthenticationError, redis_exc.ResponseError, redis_exc.DataError, redis_exc.NoScriptError)):
+        if isinstance(
+            exc,
+            (
+                redis_exc.AuthenticationError,
+                redis_exc.ResponseError,
+                redis_exc.DataError,
+                redis_exc.NoScriptError,
+            ),
+        ):
             logger.warning(
                 "Listener-%s Redis configuration/protocol failure for %s: %s (%s)",
                 operation,
@@ -440,7 +464,14 @@ class SessionAffinity:
                 type(exc).__name__,
             )
             return
-        if isinstance(exc, (redis_exc.ConnectionError, redis_exc.TimeoutError, redis_exc.BusyLoadingError)):
+        if isinstance(
+            exc,
+            (
+                redis_exc.ConnectionError,
+                redis_exc.TimeoutError,
+                redis_exc.BusyLoadingError,
+            ),
+        ):
             logger.debug(
                 "Listener-%s Redis transient failure for %s: %s",
                 operation,
@@ -482,7 +513,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                    get_redis_client,
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -525,7 +558,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                    get_redis_client,
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -565,7 +600,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                    get_redis_client,
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -653,7 +690,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -698,7 +737,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -745,7 +786,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -775,7 +818,14 @@ class SessionAffinity:
                 return 0
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
-                reclaimed = await redis.eval(cas_script, 1, self._session_owner_key(mcp_session_id), owner_id, get_worker_id(), ttl)
+                reclaimed = await redis.eval(
+                    cas_script,
+                    1,
+                    self._session_owner_key(mcp_session_id),
+                    owner_id,
+                    get_worker_id(),
+                    ttl,
+                )
                 if reclaimed == 1:
                     logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
                     return None  # We won the reclaim - execute locally
@@ -795,30 +845,30 @@ class SessionAffinity:
             response_channel = f"mcpgw:pool_rpc_response:{response_id}"
 
             # Subscribe to response channel
-            pubsub = redis.pubsub()
-            await pubsub.subscribe(response_channel)
+            async with redis.pubsub() as pubsub:
+                await pubsub.subscribe(response_channel)
 
-            try:
-                # Prepare request with response channel
-                forward_data = {
-                    "type": "rpc_forward",
-                    **request_data,
-                    "response_channel": response_channel,
-                    "mcp_session_id": mcp_session_id,
-                }
+                try:
+                    # Prepare request with response channel
+                    forward_data = {
+                        "type": "rpc_forward",
+                        **request_data,
+                        "response_channel": response_channel,
+                        "mcp_session_id": mcp_session_id,
+                    }
 
-                # Publish request to owner's channel
-                await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
-                self._forwarded_requests += 1
-                logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+                    # Publish request to owner's channel
+                    await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
+                    self._forwarded_requests += 1
+                    logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
 
-                # Wait for response
-                async with asyncio.timeout(effective_timeout):
-                    async for msg in pubsub.listen():
-                        if msg["type"] == "message":
-                            return orjson.loads(msg["data"])
-            finally:
-                await pubsub.unsubscribe(response_channel)
+                    # Wait for response
+                    async with asyncio.timeout(effective_timeout):
+                        async for msg in pubsub.listen():
+                            if msg["type"] == "message":
+                                return orjson.loads(msg["data"])
+                finally:
+                    await pubsub.unsubscribe(response_channel)
 
         except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
@@ -842,7 +892,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -924,7 +976,12 @@ class SessionAffinity:
 
                 response = await client.post(
                     f"{internal_base_url}/rpc",
-                    json={"jsonrpc": "2.0", "method": method, "params": params, "id": req_id},
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": method,
+                        "params": params,
+                        "id": req_id,
+                    },
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
@@ -947,7 +1004,12 @@ class SessionAffinity:
                     # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
                     detail = response_data.get("detail", response.text[:200] or "Unknown error")
                     logger.info(f"[AFFINITY] Worker {get_worker_id()} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
-                    return {"error": {"code": -32603, "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}"}}
+                    return {
+                        "error": {
+                            "code": -32603,
+                            "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}",
+                        }
+                    }
 
                 # Parse successful response
                 response_data = response.json()
@@ -1106,7 +1168,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
+                get_redis_client,
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -1132,33 +1196,33 @@ class SessionAffinity:
             }
 
             # Subscribe to response channel BEFORE publishing request (prevent race)
-            pubsub = redis.pubsub()
-            await pubsub.subscribe(response_channel)
+            async with redis.pubsub() as pubsub:
+                await pubsub.subscribe(response_channel)
 
-            try:
-                # Publish forwarded request to owner worker's HTTP channel
-                owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
-                await redis.publish(owner_channel, orjson.dumps(forward_data))
-                logger.debug(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
+                try:
+                    # Publish forwarded request to owner worker's HTTP channel
+                    owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
+                    await redis.publish(owner_channel, orjson.dumps(forward_data))
+                    logger.debug(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
 
-                # Wait for response with timeout
-                timeout = settings.mcpgateway_pool_rpc_forward_timeout
-                async with asyncio.timeout(timeout):
-                    while True:
-                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-                        if msg and msg["type"] == "message":
-                            response_data = orjson.loads(msg["data"])
-                            logger.debug(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
+                    # Wait for response with timeout
+                    timeout = settings.mcpgateway_pool_rpc_forward_timeout
+                    async with asyncio.timeout(timeout):
+                        while True:
+                            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                            if msg and msg["type"] == "message":
+                                response_data = orjson.loads(msg["data"])
+                                logger.debug(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
 
-                            # Decode hex body back to bytes
-                            body_hex = response_data.get("body", "")
-                            response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
+                                # Decode hex body back to bytes
+                                body_hex = response_data.get("body", "")
+                                response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
 
-                            self._forwarded_requests += 1
-                            return response_data
+                                self._forwarded_requests += 1
+                                return response_data
 
-            finally:
-                await pubsub.unsubscribe(response_channel)
+                finally:
+                    await pubsub.unsubscribe(response_channel)
 
         except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
@@ -1224,7 +1288,10 @@ def init_session_affinity(
             return notification_svc.create_message_handler(gateway_id or url, url, downstream_session_id=downstream_session_id)
 
         effective_handler_factory = default_handler_factory
-        logger.info("MCP notification service created (debounce=%ss)", notification_debounce_seconds)
+        logger.info(
+            "MCP notification service created (debounce=%ss)",
+            notification_debounce_seconds,
+        )
 
     _mcp_session_pool = SessionAffinity(message_handler_factory=effective_handler_factory)
     logger.info("Session-affinity service initialized")

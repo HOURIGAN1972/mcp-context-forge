@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/support_bundle_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -154,7 +154,7 @@ class SupportBundleService:
 
         Examples:
             >>> service = SupportBundleService()
-            >>> service._sanitize_url("postgresql://user:password@localhost/db")
+            >>> service._sanitize_url("postgresql://user:password@localhost/db")  # pragma: allowlist secret
             'postgresql://user:*****@localhost/db'
             >>> service._sanitize_url("http://example.com")
             'http://example.com'

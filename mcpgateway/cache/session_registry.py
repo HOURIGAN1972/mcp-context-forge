@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/cache/session_registry.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -74,6 +74,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Initialize logging service first
@@ -149,7 +150,7 @@ class SessionBackend:
             redis_url: Redis connection URL. Required when backend='redis'.
                 Format: 'redis://[:password]@host:port/db'
             database_url: Database connection URL. Required when backend='database'.
-                Format depends on database type (e.g., 'postgresql://user:pass@host/db')
+                Format depends on database type (e.g., 'postgresql://user:pass@host/db')  # pragma: allowlist secret
             session_ttl: Session time-to-live in seconds. Sessions are automatically
                 cleaned up after this duration of inactivity. Default: 3600 (1 hour).
             message_ttl: Message time-to-live in seconds. Undelivered messages are
@@ -2334,7 +2335,10 @@ class SessionRegistry(SessionBackend):
                 if settings.mcpgateway_session_affinity_enabled:
                     await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
 
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                # Internal /rpc auth must be sent under the configured AUTH_HEADER_NAME
+                # so that ConfigurableHTTPBearer in the loopback target reads the JWT.
+                _gw_auth = _resolve_auth_header_name(settings)
+                headers = {_gw_auth: f"Bearer {token}", "Content-Type": "application/json"}
                 if settings.mcpgateway_session_affinity_enabled:
                     headers["x-mcp-session-id"] = transport.session_id
                 # Forward passthrough headers captured at SSE connection time (see #3640).

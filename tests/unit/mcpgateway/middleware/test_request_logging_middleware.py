@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_request_logging_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
 Unit tests for request logging middleware.
 """
 
@@ -112,8 +113,8 @@ def test_mask_sensitive_data_non_dict_list():
 
 def test_mask_sensitive_data_masks_common_key_variants():
     data = {
-        "db_password": "pw",
-        "clientSecret": "secret-value",
+        "db_password": "pw",  # pragma: allowlist secret
+        "clientSecret": "secret-value",  # pragma: allowlist secret
         "auth-token": "token-value",
         "token_count": 7,
         "tokenizer": "gpt",
@@ -210,7 +211,7 @@ def test_mask_sensitive_headers_non_sensitive():
 
 
 def test_mask_sensitive_headers_masks_api_key_variants():
-    headers = {"X-Api-Key": "super-secret", "X-Token-Count": "5"}
+    headers = {"X-Api-Key": "super-secret", "X-Token-Count": "5"}  # pragma: allowlist secret
     masked = mask_sensitive_headers(headers)
     assert masked["X-Api-Key"] == "******"
     assert masked["X-Token-Count"] == "5"

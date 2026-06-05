@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_authorization_access.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -68,6 +68,7 @@ def create_mock_tool(visibility="public", owner_email=None, team_id=None, enable
     tool.owner_email = owner_email
     tool.team_id = team_id
     tool.enabled = enabled
+    tool.deprecated = False
     tool.reachable = True
     tool.integration_type = "REST"
     tool.request_type = "GET"

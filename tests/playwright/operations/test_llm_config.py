@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""LLM Configuration E2E Tests.
+"""Location: ./tests/playwright/operations/test_llm_config.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+LLM Configuration E2E Tests.
 
 Tests LLM provider and model management endpoints.
 """
@@ -44,7 +49,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         assert resp.status in (200, 201), f"Create provider failed: {resp.status} {resp.text()}"
@@ -68,7 +73,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -89,7 +94,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -110,7 +115,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -129,7 +134,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()

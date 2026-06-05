@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""normalize_registered_oauth_client_issuer
+"""Location: ./mcpgateway/alembic/versions/4e6273136e56_normalize_registered_oauth_client_issuer.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+normalize_registered_oauth_client_issuer
 
 Revision ID: 4e6273136e56
 Revises: f1a2b3c4d5e6
@@ -21,7 +26,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "4e6273136e56"
-down_revision: Union[str, Sequence[str], None] = "f1a2b3c4d5e6"
+down_revision: Union[str, Sequence[str], None] = "f1a2b3c4d5e6"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
