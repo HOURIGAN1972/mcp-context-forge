@@ -903,9 +903,10 @@ class SessionAffinity:
 
             rpc_channel = f"mcpgw:pool_rpc:{get_worker_id()}"
             http_channel = f"mcpgw:pool_http:{get_worker_id()}"
+            reverse_proxy_channel = f"mcpgw:reverse_proxy:{get_worker_id()}"
             pubsub = redis.pubsub()
-            await pubsub.subscribe(rpc_channel, http_channel)
-            logger.info(f"RPC/HTTP listener started for worker {get_worker_id()} on channels: {rpc_channel}, {http_channel}")
+            await pubsub.subscribe(rpc_channel, http_channel, reverse_proxy_channel)
+            logger.info(f"RPC/HTTP/ReverseProxy listener started for worker {get_worker_id()} on channels: {rpc_channel}, {http_channel}, {reverse_proxy_channel}")
 
             try:
                 while not self._closed:
@@ -925,13 +926,23 @@ class SessionAffinity:
                                 elif forward_type == "http_forward":
                                     # Execute forwarded HTTP request for Streamable HTTP transport
                                     await self._execute_forwarded_http_request(request, redis)
+                                elif forward_type == "reverse_proxy_forward":
+                                    # Execute forwarded reverse proxy WebSocket message
+                                    # First-Party
+                                    from mcpgateway.services.reverse_proxy_service import (  # pylint: disable=import-outside-toplevel
+                                        get_reverse_proxy_service,
+                                    )
+
+                                    reverse_proxy_service = get_reverse_proxy_service()
+                                    await reverse_proxy_service.manager.execute_forwarded_message(request, redis, reverse_proxy_service.pending_responses)
+                                    logger.info(f"Processed forwarded reverse proxy message, response sent to {response_channel}")
                                 else:
                                     logger.warning(f"Unknown forward type: {forward_type}")
                     except Exception as e:
                         logger.warning(f"Error processing forwarded request: {e}")
             finally:
-                await pubsub.unsubscribe(rpc_channel, http_channel)
-                logger.info(f"RPC/HTTP listener stopped for worker {get_worker_id()}")
+                await pubsub.unsubscribe(rpc_channel, http_channel, reverse_proxy_channel)
+                logger.info(f"RPC/HTTP/ReverseProxy listener stopped for worker {get_worker_id()}")
 
         except Exception as e:
             logger.warning(f"RPC/HTTP listener failed: {e}")
