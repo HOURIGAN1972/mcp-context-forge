@@ -198,7 +198,7 @@ def get_cached_ssl_context(
     # Create new SSL context and configure CA cert
     # ssl.create_default_context() automatically loads system CAs
     ctx = ssl.create_default_context()
-    
+
     # Load the provided CA certificate (from gateway/server config)
     if ca_certificate:
         ctx.load_verify_locations(cadata=ca_certificate)

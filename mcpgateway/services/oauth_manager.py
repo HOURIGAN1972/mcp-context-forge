@@ -300,31 +300,27 @@ class OAuthManager:
 
         Returns:
             The HTTP response from the token endpoint.
-            
+
         Raises:
             ValueError: If only one of client_cert/client_key is provided (mTLS requires both).
         """
         # Validate mTLS configuration early (before SSL context creation)
         if bool(client_cert) != bool(client_key):
             raise ValueError("mTLS requires both client_cert and client_key; got only one")
-            
-        if ca_certificate  or client_cert or client_key:
+
+        if ca_certificate or client_cert or client_key:
             # Check if SSL verification should be skipped globally
             if self.settings.skip_ssl_verify:
                 # When SKIP_SSL_VERIFY is enabled, disable verification entirely
                 async with httpx.AsyncClient(verify=False) as client:
-                    return await client.post(url, data=data, timeout=self.request_timeout)
+                    return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
             else:
                 # Use custom SSL context with CA certificate
                 ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                 async with httpx.AsyncClient(verify=ssl_context) as client:
-                    return await client.post(url, data=data, timeout=self.request_timeout)
+                    return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 
         # No custom CA certificate - use shared client which respects SSL_CERT_FILE
-        if ca_certificate or client_cert or client_key:
-            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
         client = await self._get_client()
         return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 

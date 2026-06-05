@@ -311,13 +311,13 @@ class LoggingService:
         # Default to settings log level
         log_level_str = settings.log_level.upper()
         log_source = "settings"
-        
+
         # Try to read log level from config file if file watcher is enabled
         if settings.file_watcher_enabled and settings.log_config_path:
             try:
                 # First-Party
                 from mcpgateway.services.log_config_watcher import read_log_level_from_config  # pylint: disable=import-outside-toplevel
-                
+
                 file_level = read_log_level_from_config(settings.log_config_path)
                 if file_level:
                     log_level_str = file_level
@@ -329,7 +329,7 @@ class LoggingService:
                 logging.warning(f"Error reading log config file, falling back to settings: {e}")
         else:
             logging.info(f"Using log level from {log_source}: {log_level_str}")
-        
+
         # Update service log level BEFORE configuring loggers
         # This will use either the config file level or fall back to settings
         self._level = LogLevel[log_level_str]
@@ -578,7 +578,7 @@ class LoggingService:
                     if hasattr(record, "getMessage"):
                         msg = record.getMessage()
                         # Match patterns like: 'GET /health HTTP' or '"GET /ready HTTP"'
-                        if 'GET /health' in msg or 'GET /ready' in msg:
+                        if "GET /health" in msg or "GET /ready" in msg:
                             return False
                 except Exception:
                     pass  # nosec B110 - Never break logging due to filter failure

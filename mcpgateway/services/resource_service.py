@@ -2431,14 +2431,14 @@ class ResourceService(BaseService):
                                 # First-Party
                                 from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
                                 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
-                                
+
                                 # Handle gateway CA certificate if present
                                 if gateway.ca_certificate:
                                     ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
                                     verify_setting = ctx
                                 else:
                                     verify_setting = get_default_verify()
-                                
+
                                 return httpx.AsyncClient(
                                     verify=verify_setting,
                                     follow_redirects=True,
@@ -2451,7 +2451,11 @@ class ResourceService(BaseService):
                                 )
 
                             # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_resource_client) as (read_stream, write_stream, _get_session_id):
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout, httpx_client_factory=create_resource_client) as (
+                                read_stream,
+                                write_stream,
+                                _get_session_id,
+                            ):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
 

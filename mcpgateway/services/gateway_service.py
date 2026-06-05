@@ -5816,12 +5816,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
 
             # Handle gateway CA certificate if present
-            if gateway and hasattr(gateway, 'ca_certificate') and gateway.ca_certificate:
-                ctx = get_cached_ssl_context(
-                    gateway.ca_certificate,
-                    client_cert=getattr(gateway, 'client_cert', None),
-                    client_key=getattr(gateway, 'client_key', None)
-                )
+            if gateway and hasattr(gateway, "ca_certificate") and gateway.ca_certificate:
+                ctx = get_cached_ssl_context(gateway.ca_certificate, client_cert=getattr(gateway, "client_cert", None), client_key=getattr(gateway, "client_key", None))
                 verify_setting = ctx
             else:
                 verify_setting = get_default_verify()
@@ -6100,7 +6096,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # No validation errors for proxy (validation happens at Pydantic level)
         validation_errors: list[str] = []
-        
+
         return capabilities, tools, resources, prompts, validation_errors
 
     async def connect_to_sse_server(
@@ -6319,6 +6315,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
+            # First-Party
             from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
 
             logger.info(f"get_httpx_client_factory called: server_url={server_url}, ca_certificate={'SET' if ca_certificate else 'NONE'}")

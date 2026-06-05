@@ -8,8 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-26T09:14:15.445896Z"
-exclude-newer-span = "P10D"
+exclude-newer = "2026-06-05T00:00:00Z"
 
 [options.exclude-newer-package]
 opentelemetry-exporter-otlp-proto-common = "2026-05-25T23:59:59Z"

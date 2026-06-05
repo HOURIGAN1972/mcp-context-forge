@@ -20,7 +20,7 @@ from typing import Any, Callable, Coroutine, Dict, Optional
 import uuid
 
 # Third-Party
-from watchfiles import Change, awatch
+from watchfiles import awatch, Change
 
 # First-Party
 from mcpgateway.config import settings
@@ -118,19 +118,14 @@ class FileWatcherService:
         """
         # Check if file watcher is enabled
         if not settings.file_watcher_enabled:
-            logger.warning(
-                "File watcher is disabled (FILE_WATCHER_ENABLED=false). "
-                "Enable it in configuration to use file watching."
-            )
-            raise RuntimeError(
-                "File watcher is disabled. Set FILE_WATCHER_ENABLED=true to enable."
-            )
+            logger.warning("File watcher is disabled (FILE_WATCHER_ENABLED=false). " "Enable it in configuration to use file watching.")
+            raise RuntimeError("File watcher is disabled. Set FILE_WATCHER_ENABLED=true to enable.")
 
         watch_path = Path(path)
-        
+
         if not watch_path.exists():
             raise FileNotFoundError(f"Watch path does not exist: {path}")
-        
+
         if not watch_path.is_file() and not (watch_path.is_symlink() and watch_path.resolve().is_file()):
             raise ValueError(f"Watch path must be a file, not a directory: {path}")
 
@@ -257,7 +252,7 @@ class FileWatcherService:
             # Watch parent directory but use watch_filter to only get events for our target file
             # This reduces noise from other files in the directory
             target_filename = target_file.name
-            
+
             async for changes in awatch(
                 watch_dir,
                 recursive=False,
@@ -280,8 +275,7 @@ class FileWatcherService:
                         await handler(event)
                     except Exception as e:
                         logger.error(
-                            f"Error in file change handler {handler_id[:8]} "
-                            f"for {changed_path}: {e}",
+                            f"Error in file change handler {handler_id[:8]} " f"for {changed_path}: {e}",
                             exc_info=True,
                         )
 

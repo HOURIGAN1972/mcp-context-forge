@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.query_params import QueryIdentifierDotted300, QueryToolOpsMode
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.main import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService

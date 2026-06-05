@@ -479,7 +479,11 @@ class PromptService(BaseService):
                         await session.initialize()
                         remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
             else:
-                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=create_prompt_client) as (read_stream, write_stream, _get_session_id):
+                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=create_prompt_client) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
                         remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)

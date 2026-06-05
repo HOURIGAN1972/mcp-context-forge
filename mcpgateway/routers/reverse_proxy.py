@@ -417,10 +417,10 @@ async def send_request_to_session(
         return response
     except asyncio.TimeoutError:
         LOGGER.error("TimeoutError to send request to session %s", session_id, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=f"Failed to send request")
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Failed to send request")
     except Exception:
         LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
 
 
 @router.get("/sse/{session_id}")

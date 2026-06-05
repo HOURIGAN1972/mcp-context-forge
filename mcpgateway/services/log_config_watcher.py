@@ -31,10 +31,10 @@ logger = logging.getLogger(__name__)
 
 def read_log_level_from_config(config_path: str) -> Optional[str]:
     """Read log level from YAML config file.
-    
+
     Args:
         config_path: Path to YAML config file (can be a symlink for Kubernetes ConfigMaps)
-    
+
     Returns:
         Log level string (uppercase) if found and valid, None otherwise
     """
@@ -42,23 +42,23 @@ def read_log_level_from_config(config_path: str) -> Optional[str]:
         config_file = Path(config_path)
         if not config_file.exists():
             return None
-        
+
         content = config_file.read_text(encoding="utf-8")
         config = yaml.safe_load(content)
     except Exception as e:
         logger.debug(f"Could not read log config file: {e}")
         return None
-    
+
     if not isinstance(config, dict):
         return None
-    
+
     # Safe to call .get() on validated dict - cannot raise AttributeError/TypeError
     level_raw = config.get("level")
     if not level_raw:
         return None
-    
+
     level_str = str(level_raw).upper()
-    
+
     # Validate it's a valid LogLevel
     try:
         LogLevel(level_str.lower())
@@ -70,17 +70,17 @@ def read_log_level_from_config(config_path: str) -> Optional[str]:
 
 class LogConfigWatcher:
     """Watcher for YAML log configuration files that automatically reloads log levels.
-    
+
     This class integrates with FileWatcherService to monitor YAML configuration files
     and automatically reload the root log level when the configuration changes.
-    
+
     Configuration Format:
         level: INFO
     """
 
     def __init__(self, logging_service: LoggingService):
         """Initialize the log config watcher.
-        
+
         Args:
             logging_service: The LoggingService instance to update log levels
         """
@@ -92,10 +92,10 @@ class LogConfigWatcher:
 
     async def start(self, config_path: Optional[str] = None) -> None:
         """Start watching the log configuration file.
-        
+
         Args:
             config_path: Path to YAML config file to watch. If None, watcher will not start.
-        
+
         Raises:
             RuntimeError: If file watcher is disabled (checked by FileWatcherService) or no config path provided
             FileNotFoundError: If config file doesn't exist
@@ -111,7 +111,7 @@ class LogConfigWatcher:
         # Require explicit config path
         if config_path is None:
             raise RuntimeError("Log config path must be provided to start watcher")
-        
+
         watch_path = Path(config_path)
 
         if not watch_path.exists():
@@ -119,10 +119,7 @@ class LogConfigWatcher:
 
         await self._load_and_apply_config(str(watch_path))
         try:
-            self._watch_id = await self._watcher.watch(
-                str(watch_path),
-                self._on_config_change
-            )
+            self._watch_id = await self._watcher.watch(str(watch_path), self._on_config_change)
             self._running = True
             logger.info(f"Started watching log config file: {watch_path}")
         except Exception as e:
@@ -143,7 +140,7 @@ class LogConfigWatcher:
 
     async def _on_config_change(self, event: FileChangeEvent) -> None:
         """Handle configuration file changes.
-        
+
         Args:
             event: File change event from the watcher
         """
@@ -155,10 +152,10 @@ class LogConfigWatcher:
 
     async def _load_and_apply_config(self, file_path: str) -> None:
         """Load YAML config and apply log level changes.
-        
+
         If the config file is deleted, the current log level is preserved.
         This ensures stable logging behavior during file operations.
-        
+
         Args:
             file_path: Path to the YAML config file
         """
@@ -168,29 +165,29 @@ class LogConfigWatcher:
             if not config_file.exists():
                 logger.warning(f"Log config file deleted or not found: {file_path}. Keeping current log level: {self._last_level}")
                 return
-            
+
             # Use read_log_level_from_config for consistent parsing and validation
             new_level_str = read_log_level_from_config(file_path)
-            
+
             if not new_level_str:
                 logger.warning("No valid log level found in config file")
                 return
-            
+
             new_level = new_level_str.lower()
-            
+
             # Check if level changed
             if new_level == self._last_level:
                 logger.debug(f"Log level unchanged ({new_level}), no action needed")
                 return
-            
+
             logger.info(f"Log level changed from {self._last_level} to {new_level}")
-            
+
             # Apply new log level using LogLevel enum
             log_level_enum = LogLevel(new_level)
             await self._logging_service.set_level(log_level_enum)
             self._last_level = new_level
             logger.info(f"Successfully updated log level to {new_level}")
-            
+
         except Exception as e:
             logger.error(f"Error loading log config: {e}", exc_info=True)
 
@@ -207,10 +204,10 @@ _log_config_watcher_lock = asyncio.Lock()
 
 async def get_log_config_watcher(logging_service: LoggingService) -> LogConfigWatcher:
     """Get the singleton LogConfigWatcher instance.
-    
+
     Args:
         logging_service: The LoggingService instance to update log levels
-    
+
     Returns:
         LogConfigWatcher: The singleton instance
     """

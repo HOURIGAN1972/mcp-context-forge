@@ -164,6 +164,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -178,7 +179,6 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -1321,7 +1321,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
-    
+
     # Start log config watcher if file watcher is enabled and config path is set
     log_config_watcher_instance = None
     if settings.file_watcher_enabled and settings.log_config_path:
@@ -1794,13 +1794,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 logger.info("Log config watcher stopped")
             except Exception as e:
                 logger.debug(f"Error stopping log config watcher: {e}")
-        
+
         # Stop FileWatcherService singleton (only if enabled)
         if settings.file_watcher_enabled:
             try:
                 # First-Party
                 from mcpgateway.services.file_watcher_service import get_file_watcher_service  # pylint: disable=import-outside-toplevel
-                
+
                 file_watcher_service = await get_file_watcher_service()
                 await file_watcher_service.stop_all()
                 logger.info("FileWatcherService stopped")

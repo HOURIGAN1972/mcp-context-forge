@@ -1257,7 +1257,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def apply_environment_aware_defaults(self) -> "Settings":
         """Apply defaults that depend on other settings values.
-        
+
         This runs AFTER all field values have been set (including from .env),
         allowing us to override require_strong_secrets based on environment.
         """
@@ -1479,22 +1479,20 @@ class Settings(BaseSettings):
                 if env == "production":
                     raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
-            
+
             # Check if secret is in predefined weak list
             if val.lower() in weak_secrets:
                 if env != "development":
                     raise SecurityConfigurationError(
                         f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
                     )
-            
+
             # When require_strong_secrets is True, also check entropy (but skip in client_mode)
             if self.require_strong_secrets and not self.client_mode:
                 is_weak = val.lower() in weak_secrets or calculate_entropy(val) < 3.5
                 if is_weak:
-                    raise SecurityConfigurationError(
-                        f"{field_name}: Weak secret detected (low entropy). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
-                    )
-        
+                    raise SecurityConfigurationError(f"{field_name}: Weak secret detected (low entropy). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+
         # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
         # do not block startup. Production always rejects them. Weak secrets are rejected in
         # staging and production; development allows them with warnings from the field validator.
@@ -1506,7 +1504,8 @@ class Settings(BaseSettings):
                 if basic_auth_val.lower() in weak_secrets:
                     if env != "development":
                         raise SecurityConfigurationError(
-                            f"basic_auth_password: Weak/default password rejected in '{env}' environment when basic auth is enabled. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                            f"basic_auth_password: Weak/default password rejected in '{env}' environment when basic auth is enabled. "
+                            "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
                         )
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
@@ -2786,9 +2785,7 @@ class Settings(BaseSettings):
     # Experimental dataplane config
     # ===================================
 
-    dataplane_publisher: bool = Field(default=False,
-        description="Send data from CF to Rust experimental dataplane"
-    )
+    dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
     # Well-Known URI Configuration
     # ===================================
@@ -2958,12 +2955,12 @@ Disallow: /
 
         project_root = Path(__file__).parent.parent.resolve()
         config_path = Path(value).expanduser()
-        
+
         if config_path.is_absolute():
             return str(config_path)
-        
+
         resolved_path = (project_root / config_path).resolve()
-        
+
         try:
             resolved_path.relative_to(project_root)
         except ValueError:
@@ -2972,7 +2969,7 @@ Disallow: /
                 f"Resolved to: {resolved_path}, Project root: {project_root}. "
                 f"Use an absolute path if you need to reference files outside the project."
             )
-        
+
         return value
 
     # -------------------------------
