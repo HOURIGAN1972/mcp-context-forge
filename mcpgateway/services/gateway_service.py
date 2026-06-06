@@ -1151,6 +1151,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db_resources = []
             db_prompts = []
             capabilities = {}
+            validation_errors: list[str] = []
 
             db_gateway = None
             if transport != "PROXIED" or is_reverse_proxied:
