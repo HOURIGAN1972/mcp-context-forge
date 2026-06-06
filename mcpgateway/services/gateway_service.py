@@ -2016,7 +2016,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 return (cached_gateways, cached.get("next_cursor"))
 
         # Build base query with ordering
-        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -2113,7 +2113,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         team_ids = [team.id for team in user_teams]
 
         # Use joinedload to eager load email_team relationship (avoids N+1 queries)
-        query = select(DbGateway).options(joinedload(DbGateway.email_team))
+        query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
 
         # Apply active/inactive filter
         if not include_inactive:
